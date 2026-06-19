@@ -6,6 +6,8 @@ struct ContentView: View {
     @State private var selectedWorkspaceID: Workspace.ID?
 
     @State private var showPicker = false
+    @State private var showSettings = false
+    @State private var showSessions = false
     @State private var previewMessageID: UUID?
     @State private var previewDiffs: [ChatStore.DetectedDiff] = []
 
@@ -16,31 +18,49 @@ struct ContentView: View {
                 selectedWorkspaceID: $selectedWorkspaceID,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
+                    showSettings = false
                     Task { await chatStore.setWorkspace(ws) }
                     workspaceStore.moveToTop(ws)
-                }
+                },
+                onOpenSettings: { showSettings = true },
+                isSettingsSelected: showSettings
             )
             .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
         } detail: {
-            HStack(spacing: 0) {
-                ChatView(store: chatStore)
+            if showSettings {
+                SettingsView(store: chatStore) {
+                    showSettings = false
+                }
                     .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: 0) {
+                    ChatView(store: chatStore)
+                        .frame(maxWidth: .infinity)
 
-                Divider()
+                    Divider()
 
-                PreviewPane(
-                    message: previewMessage,
-                    diffs: previewDiffs,
-                    workspace: chatStore.currentWorkspace,
-                    onApply: { msg in applyDiffs(from: msg) },
-                    onApplySingle: { diff in applySingle(diff) }
-                )
-                .frame(width: 380)
+                    PreviewPane(
+                        message: previewMessage,
+                        diffs: previewDiffs,
+                        workspace: chatStore.currentWorkspace,
+                        onApply: { msg in applyDiffs(from: msg) },
+                        onApplySingle: { diff in applySingle(diff) }
+                    )
+                    .frame(width: 380)
+                }
             }
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 workspaceMenu
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showSessions = true
+                } label: {
+                    Label("Sessions", systemImage: "clock.arrow.circlepath")
+                }
+                .help("Browse and resume Grok sessions")
             }
             // (Agent / Persona picker removed - see Grok Build's AGENTS.md, skills & sub-agents)
             // (Terminate button removed per request - use stop in chat input instead)
@@ -51,8 +71,16 @@ struct ContentView: View {
                 addWorkspace(url: url)
             }
         }
+        .sheet(isPresented: $showSessions) {
+            SessionBrowserView(store: chatStore, workspace: currentWorkspace) {
+                showSessions = false
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .chooseWorkspaceRequested)) { _ in
             showPicker = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sessionsRequested)) { _ in
+            showSessions = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .stopGenerationRequested)) { _ in
             chatStore.stop()
@@ -66,9 +94,9 @@ struct ContentView: View {
         .onChange(of: chatStore.messages) { _, _ in
             autoSelectLatestDiffMessage()
         }
-        // Menu bar quick actions (popover mode)
+        // Menu bar quick actions
         .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
-            chatStore.clearMessages()
+            Task { await chatStore.startNewSession() }
         }
     }
 
@@ -78,13 +106,14 @@ struct ContentView: View {
         Menu {
             ForEach(workspaceStore.workspaces) { ws in
                 Button {
+                    showSettings = false
                     selectedWorkspaceID = ws.id
                 } label: {
                     Label(ws.displayName, systemImage: "folder")
                 }
             }
             Divider()
-            Button("Choose Folder…", systemImage: "folder.badge.plus") {
+            Button("Choose Project…", systemImage: "folder.badge.plus") {
                 showPicker = true
             }
         } label: {
@@ -102,11 +131,12 @@ struct ContentView: View {
     }
 
     private var currentWorkspaceName: String {
-        if let id = selectedWorkspaceID,
-           let ws = workspaceStore.workspaces.first(where: { $0.id == id }) {
-            return ws.displayName
-        }
-        return "No Workspace"
+        currentWorkspace?.displayName ?? "No Project"
+    }
+
+    private var currentWorkspace: Workspace? {
+        guard let id = selectedWorkspaceID else { return nil }
+        return workspaceStore.workspaces.first(where: { $0.id == id })
     }
 
     private var previewMessage: Message? {
@@ -117,7 +147,7 @@ struct ContentView: View {
     // MARK: - Logic
 
     private func bootstrap() {
-        // Restore or seed workspaces
+        // Restore or seed projects
         if let first = workspaceStore.workspaces.first {
             selectedWorkspaceID = first.id
             Task { await chatStore.setWorkspace(first) }
@@ -168,6 +198,7 @@ struct ContentView: View {
 
 extension Notification.Name {
     static let chooseWorkspaceRequested = Notification.Name("chooseWorkspaceRequested")
+    static let sessionsRequested = Notification.Name("sessionsRequested")
     static let stopGenerationRequested = Notification.Name("stopGenerationRequested")
     static let focusInputRequested = Notification.Name("focusInputRequested")
     static let showMainWindowRequested = Notification.Name("showMainWindowRequested")

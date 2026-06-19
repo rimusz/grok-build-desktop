@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build GrokDeck macOS menu bar app from the command line.
+# Build GrokBuild macOS menu bar app from the command line.
 # Uses Swift Package Manager (SPM) by default.
 # Adapted from: https://github.com/Gitlawb/node/blob/main/scripts/build-macos-app.sh
 #
@@ -19,8 +19,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-APP_NAME="GrokDeck"
-SCHEME="GrokDeck"
+APP_NAME="GrokBuild"
+EXECUTABLE_NAME="GrokBuild"
+SCHEME="GrokBuild"
 CONFIGURATION="Release"
 
 BUILD_DIR="$ROOT_DIR/.build"
@@ -46,7 +47,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --sign IDENTITY    Codesign the resulting .app bundle"
-            echo "  --name NAME        Override the app name (default: GrokDeck)"
+            echo "  --name NAME        Override the app name (default: GrokBuild)"
             exit 0
             ;;
         *)
@@ -73,13 +74,13 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
     mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-    cp "$BUILD_DIR/release/GrokDeck" "$APP_BUNDLE/Contents/MacOS/GrokDeck"
+    cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
     # Copy menu bar icon
     # Looks in these locations (in order):
     #   1. Project root (MenuBarIcon.png / @2x.png) — legacy / docs
     #   2. Asset catalog imageset (recommended location, already in place)
-    ICONSET_DIR="$ROOT_DIR/GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset"
+    ICONSET_DIR="$ROOT_DIR/GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset"
 
     copy_icon() {
         local src="$1"
@@ -147,17 +148,17 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     fi
 
     # Info.plist for a normal app (with Dock presence + menu bar icon)
-    cat > "$APP_BUNDLE/Contents/Info.plist" << 'EOF'
+    cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>GrokDeck</string>
+    <string>$EXECUTABLE_NAME</string>
     <key>CFBundleIdentifier</key>
-    <string>com.grokdeck.app</string>
+    <string>com.grokbuild.app</string>
     <key>CFBundleName</key>
-    <string>GrokDeck</string>
+    <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -172,7 +173,7 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
 </plist>
 EOF
 
-    chmod +x "$APP_BUNDLE/Contents/MacOS/GrokDeck"
+    chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
     # Codesign if requested
     if [ -n "$SIGN_IDENTITY" ]; then

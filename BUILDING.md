@@ -1,6 +1,6 @@
-# Building GrokDeck
+# Building GrokBuild
 
-GrokDeck is built with **Swift Package Manager** (SPM). No Xcode project is required.
+GrokBuild is built with **Swift Package Manager** (SPM). No Xcode project is required.
 
 ## To Build & Run (Minimal Setup)
 
@@ -26,7 +26,7 @@ You can also run directly:
 
 ```bash
 swift build -c release
-./.build/release/GrokDeck
+./.build/release/GrokBuild
 ```
 
 ## For Development (Recommended)
@@ -44,7 +44,7 @@ You can still build from the terminal with `make` or `swift build` even with ful
 xed .          # open Package.swift in Xcode
 ```
 
-Then select the `GrokDeck` scheme.
+Then select the `GrokBuild` scheme.
 
 ## Packaging
 
@@ -53,9 +53,9 @@ make app     # creates a distributable .app bundle (includes MenuBarIcon)
 make dmg     # creates .app + DMG
 ```
 
-Output goes to `dist/GrokDeck.app` and `dist/GrokDeck-macOS.dmg`.
+Output goes to `dist/GrokBuild.app` and `dist/GrokBuild-macOS.dmg`.
 
-The build script automatically copies the menu bar icon (from the asset catalog under `GrokDeck/Resources/...` or project root) into `Contents/Resources/`.
+The build script automatically copies the menu bar icon (from the asset catalog under `GrokBuild/Resources/...` or project root) into `Contents/Resources/`.
 
 ## Codesigning / Distribution
 
@@ -127,7 +127,7 @@ xcrun notarytool store-credentials "APPLE_CONNECT_PASSWORD" \
 
 See `.github/workflows/release.yml`:
 
-- **On every `v*` tag push**: automatically publishes an **unsigned** release with `GrokDeck.app.zip` and the DMG.
+- **On every `v*` tag push**: automatically publishes an **unsigned** release with `GrokBuild.app.zip` and the DMG.
 - **Manual dispatch** ("notarized" checked): builds the signed + notarized version and publishes it.
 
 **Gatekeeper bypass note** (for unsigned releases) is automatically included in the release body.
@@ -136,8 +136,8 @@ See `.github/workflows/release.yml`:
 
 The menu bar icon lives in the asset catalog:
 
-- `GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png`
-- `GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png` (recommended)
+- `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png`
+- `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png` (recommended)
 - `...@3x.png` (also supported)
 
 The build script automatically finds the icon from the asset catalog (or as a fallback from the project root) and copies the PNGs into `Contents/Resources/`. 

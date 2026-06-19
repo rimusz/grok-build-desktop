@@ -67,7 +67,7 @@ struct ChatView: View {
             inputBar
         }
         .onAppear { inputFocused = true }
-        .onChange(of: store.process.state) { _, newState in
+        .onChange(of: store.connectionState) { _, newState in
             if case .ready = newState {
                 // Clear stale auth message if the CLI became ready again
                 if store.authRequiredMessage != nil {
@@ -120,9 +120,9 @@ struct ChatView: View {
         if store.authRequiredMessage != nil || store.process.needsAuthentication {
             return "Needs Login"
         }
-        switch store.process.state {
+        switch store.connectionState {
         case .idle: return "Idle"
-        case .starting: return "Starting"
+        case .starting: return "Connecting"
         case .ready: return "Ready"
         case .busy: return "Working"
         case .failed: return "Error"
@@ -133,7 +133,7 @@ struct ChatView: View {
         if store.authRequiredMessage != nil || store.process.needsAuthentication {
             return .orange
         }
-        switch store.process.state {
+        switch store.connectionState {
         case .idle: return .gray
         case .starting: return .orange
         case .ready: return .green

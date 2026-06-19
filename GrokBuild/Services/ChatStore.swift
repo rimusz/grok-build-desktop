@@ -16,6 +16,7 @@ final class ChatStore {
     var authRequiredMessage: String?
 
     // MARK: - ACP Rich State
+    private(set) var connectionState: GrokProcessState = .idle
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
     private(set) var pendingPermissions: [PermissionRequest] = []
@@ -33,8 +34,8 @@ final class ChatStore {
     ]
 
     // Persistence for last selected Mode and Model across app restarts
-    private let selectedModeKey = "grokdeck.selectedMode"
-    private let selectedModelKey = "grokdeck.selectedModel"
+    private let selectedModeKey = "grokbuild.selectedMode"
+    private let selectedModelKey = "grokbuild.selectedModel"
     private let defaults = UserDefaults.standard
 
     private(set) var commandHistory: [String] = []
@@ -88,18 +89,57 @@ final class ChatStore {
 
     // setAgent for personas removed - use CLI's AGENTS.md, skills, or --agent for custom profiles.
 
-    private func restartProcess() async {
+    func reloadConfiguration() async {
+        if currentWorkspace != nil {
+            await restartProcess()
+            appendSystemNote("Reloaded Grok configuration.")
+        }
+    }
+
+    func startNewSession() async {
+        messages.removeAll()
+        streamingMessageID = nil
+        pendingPermissions.removeAll()
+        if currentWorkspace != nil {
+            await restartProcess()
+        }
+    }
+
+    func resumeSession(_ session: GrokSessionInfo) async {
+        guard currentWorkspace != nil else {
+            lastError = "Select a project first."
+            return
+        }
+        messages.removeAll()
+        streamingMessageID = nil
+        pendingPermissions.removeAll()
+        await restartProcess(resumeSessionID: session.id)
+        appendSystemNote("Resumed session \(session.id).")
+    }
+
+    private func restartProcess(resumeSessionID: String? = nil) async {
         guard let ws = currentWorkspace else { return }
         isStreaming = false
         streamingMessageID = nil
-        postStatusUpdate("ready")
+        connectionState = .starting
+        postStatusUpdate("starting")
+        let settings = loadPermissionSettings()
         let opts = GrokLaunchOptions(
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
-            noMemory: false,
-            reasoningEffort: nil,
-            model: currentModel
+            noMemory: settings.noMemory,
+            permissionMode: settings.permissionMode,
+            reasoningEffort: settings.reasoningEffort,
+            model: currentModel,
+            sandboxProfile: settings.sandboxProfile,
+            disableWebSearch: settings.disableWebSearch,
+            noSubagents: settings.noSubagents,
+            allowRules: lineList(settings.allowRules),
+            denyRules: lineList(settings.denyRules),
+            resumeSessionID: resumeSessionID
         )
         await process.start(workspace: ws, options: opts)
+        connectionState = process.state
+        postStatusUpdate(statusName(for: connectionState))
         availableModes = process.availableModes
 
         // Keep our remembered/persisted mode (enforce on fresh session).
@@ -130,7 +170,7 @@ final class ChatStore {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard currentWorkspace != nil else {
-            lastError = "Select a workspace first."
+            lastError = "Select a project first."
             return
         }
 
@@ -149,6 +189,7 @@ final class ChatStore {
         lastError = nil
         authRequiredMessage = nil
         pendingPermissions.removeAll()
+        connectionState = .busy
         postStatusUpdate("busy")
 
         let payload = trimmed
@@ -158,10 +199,16 @@ final class ChatStore {
             isStreaming = false
             streamingMessageID = nil
             lastError = "Failed to send to grok."
-            postStatusUpdate("ready")
+            connectionState = process.state == .ready ? .ready : process.state
+            postStatusUpdate(statusName(for: connectionState))
             if let id = streamingMessageID, let idx = messages.firstIndex(where: { $0.id == id }) {
                 messages.remove(at: idx)
             }
+        } else {
+            isStreaming = false
+            streamingMessageID = nil
+            connectionState = .ready
+            postStatusUpdate("ready")
         }
     }
 
@@ -170,6 +217,7 @@ final class ChatStore {
         streamingMessageID = nil
         pendingPermissions.removeAll()
         process.interrupt()
+        connectionState = .ready
         postStatusUpdate("ready")
     }
 
@@ -409,6 +457,40 @@ final class ChatStore {
     private func appendSystemNote(_ text: String) {
         appendSystem(text)
     }
+
+    private func loadPermissionSettings() -> GrokPermissionSettings {
+        GrokPermissionSettings(
+            permissionMode: defaults.string(forKey: GrokSettingsKeys.permissionMode) ?? GrokPermissionSettings.defaults.permissionMode,
+            sandboxProfile: defaults.string(forKey: GrokSettingsKeys.sandboxProfile) ?? "",
+            reasoningEffort: defaults.string(forKey: GrokSettingsKeys.reasoningEffort) ?? "",
+            noMemory: defaults.bool(forKey: GrokSettingsKeys.noMemory),
+            disableWebSearch: defaults.bool(forKey: GrokSettingsKeys.disableWebSearch),
+            noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
+            allowRules: defaults.string(forKey: GrokSettingsKeys.allowRules) ?? "",
+            denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? ""
+        )
+    }
+
+    private func lineList(_ text: String) -> [String] {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func statusName(for state: GrokProcessState) -> String {
+        switch state {
+        case .idle:
+            return "idle"
+        case .starting:
+            return "starting"
+        case .ready:
+            return "ready"
+        case .busy:
+            return "busy"
+        case .failed:
+            return "error"
+        }
+    }
 }
 
 // MARK: - Diff utilities (extracted)
@@ -435,7 +517,7 @@ enum DiffUtils {
 
     static func applyUnifiedDiff(_ diffText: String, root: URL) throws {
         let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("grokdeck-\(UUID().uuidString).patch")
+            .appendingPathComponent("grokbuild-\(UUID().uuidString).patch")
         try diffText.write(to: tmp, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
@@ -470,7 +552,7 @@ enum DiffUtils {
             }
         }
         guard let t = target else {
-            throw NSError(domain: "GrokDeck", code: -1, userInfo: [NSLocalizedDescriptionKey: "No target path in diff"])
+            throw NSError(domain: "GrokBuild", code: -1, userInfo: [NSLocalizedDescriptionKey: "No target path in diff"])
         }
         let dest = root.appendingPathComponent(t)
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)

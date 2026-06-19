@@ -17,7 +17,7 @@ on:
         default: ''
 
 env:
-  APP_NAME: GrokDesk
+  APP_NAME: GrokBuild
 
 jobs:
   build:
@@ -71,8 +71,8 @@ jobs:
             cat > release-body.txt << 'EOF'
             ## Downloads
 
-            - `GrokDesk.app.zip` — Signed + notarized build (recommended)
-            - `GrokDesk-macOS.dmg` — Signed + notarized DMG
+            - `GrokBuild.app.zip` — Signed + notarized build (recommended)
+            - `GrokBuild-macOS.dmg` — Signed + notarized DMG
 
             This version is properly code-signed and notarized. No Gatekeeper warnings.
             EOF
@@ -80,8 +80,8 @@ jobs:
             cat > release-body.txt << 'EOF'
             ## Downloads
 
-            - `GrokDesk.app.zip` — Unsigned build
-            - `GrokDesk-macOS.dmg` — Unsigned DMG
+            - `GrokBuild.app.zip` — Unsigned build
+            - `GrokBuild-macOS.dmg` — Unsigned DMG
 
             ## How to bypass Gatekeeper protection (unsigned builds)
 
@@ -89,8 +89,8 @@ jobs:
 
             **Quick ways to open:**
 
-            1. Right-click `GrokDesk.app` (or the DMG) → **Open**
-            2. Terminal: `xattr -cr /path/to/GrokDesk.app`
+            1. Right-click `GrokBuild.app` (or the DMG) → **Open**
+            2. Terminal: `xattr -cr /path/to/GrokBuild.app`
             3. System Settings → Privacy & Security → "Open Anyway"
 
             ---

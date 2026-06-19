@@ -1,11 +1,11 @@
 import Foundation
 import SwiftUI
 
-/// Persists a list of recent workspaces across launches.
+/// Persists a list of recent projects across launches.
 @Observable
 final class WorkspaceStore {
     var workspaces: [Workspace] = []
-    private let storageKey = "GrokDeck.workspaces.v1"
+    private let storageKey = "GrokBuild.projects.v1"
 
     init() {
         load()

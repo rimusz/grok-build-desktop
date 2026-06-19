@@ -2,20 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "GrokDeck",
+    name: "GrokBuild",
     platforms: [.macOS(.v14)],
     products: [
         .executable(
-            name: "GrokDeck",
-            targets: ["GrokDeck"]
+            name: "GrokBuild",
+            targets: ["GrokBuild"]
         )
     ],
     dependencies: [],
     targets: [
         .executableTarget(
-            name: "GrokDeck",
-            path: "GrokDeck",
-            exclude: ["GrokDeckApp.swift"], // We use AppKit entry point instead
+            name: "GrokBuild",
+            path: "GrokBuild",
+            exclude: ["GrokBuildApp.swift"], // We use AppKit entry point instead
             resources: [
                 .process("Resources")
             ]

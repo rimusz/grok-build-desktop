@@ -10,14 +10,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Enforce single instance with flock (advisory lock held by open fd).
         // This is race-free even for rapid `make run ; make run`.
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("GrokDeck")
+            .appendingPathComponent("GrokBuild")
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         let pidFile = support.appendingPathComponent("instance.pid")
 
         let fd = open(pidFile.path, O_WRONLY | O_CREAT, 0o644)
         if fd == -1 {
             DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name("com.grokdeck.showPopover"),
+                NSNotification.Name("com.grokbuild.showMainWindow"),
                 object: nil,
                 userInfo: nil,
                 deliverImmediately: true
@@ -30,7 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Another instance already holds the lock
             close(fd)
             DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name("com.grokdeck.showPopover"),
+                NSNotification.Name("com.grokbuild.showMainWindow"),
                 object: nil,
                 userInfo: nil,
                 deliverImmediately: true
@@ -54,6 +54,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         statusBarController = StatusBarController()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openMainWindowRequested),
+            name: .showMainWindowRequested,
+            object: nil
+        )
 
         // Open a main window on launch
         openMainWindow()
@@ -68,7 +74,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("GrokDeck")
+            .appendingPathComponent("GrokBuild")
         let pidFile = support.appendingPathComponent("instance.pid")
 
         if let content = try? String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines),
@@ -100,7 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.center()
-        window.title = "GrokDeck"
+        window.title = "GrokBuild"
         window.contentViewController = hosting
         window.setFrameAutosaveName("MainWindow")
         window.makeKeyAndOrderFront(nil)
@@ -135,5 +141,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return nil
+    }
+
+    @objc private func openMainWindowRequested() {
+        openMainWindow()
     }
 }

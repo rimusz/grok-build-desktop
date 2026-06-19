@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Notarization helper for GrokDeck (supports local + CI)
+# Notarization helper for GrokBuild (supports local + CI)
 # Usage (local):
 #   NOTARY_PROFILE=AC_PASSWORD ./scripts/notarize.sh
 #
 # Usage (CI with API key):
 #   APPLE_API_KEY_PATH=... APPLE_API_KEY_ID=... APPLE_API_ISSUER_ID=... \
-#   ./scripts/notarize.sh dist/GrokDeck.app
+#   ./scripts/notarize.sh dist/GrokBuild.app
 
-TARGET="${1:-dist/GrokDeck.app}"
+TARGET="${1:-dist/GrokBuild.app}"
 ZIP=""
 
 echo "==> Preparing $TARGET for notarization..."

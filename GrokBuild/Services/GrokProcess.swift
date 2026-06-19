@@ -21,6 +21,12 @@ struct GrokLaunchOptions: Sendable {
     var permissionMode: String? = nil
     var reasoningEffort: String? = nil   // passed to `grok agent --reasoning-effort X stdio`
     var model: String? = nil             // e.g. model name like "gpt-5.5-extra-high" or grok variant
+    var sandboxProfile: String? = nil
+    var disableWebSearch: Bool = false
+    var noSubagents: Bool = false
+    var allowRules: [String] = []
+    var denyRules: [String] = []
+    var resumeSessionID: String? = nil
 }
 
 // MARK: - Typed ACP Models
@@ -251,8 +257,26 @@ final class GrokProcess {
         proc.currentDirectoryURL = workspace.path
         proc.environment = ProcessInfo.processInfo.environment
 
-        // ACP: grok agent [--reasoning-effort X] [--model NAME] stdio
-        var args = ["agent"]
+        // ACP: grok [top-level flags] agent [agent flags] stdio
+        var args: [String] = []
+        if let a = options.agent, !a.isEmpty { args += ["--agent", a] }
+        if options.noMemory { args.append("--no-memory") }
+        if let mode = options.permissionMode, !mode.isEmpty, mode != "default" {
+            args += ["--permission-mode", mode]
+        }
+        if let sandbox = options.sandboxProfile, !sandbox.isEmpty {
+            args += ["--sandbox", sandbox]
+        }
+        if options.disableWebSearch { args.append("--disable-web-search") }
+        if options.noSubagents { args.append("--no-subagents") }
+        for rule in options.allowRules where !rule.isEmpty {
+            args += ["--allow", rule]
+        }
+        for rule in options.denyRules where !rule.isEmpty {
+            args += ["--deny", rule]
+        }
+
+        args.append("agent")
         if let e = options.reasoningEffort, !e.isEmpty {
             args += ["--reasoning-effort", e]
         }
@@ -260,10 +284,6 @@ final class GrokProcess {
             args += ["--model", m]
         }
         args.append("stdio")
-
-        if let a = options.agent, !a.isEmpty { args += ["--agent", a] }  // supported by grok (Grok Build): --agent <NAME> or file path
-        if options.noMemory { args.append("--no-memory") }
-        if let m = options.permissionMode { args += ["--permission-mode", m] }
         args += options.extraArgs
 
         proc.arguments = args
@@ -287,7 +307,11 @@ final class GrokProcess {
 
         do {
             try await initializeACP()
-            try await createSession(workspace: workspace)
+            if let resumeSessionID = options.resumeSessionID, !resumeSessionID.isEmpty {
+                try await loadSession(id: resumeSessionID, workspace: workspace)
+            } else {
+                try await createSession(workspace: workspace)
+            }
             state = .ready
             notifyStatus()
         } catch {
@@ -447,6 +471,15 @@ final class GrokProcess {
         } else if let modeInfos = res?["availableModes"] as? [[String: Any]] {
             availableModes = modeInfos.compactMap { $0["id"] as? String }.map { AgentMode(rawValue: $0) }
         }
+    }
+
+    private func loadSession(id: String, workspace: Workspace) async throws {
+        _ = try await sendRequest(method: "session/load", params: [
+            "sessionId": id,
+            "cwd": workspace.path.path,
+            "mcpServers": []
+        ])
+        sessionId = id
     }
 
     private func readAcp(stdout: Pipe, stderr: Pipe) async {

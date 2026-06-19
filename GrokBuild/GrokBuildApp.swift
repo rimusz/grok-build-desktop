@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct GrokDeckApp: App {
+struct GrokBuildApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("preferredAppearance") private var appearance: String = "dark"
 
@@ -16,13 +16,13 @@ struct GrokDeckApp: App {
         .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About GrokDeck") {
+                Button("About GrokBuild") {
                     NSApplication.shared.orderFrontStandardAboutPanel(
                         options: [
-                            .applicationName: "GrokDeck",
+                            .applicationName: "GrokBuild",
                             .version: "0.2.0",
                             .credits: NSAttributedString(
-                                string: "Native SwiftUI Mac frontend for the grok CLI.",
+                                string: "Native SwiftUI Mac frontend for the Grok Build CLI.",
                                 attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)]
                             )
                         ]
@@ -30,14 +30,24 @@ struct GrokDeckApp: App {
                 }
             }
 
-            CommandMenu("Workspace") {
-                Button("Choose Workspace…") {
+            CommandMenu("Project") {
+                Button("Choose Project…") {
                     NotificationCenter.default.post(name: .chooseWorkspaceRequested, object: nil)
                 }
                 .keyboardShortcut("O", modifiers: [.command, .shift])
             }
 
             CommandMenu("Chat") {
+                Button("New Session") {
+                    NotificationCenter.default.post(name: .newSessionRequested, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+
+                Button("Browse Sessions…") {
+                    NotificationCenter.default.post(name: .sessionsRequested, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+
                 Button("Stop Generation") {
                     NotificationCenter.default.post(name: .stopGenerationRequested, object: nil)
                 }

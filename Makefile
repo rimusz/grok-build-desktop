@@ -1,4 +1,4 @@
-# GrokDeck - Makefile for easy local macOS builds
+# GrokBuild - Makefile for easy local macOS builds
 #
 # Uses SwiftPM (no Xcode project required).
 # See BUILDING.md for full packaging & signing instructions.
@@ -12,8 +12,8 @@
 #   make notarize       # Notarize (NOTARY_PROFILE=...)
 #   make clean
 
-APP_NAME       ?= GrokDeck
-SCHEME         ?= GrokDeck
+APP_NAME       ?= GrokBuild
+SCHEME         ?= GrokBuild
 CONFIGURATION  ?= Release
 
 DIST_DIR       ?= dist
@@ -31,7 +31,7 @@ NC     := \033[0m
 .PHONY: help build run app dmg signed clean open notarize
 
 help: ## Show this help
-	@echo "GrokDeck macOS Build Commands"
+	@echo "GrokBuild macOS Build Commands"
 	@echo ""
 	@echo "  $(YELLOW)make build$(NC)            Build release binary (SwiftPM)"
 	@echo "  $(YELLOW)make run$(NC)             Build + launch the menu bar app"
@@ -49,18 +49,18 @@ help: ## Show this help
 build: ## Build using SwiftPM (Release) - recommended
 	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (release)...$(NC)"
 	@swift build -c release
-	@chmod +x .build/release/GrokDeck 2>/dev/null || true
+	@chmod +x .build/release/GrokBuild 2>/dev/null || true
 	@mkdir -p .build/release
-	@cp -f GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png .build/release/ 2>/dev/null || true
-	@cp -f GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png .build/release/ 2>/dev/null || true
-	@cp -f GrokDeck/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@3x.png .build/release/ 2>/dev/null || true
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png .build/release/ 2>/dev/null || true
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png .build/release/ 2>/dev/null || true
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@3x.png .build/release/ 2>/dev/null || true
 	@cp -f AppIcon.png .build/release/ 2>/dev/null || true
-	@echo "$(GREEN)==> Build complete. Use 'make run' to launch (or ./.build/release/GrokDeck directly).$(NC)"
+	@echo "$(GREEN)==> Build complete. Use 'make run' to launch (or ./.build/release/GrokBuild directly).$(NC)"
 
 run: build ## Build + launch the menu bar app
-	@echo "$(GREEN)==> Starting GrokDeck...$(NC)"
-	@./.build/release/GrokDeck > /dev/null 2>&1 & disown
-	@echo "$(GREEN)==> GrokDeck launched.$(NC)"
+	@echo "$(GREEN)==> Starting GrokBuild...$(NC)"
+	@./.build/release/GrokBuild > /dev/null 2>&1 & disown
+	@echo "$(GREEN)==> GrokBuild launched.$(NC)"
 
 dmg: ## Build the .app and package it into a DMG.
 	@if [ -n "$(NOTARY_PROFILE)" ]; then \
