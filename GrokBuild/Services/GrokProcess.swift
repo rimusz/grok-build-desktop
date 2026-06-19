@@ -168,12 +168,13 @@ final class GrokProcess {
 
     private var nextRequestId = 1
     private var pendingRequests: [Int: CheckedContinuation<Any?, Error>] = [:]
-    private var sessionId: String?
+    private(set) var sessionId: String?
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
+    private(set) var currentModelId: String?
 
     // Populated from initialize modelState so we use real models from grok CLI
-    private(set) var availableModelsInfo: [(id: String, name: String)] = []
+    private(set) var availableModelsInfo: [(id: String, name: String, contextTokens: Int?)] = []
 
     // MARK: - Parsing helpers (instance for access to state if needed)
 
@@ -246,6 +247,8 @@ final class GrokProcess {
         currentWorkspace = workspace
         outputLines.removeAll()
         sessionId = nil
+        currentModelId = nil
+        availableModelsInfo.removeAll()
 
         guard let cli = Self.locateGrokCLI() else {
             state = .failed("Could not locate the `grok` CLI. Run `grok login` or set GROK_CLI_PATH.")
@@ -411,6 +414,26 @@ final class GrokProcess {
         setMode(AgentMode(rawValue: modeId))
     }
 
+    func setModel(_ modelId: String) {
+        guard let sid = sessionId else { return }
+        Task {
+            if let res = try? await sendRequest(method: "session/set_model", params: [
+                "sessionId": sid,
+                "modelId": modelId
+            ]) as? [String: Any] {
+                if let meta = res["_meta"] as? [String: Any],
+                   let model = meta["model"] as? [String: Any],
+                   let selected = model["Ok"] as? String {
+                    currentModelId = selected
+                } else {
+                    currentModelId = modelId
+                }
+            } else {
+                currentModelId = modelId
+            }
+        }
+    }
+
     // MARK: - ACP Implementation
 
     private func writeJson(_ obj: [String: Any]) -> Bool {
@@ -448,9 +471,10 @@ final class GrokProcess {
             availableModelsInfo = models.compactMap { m in
                 guard let id = m["modelId"] as? String else { return nil }
                 let name = m["name"] as? String ?? id
-                return (id: id, name: name)
+                let meta = m["_meta"] as? [String: Any]
+                return (id: id, name: name, contextTokens: meta?["totalContextTokens"] as? Int)
             }
-            _ = ms["currentModelId"] as? String  // current is driven by UI selection + ACP updates
+            currentModelId = ms["currentModelId"] as? String
         }
     }
 
@@ -460,6 +484,7 @@ final class GrokProcess {
             "mcpServers": []
         ]) as? [String: Any]
         sessionId = res?["sessionId"] as? String
+        updateModels(from: res?["models"] as? [String: Any])
 
         if let mode = res?["currentModeId"] as? String ?? res?["mode"] as? String {
             currentMode = AgentMode(rawValue: mode)
@@ -474,12 +499,29 @@ final class GrokProcess {
     }
 
     private func loadSession(id: String, workspace: Workspace) async throws {
-        _ = try await sendRequest(method: "session/load", params: [
+        let res = try await sendRequest(method: "session/load", params: [
             "sessionId": id,
             "cwd": workspace.path.path,
             "mcpServers": []
-        ])
+        ]) as? [String: Any]
         sessionId = id
+        updateModels(from: res?["models"] as? [String: Any])
+        if let mode = res?["currentModeId"] as? String ?? res?["mode"] as? String {
+            currentMode = AgentMode(rawValue: mode)
+        }
+    }
+
+    private func updateModels(from modelState: [String: Any]?) {
+        guard let modelState else { return }
+        currentModelId = modelState["currentModelId"] as? String ?? currentModelId
+        if let models = modelState["availableModels"] as? [[String: Any]] {
+            availableModelsInfo = models.compactMap { m in
+                guard let id = m["modelId"] as? String else { return nil }
+                let name = m["name"] as? String ?? id
+                let meta = m["_meta"] as? [String: Any]
+                return (id: id, name: name, contextTokens: meta?["totalContextTokens"] as? Int)
+            }
+        }
     }
 
     private func readAcp(stdout: Pipe, stderr: Pipe) async {

@@ -11,7 +11,7 @@ struct SettingsView: View {
                 Button {
                     onBackToChat()
                 } label: {
-                    Label("Back to Chat", systemImage: "chevron.left")
+                    Label("Back to Session", systemImage: "chevron.left")
                 }
                 .buttonStyle(.bordered)
 

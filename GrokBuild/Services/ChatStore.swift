@@ -4,6 +4,11 @@ import SwiftUI
 
 @Observable
 final class ChatStore {
+    private struct SessionSelection: Codable {
+        var mode: String?
+        var model: String?
+    }
+
     private(set) var messages: [Message] = []
 
     func clearMessages() {
@@ -32,11 +37,15 @@ final class ChatStore {
         "grok-composer-2.5-fast": "Composer 2.5 Fast",
         "grok-build": "Grok Build"
     ]
+    private var modelContextTokens: [String: Int] = [
+        "grok-composer-2.5-fast": 200_000,
+        "grok-build": 512_000
+    ]
 
-    // Persistence for last selected Mode and Model across app restarts
-    private let selectedModeKey = "grokbuild.selectedMode"
-    private let selectedModelKey = "grokbuild.selectedModel"
+    // Persist mode/model choices per Grok session id.
+    private let sessionSelectionsKey = "grokbuild.sessionSelections.v1"
     private let defaults = UserDefaults.standard
+    private var sessionSelections: [String: SessionSelection] = [:]
 
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
@@ -49,22 +58,16 @@ final class ChatStore {
 
     init(process: GrokProcess = GrokProcess()) {
         self.process = process
-        loadPersistedSelections()
+        loadSessionSelections()
         Task { [weak self] in await self?.consumeOutput() }
     }
 
-    private func loadPersistedSelections() {
-        if let modeRaw = defaults.string(forKey: selectedModeKey), !modeRaw.isEmpty {
-            let loaded = AgentMode(rawValue: modeRaw)
-            // Only use if it's one of our known modes (defensive)
-            if [.agent, .plan, .yolo].contains(loaded) {
-                currentMode = loaded
-                isYolo = (loaded == .yolo)
-            }
+    private func loadSessionSelections() {
+        guard let data = defaults.data(forKey: sessionSelectionsKey),
+              let decoded = try? JSONDecoder().decode([String: SessionSelection].self, from: data) else {
+            return
         }
-        if let model = defaults.string(forKey: selectedModelKey), !model.isEmpty {
-            currentModel = model
-        }
+        sessionSelections = decoded
     }
 
     private func postStatusUpdate(_ status: String) {
@@ -79,12 +82,19 @@ final class ChatStore {
     // MARK: Context
 
     func setWorkspace(_ workspace: Workspace) async {
+        await start(workspace: workspace)
+    }
+
+    func start(workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async {
         currentWorkspace = workspace
         messages.removeAll()
         streamingMessageID = nil
         authRequiredMessage = nil
         pendingPermissions.removeAll()
-        await restartProcess()
+        await restartProcess(resumeSessionID: resumeSession?.id)
+        if let resumeSession {
+            appendSystemNote("Resumed session \(resumeSession.id).")
+        }
     }
 
     // setAgent for personas removed - use CLI's AGENTS.md, skills, or --agent for custom profiles.
@@ -124,12 +134,13 @@ final class ChatStore {
         connectionState = .starting
         postStatusUpdate("starting")
         let settings = loadPermissionSettings()
+        let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
         let opts = GrokLaunchOptions(
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
             noMemory: settings.noMemory,
             permissionMode: settings.permissionMode,
             reasoningEffort: settings.reasoningEffort,
-            model: currentModel,
+            model: savedSelection?.model,
             sandboxProfile: settings.sandboxProfile,
             disableWebSearch: settings.disableWebSearch,
             noSubagents: settings.noSubagents,
@@ -141,27 +152,9 @@ final class ChatStore {
         connectionState = process.state
         postStatusUpdate(statusName(for: connectionState))
         availableModes = process.availableModes
-
-        // Keep our remembered/persisted mode (enforce on fresh session).
-        // Only fall back if the CLI doesn't support the remembered one.
-        if !availableModes.contains(currentMode) {
-            currentMode = availableModes.first ?? .agent
-            isYolo = (currentMode == .yolo)
-            defaults.set(currentMode.rawValue, forKey: selectedModeKey)
-        }
-        // Send the remembered mode to the new ACP session
-        process.setMode(currentMode)
-
-        // Use real models reported by the CLI if available (from modelState)
-        if !process.availableModelsInfo.isEmpty {
-            let ids = process.availableModelsInfo.map { $0.id }
-            availableModels = ids
-            modelDisplayNames = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.map { ($0.id, $0.name) })
-            if !ids.contains(currentModel) {
-                currentModel = ids.first ?? currentModel
-                defaults.set(currentModel, forKey: selectedModelKey)
-            }
-        }
+        syncModelsFromProcess()
+        restoreSessionSelection(savedSelection)
+        saveCurrentSessionSelection()
     }
 
     // MARK: Messaging
@@ -257,7 +250,7 @@ final class ChatStore {
         // Optimistically update; will be confirmed by modeChanged event
         currentMode = mode
         isYolo = (mode == .yolo)
-        defaults.set(mode.rawValue, forKey: selectedModeKey)
+        saveCurrentSessionSelection()
     }
 
     /// Convenience for the three common modes
@@ -268,15 +261,27 @@ final class ChatStore {
     func setModel(_ model: String) {
         guard availableModels.contains(model) else { return }
         currentModel = model
-        defaults.set(model, forKey: selectedModelKey)
-        // Restart the process so the new model takes effect (passed at launch)
-        if currentWorkspace != nil {
-            Task { await restartProcess() }
-        }
+        process.setModel(model)
+        saveCurrentSessionSelection()
     }
 
     func modelDisplayName(_ id: String) -> String {
         modelDisplayNames[id] ?? id
+    }
+
+    var currentModelContextLabel: String {
+        guard let tokens = modelContextTokens[currentModel] else { return "Context: unknown" }
+        return "Context: \(Self.compactTokenCount(tokens))"
+    }
+
+    private static func compactTokenCount(_ tokens: Int) -> String {
+        if tokens >= 1_000_000 {
+            return "\(tokens / 1_000_000)M"
+        }
+        if tokens >= 1_000 {
+            return "\(tokens / 1_000)K"
+        }
+        return "\(tokens)"
     }
 
     func setYolo(_ enabled: Bool) {
@@ -422,7 +427,7 @@ final class ChatStore {
         case .modeChanged(let mode):
             currentMode = mode
             availableModes = process.availableModes // keep in sync
-            defaults.set(mode.rawValue, forKey: selectedModeKey)
+            saveCurrentSessionSelection()
             // availableModes stay as reported from CLI, but we can filter if needed
 
         case .rawLine(let line):
@@ -475,6 +480,53 @@ final class ChatStore {
         text.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private func syncModelsFromProcess() {
+        guard !process.availableModelsInfo.isEmpty else { return }
+        availableModels = process.availableModelsInfo.map { $0.id }
+        modelDisplayNames = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.map { ($0.id, $0.name) })
+        modelContextTokens = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.compactMap { model in
+            guard let tokens = model.contextTokens else { return nil }
+            return (model.id, tokens)
+        })
+    }
+
+    private func restoreSessionSelection(_ fallbackSelection: SessionSelection?) {
+        let selection = process.sessionId.flatMap { sessionSelections[$0] } ?? fallbackSelection
+
+        if let model = selection?.model, availableModels.contains(model) {
+            currentModel = model
+            if process.currentModelId != model {
+                process.setModel(model)
+            }
+        } else if let processModel = process.currentModelId, availableModels.contains(processModel) {
+            currentModel = processModel
+        } else if !availableModels.contains(currentModel) {
+            currentModel = availableModels.first ?? currentModel
+        }
+
+        let selectedMode = selection?.mode.map(AgentMode.init(rawValue:)) ?? process.currentMode
+        if availableModes.contains(selectedMode) {
+            currentMode = selectedMode
+        } else {
+            currentMode = availableModes.first ?? .agent
+        }
+        isYolo = (currentMode == .yolo)
+        if currentMode != process.currentMode {
+            process.setMode(currentMode)
+        }
+    }
+
+    private func saveCurrentSessionSelection() {
+        guard let sessionId = process.sessionId else { return }
+        sessionSelections[sessionId] = SessionSelection(
+            mode: currentMode.rawValue,
+            model: currentModel
+        )
+        if let data = try? JSONEncoder().encode(sessionSelections) {
+            defaults.set(data, forKey: sessionSelectionsKey)
+        }
     }
 
     private func statusName(for state: GrokProcessState) -> String {

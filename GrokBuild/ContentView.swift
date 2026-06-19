@@ -1,69 +1,78 @@
 import SwiftUI
 
 struct ContentView: View {
+    private struct LiveSession: Identifiable {
+        let id: UUID
+        let store: ChatStore
+        var workspace: Workspace
+        var title: String
+    }
+
     @State private var workspaceStore = WorkspaceStore()
-    @State private var chatStore = ChatStore()
+    @State private var placeholderStore = ChatStore()
+    @State private var liveSessions: [LiveSession] = []
+    @State private var selectedSessionID: UUID?
     @State private var selectedWorkspaceID: Workspace.ID?
 
     @State private var showPicker = false
     @State private var showSettings = false
     @State private var showSessions = false
+    @State private var showPreview = false
+    @State private var branchSwitchProject: Workspace?
+    @State private var worktreeProject: Workspace?
+    @State private var gitError: String?
     @State private var previewMessageID: UUID?
     @State private var previewDiffs: [ChatStore.DetectedDiff] = []
 
     var body: some View {
-        NavigationSplitView {
+        HSplitView {
             SidebarView(
                 workspaces: $workspaceStore.workspaces,
                 selectedWorkspaceID: $selectedWorkspaceID,
+                sessions: sidebarSessions,
+                selectedSessionID: selectedSessionID,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
                     showSettings = false
-                    Task { await chatStore.setWorkspace(ws) }
+                    selectProject(ws)
                     workspaceStore.moveToTop(ws)
                 },
+                onSelectSession: { selectSession($0) },
+                onSwitchBranch: { branchSwitchProject = $0 },
+                onCreateWorktree: { worktreeProject = $0 },
                 onOpenSettings: { showSettings = true },
                 isSettingsSelected: showSettings
             )
-            .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
-        } detail: {
+            .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
+
             if showSettings {
-                SettingsView(store: chatStore) {
+                SettingsView(store: activeStore) {
                     showSettings = false
                 }
-                    .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                HStack(spacing: 0) {
-                    ChatView(store: chatStore)
-                        .frame(maxWidth: .infinity)
-
-                    Divider()
-
-                    PreviewPane(
-                        message: previewMessage,
-                        diffs: previewDiffs,
-                        workspace: chatStore.currentWorkspace,
-                        onApply: { msg in applyDiffs(from: msg) },
-                        onApplySingle: { diff in applySingle(diff) }
+                HSplitView {
+                    ChatView(
+                        store: activeStore,
+                        isPreviewVisible: $showPreview,
+                        hasPreviewContent: !previewDiffs.isEmpty,
+                        onNewSession: { startNewSessionForCurrentProject() },
+                        onSwitchBranch: { if let project = currentWorkspace { branchSwitchProject = project } }
                     )
-                    .frame(width: 380)
+                        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+
+                    if showPreview {
+                        PreviewPane(
+                            message: previewMessage,
+                            diffs: previewDiffs,
+                            workspace: activeStore.currentWorkspace,
+                            onApply: { msg in applyDiffs(from: msg) },
+                            onApplySingle: { diff in applySingle(diff) }
+                        )
+                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 520)
+                    }
                 }
             }
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                workspaceMenu
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showSessions = true
-                } label: {
-                    Label("Sessions", systemImage: "clock.arrow.circlepath")
-                }
-                .help("Browse and resume Grok sessions")
-            }
-            // (Agent / Persona picker removed - see Grok Build's AGENTS.md, skills & sub-agents)
-            // (Terminate button removed per request - use stop in chat input instead)
         }
         .onAppear(perform: bootstrap)
         .sheet(isPresented: $showPicker) {
@@ -72,9 +81,31 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showSessions) {
-            SessionBrowserView(store: chatStore, workspace: currentWorkspace) {
+            SessionBrowserView(store: activeStore, workspace: currentWorkspace) {
                 showSessions = false
+            } onResumeSession: { session in
+                if let workspace = currentWorkspace {
+                    Task { await createLiveSession(for: workspace, resumeSession: session) }
+                }
             }
+        }
+        .sheet(item: $branchSwitchProject) { project in
+            BranchSwitchSheet(project: project) { branch in
+                Task { await switchBranch(project: project, branch: branch) }
+            }
+        }
+        .sheet(item: $worktreeProject) { project in
+            WorktreeCreateSheet(project: project) { branch, path in
+                Task { await createWorktree(project: project, branch: branch, path: path) }
+            }
+        }
+        .alert("Git action failed", isPresented: Binding(
+            get: { gitError != nil },
+            set: { if !$0 { gitError = nil } }
+        )) {
+            Button("OK", role: .cancel) { gitError = nil }
+        } message: {
+            Text(gitError ?? "")
         }
         .onReceive(NotificationCenter.default.publisher(for: .chooseWorkspaceRequested)) { _ in
             showPicker = true
@@ -83,7 +114,7 @@ struct ContentView: View {
             showSessions = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .stopGenerationRequested)) { _ in
-            chatStore.stop()
+            activeStore.stop()
         }
         .onReceive(NotificationCenter.default.publisher(for: .focusInputRequested)) { _ in
             // handled inside ChatView via focus
@@ -91,57 +122,46 @@ struct ContentView: View {
         .onChange(of: selectedWorkspaceID) { _, newID in
             handleWorkspaceChange(newID)
         }
-        .onChange(of: chatStore.messages) { _, _ in
+        .onChange(of: activeStore.messages) { _, _ in
             autoSelectLatestDiffMessage()
         }
         // Menu bar quick actions
         .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
-            Task { await chatStore.startNewSession() }
+            startNewSessionForCurrentProject()
         }
     }
 
     // MARK: - Subviews
 
-    private var workspaceMenu: some View {
-        Menu {
-            ForEach(workspaceStore.workspaces) { ws in
-                Button {
-                    showSettings = false
-                    selectedWorkspaceID = ws.id
-                } label: {
-                    Label(ws.displayName, systemImage: "folder")
-                }
-            }
-            Divider()
-            Button("Choose Project…", systemImage: "folder.badge.plus") {
-                showPicker = true
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "folder")
-                Text(currentWorkspaceName)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
+    private var activeSession: LiveSession? {
+        guard let selectedSessionID else { return nil }
+        return liveSessions.first { $0.id == selectedSessionID }
     }
 
-    private var currentWorkspaceName: String {
-        currentWorkspace?.displayName ?? "No Project"
+    private var activeStore: ChatStore {
+        activeSession?.store ?? placeholderStore
     }
 
     private var currentWorkspace: Workspace? {
-        guard let id = selectedWorkspaceID else { return nil }
-        return workspaceStore.workspaces.first(where: { $0.id == id })
+        activeSession?.workspace ?? selectedWorkspaceID.flatMap { id in
+            workspaceStore.workspaces.first(where: { $0.id == id })
+        }
     }
 
     private var previewMessage: Message? {
         guard let id = previewMessageID else { return nil }
-        return chatStore.messages.first { $0.id == id }
+        return activeStore.messages.first { $0.id == id }
+    }
+
+    private var sidebarSessions: [SidebarSession] {
+        liveSessions.map { session in
+            SidebarSession(
+                id: session.id,
+                title: session.title,
+                projectName: session.workspace.displayName,
+                isRunning: session.store.connectionState == .busy || session.store.connectionState == .starting
+            )
+        }
     }
 
     // MARK: - Logic
@@ -150,7 +170,7 @@ struct ContentView: View {
         // Restore or seed projects
         if let first = workspaceStore.workspaces.first {
             selectedWorkspaceID = first.id
-            Task { await chatStore.setWorkspace(first) }
+            Task { await createLiveSession(for: first) }
         }
 
     }
@@ -160,40 +180,212 @@ struct ContentView: View {
         workspaceStore.add(ws)
         selectedWorkspaceID = ws.id
         Task {
-            await chatStore.setWorkspace(ws)
+            await createLiveSession(for: ws)
         }
     }
 
     private func autoSelectLatestDiffMessage() {
-        if let last = chatStore.messages.last(where: { $0.role == .assistant && $0.hasDiff }) {
+        if let last = activeStore.messages.last(where: { $0.role == .assistant && $0.hasDiff }) {
             if previewMessageID != last.id {
                 previewMessageID = last.id
-                previewDiffs = chatStore.detectedDiffs(in: last)
+                previewDiffs = activeStore.detectedDiffs(in: last)
+                showPreview = true
             }
         }
     }
 
     private func applyDiffs(from message: Message) {
-        guard let ws = chatStore.currentWorkspace else { return }
-        _ = chatStore.applyDiffs(from: message, workspace: ws)
+        guard let ws = activeStore.currentWorkspace else { return }
+        _ = activeStore.applyDiffs(from: message, workspace: ws)
     }
 
     private func applySingle(_ diff: ChatStore.DetectedDiff) {
-        guard let ws = chatStore.currentWorkspace else { return }
+        guard let ws = activeStore.currentWorkspace else { return }
 
         // Apply only one diff by temporarily synthesizing a message with just that diff
         let single = Message(role: .assistant, content: "```diff\n\(diff.raw)\n```")
-        _ = chatStore.applyDiffs(from: single, workspace: ws)
+        _ = activeStore.applyDiffs(from: single, workspace: ws)
     }
 
     private func handleWorkspaceChange(_ newID: Workspace.ID?) {
         if let id = newID,
            let ws = workspaceStore.workspaces.first(where: { $0.id == id }) {
-            Task { await chatStore.setWorkspace(ws) }
+            selectProject(ws)
         }
     }
 
-    // (handleAgentChange removed)
+    private func selectProject(_ workspace: Workspace) {
+        selectedWorkspaceID = workspace.id
+        if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
+            selectSession(session.id)
+        } else {
+            Task { await createLiveSession(for: workspace) }
+        }
+    }
+
+    private func selectSession(_ id: UUID) {
+        guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        selectedSessionID = id
+        selectedWorkspaceID = session.workspace.id
+        previewMessageID = nil
+        previewDiffs = []
+        autoSelectLatestDiffMessage()
+    }
+
+    private func startNewSessionForCurrentProject() {
+        guard let workspace = currentWorkspace else { return }
+        Task { await createLiveSession(for: workspace) }
+    }
+
+    @discardableResult
+    private func createLiveSession(for workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async -> UUID {
+        let id = UUID()
+        let store = ChatStore()
+        let title = "Session \(liveSessions.filter { $0.workspace.id == workspace.id }.count + 1)"
+        liveSessions.append(LiveSession(id: id, store: store, workspace: workspace, title: title))
+        selectedSessionID = id
+        selectedWorkspaceID = workspace.id
+        previewMessageID = nil
+        previewDiffs = []
+        await store.start(workspace: workspace, resumeSession: resumeSession)
+        return id
+    }
+
+    private func switchBranch(project: Workspace, branch: String) async {
+        do {
+            _ = try await runGit(["switch", branch], in: project.path)
+            await createLiveSession(for: project)
+            branchSwitchProject = nil
+        } catch {
+            gitError = error.localizedDescription
+        }
+    }
+
+    private func createWorktree(project: Workspace, branch: String, path: String) async {
+        do {
+            let pathURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            _ = try await runGit(["worktree", "add", "-b", branch, pathURL.path], in: project.path)
+            let workspace = Workspace(name: pathURL.lastPathComponent, path: pathURL)
+            workspaceStore.add(workspace)
+            await createLiveSession(for: workspace)
+            worktreeProject = nil
+        } catch {
+            gitError = error.localizedDescription
+        }
+    }
+
+    private func runGit(_ args: [String], in directory: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = args
+            process.currentDirectoryURL = directory
+
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.standardOutput = stdout
+            process.standardError = stderr
+            process.terminationHandler = { process in
+                let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                if process.terminationStatus == 0 {
+                    continuation.resume(returning: out)
+                } else {
+                    continuation.resume(throwing: NSError(
+                        domain: "Git",
+                        code: Int(process.terminationStatus),
+                        userInfo: [NSLocalizedDescriptionKey: err.isEmpty ? out : err]
+                    ))
+                }
+            }
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
+}
+
+private struct BranchSwitchSheet: View {
+    let project: Workspace
+    var onSwitch: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var branch = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Switch Branch")
+                .font(.title2.weight(.semibold))
+            Text(project.path.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            TextField("Branch name", text: $branch)
+                .textFieldStyle(.roundedBorder)
+            Text("This switches the project checkout and starts a fresh session.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Switch") {
+                    onSwitch(branch.trimmingCharacters(in: .whitespacesAndNewlines))
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 460)
+    }
+}
+
+private struct WorktreeCreateSheet: View {
+    let project: Workspace
+    var onCreate: (String, String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var branch = ""
+    @State private var path = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("New Worktree")
+                .font(.title2.weight(.semibold))
+            Text("Create a new branch in a new worktree and start a fresh session there.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("New branch name", text: $branch)
+                .textFieldStyle(.roundedBorder)
+            TextField("Worktree path", text: $path)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Create") {
+                    onCreate(
+                        branch.trimmingCharacters(in: .whitespacesAndNewlines),
+                        path.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                          path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .onAppear {
+            if path.isEmpty {
+                let sibling = project.path.deletingLastPathComponent()
+                path = sibling.appendingPathComponent("\(project.path.lastPathComponent)-worktree").path
+            }
+        }
+    }
 }
 
 extension Notification.Name {

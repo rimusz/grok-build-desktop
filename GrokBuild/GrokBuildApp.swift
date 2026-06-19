@@ -37,7 +37,7 @@ struct GrokBuildApp: App {
                 .keyboardShortcut("O", modifiers: [.command, .shift])
             }
 
-            CommandMenu("Chat") {
+            CommandMenu("Session") {
                 Button("New Session") {
                     NotificationCenter.default.post(name: .newSessionRequested, object: nil)
                 }

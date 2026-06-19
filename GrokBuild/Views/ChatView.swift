@@ -1,10 +1,16 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct ChatView: View {
     @Bindable var store: ChatStore
+    @Binding var isPreviewVisible: Bool
+    var hasPreviewContent: Bool = false
+    var onNewSession: () -> Void = {}
+    var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
+    @State private var isFileDropTargeted = false
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -83,9 +89,12 @@ struct ChatView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Chat")
-                    .font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Session")
+                        .font(.title3.weight(.semibold))
+                    status
+                }
                 if let ws = store.currentWorkspace {
                     Text(ws.path.path)
                         .font(.caption)
@@ -95,7 +104,35 @@ struct ChatView: View {
                 }
             }
             Spacer()
-            status
+            Button {
+                onNewSession()
+            } label: {
+                Label("New Session", systemImage: "plus.bubble")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(store.currentWorkspace == nil)
+            .help("Start a new session for this project")
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isPreviewVisible.toggle()
+                }
+            } label: {
+                Label("Preview", systemImage: "sidebar.right")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(isPreviewVisible ? "Hide Preview" : "Show Preview")
+            .overlay(alignment: .topTrailing) {
+                if hasPreviewContent {
+                    Circle()
+                        .fill(.blue)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 2, y: -2)
+                }
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 13)
@@ -143,16 +180,12 @@ struct ChatView: View {
     }
 
     private var inputBar: some View {
-        VStack(spacing: 6) {
-            // Text input row
-            HStack(alignment: .bottom, spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(spacing: 8) {
                 TextField("Message Grok… (⌘↩ to send)", text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .focused($inputFocused)
                     .lineLimit(1...8)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     .onSubmit {
                         // Plain return does newline (because axis vertical)
                     }
@@ -176,43 +209,97 @@ struct ChatView: View {
                         return .handled
                     }
 
-                if store.isStreaming {
-                    // Stop generation button (replaces send button while generating)
+                HStack(spacing: 6) {
+                    modeSelector
+                    modelSelector
+                    Text(store.currentModelContextLabel)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                        .help("Selected model context window")
+                    Spacer()
                     Button {
-                        store.stop()
+                        chooseFiles()
                     } label: {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.title)
-                            .foregroundStyle(.red)
+                        Image(systemName: "paperclip")
+                            .font(.body)
                     }
                     .buttonStyle(.plain)
-                    .help("Stop generation (⌘.)")
-                    .keyboardShortcut(".", modifiers: .command)
-                } else {
-                    Button {
-                        Task { await submit() }
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                              store.currentWorkspace == nil ||
-                              store.authRequiredMessage != nil)
-                    .keyboardShortcut(.return, modifiers: .command)
+                    .foregroundStyle(.secondary)
+                    .help("Attach files or folders")
+                    sessionActionButton
                 }
             }
-
-            // Mode + Model selectors at chat bottom (Cursor / VS Code style)
-            HStack(spacing: 6) {
-                modeSelector
-                modelSelector
-                Spacer()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isFileDropTargeted ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isFileDropTargeted ? 1.5 : 1)
             }
-            .padding(.leading, 4)
+            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isFileDropTargeted) { providers in
+                handleFileDrop(providers)
+            }
+
+            projectStatusRow
         }
         .padding(12)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private var sessionActionButton: some View {
+        if store.isStreaming {
+            Button {
+                store.stop()
+            } label: {
+                ZStack {
+                    ProgressView()
+                        .controlSize(.small)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 7, weight: .bold))
+                }
+                .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.plain)
+            .help("Stop session (⌘.)")
+            .keyboardShortcut(".", modifiers: .command)
+        } else {
+            Button {
+                Task { await submit() }
+            } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                      store.currentWorkspace == nil ||
+                      store.authRequiredMessage != nil)
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+    }
+
+    private var projectStatusRow: some View {
+        HStack(spacing: 16) {
+            if let project = store.currentWorkspace {
+                Label(project.displayName, systemImage: "folder")
+                Button {
+                    onSwitchBranch()
+                } label: {
+                    Label(branchLabel(for: project.path), systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                }
+                .buttonStyle(.plain)
+                .help("Switch branch")
+            } else {
+                Label("No project selected", systemImage: "folder")
+            }
+            Spacer()
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
     }
 
     private var modeSelector: some View {
@@ -318,6 +405,96 @@ struct ChatView: View {
         input = ""
         await store.send(text)
         inputFocused = true
+    }
+
+    private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url = fileURL(from: item)
+                guard let url else { return }
+                Task { @MainActor in
+                    appendDroppedFile(url)
+                }
+            }
+        }
+        return true
+    }
+
+    private func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Attach"
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                appendDroppedFile(url)
+            }
+        }
+    }
+
+    private func fileURL(from item: NSSecureCoding?) -> URL? {
+        if let url = item as? URL {
+            return url
+        }
+        if let data = item as? Data,
+           let url = URL(dataRepresentation: data, relativeTo: nil) {
+            return url
+        }
+        if let string = item as? String {
+            return URL(string: string)
+        }
+        return nil
+    }
+
+    @MainActor
+    private func appendDroppedFile(_ url: URL) {
+        let reference = "@\(url.path)"
+        if input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            input = reference
+        } else {
+            input += "\n\(reference)"
+        }
+        inputFocused = true
+    }
+
+    private func branchLabel(for projectURL: URL) -> String {
+        guard let gitDir = gitDirectory(for: projectURL) else { return "No branch" }
+        let headURL = gitDir.appendingPathComponent("HEAD")
+        guard let head = try? String(contentsOf: headURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !head.isEmpty else {
+            return "No branch"
+        }
+
+        if head.hasPrefix("ref: ") {
+            return URL(fileURLWithPath: String(head.dropFirst(5))).lastPathComponent
+        }
+        return String(head.prefix(7))
+    }
+
+    private func gitDirectory(for projectURL: URL) -> URL? {
+        let dotGit = projectURL.appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+
+        if isDirectory.boolValue {
+            return dotGit
+        }
+
+        guard let content = try? String(contentsOf: dotGit, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              content.hasPrefix("gitdir:") else {
+            return nil
+        }
+
+        let rawPath = content.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+        if rawPath.hasPrefix("/") {
+            return URL(fileURLWithPath: rawPath)
+        }
+        return projectURL.appendingPathComponent(rawPath).standardizedFileURL
     }
 }
 

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import Darwin   // POSIX: open, O_EXCL, close, write, kill, getpid
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusBarController: StatusBarController?
     private var lockFd: Int32 = -1   // fd that holds the flock for the lifetime of the process
 
@@ -107,6 +107,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.center()
         window.title = "GrokBuild"
+        window.delegate = self
         window.contentViewController = hosting
         window.setFrameAutosaveName("MainWindow")
         window.makeKeyAndOrderFront(nil)
@@ -145,5 +146,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openMainWindowRequested() {
         openMainWindow()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.miniaturize(nil)
+        return false
     }
 }

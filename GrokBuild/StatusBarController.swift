@@ -132,11 +132,19 @@ class StatusBarController: NSObject {
     }
 
     private var grokBuildTitleItem: NSMenuItem!
+    private var grokVersionItem: NSMenuItem!
     private func setupMenu() {
         // Status with auth dot
         grokBuildTitleItem = NSMenuItem(title: "GrokBuild", action: nil, keyEquivalent: "")
         grokBuildTitleItem.isEnabled = false
         menu.addItem(grokBuildTitleItem)
+
+        grokVersionItem = NSMenuItem(title: "grok CLI: checking…", action: nil, keyEquivalent: "")
+        grokVersionItem.isEnabled = false
+        menu.addItem(grokVersionItem)
+        loadGrokVersion()
+
+        menu.addItem(.separator())
 
         let viewUsageItem = NSMenuItem(title: "View Usage on grok.com…", action: #selector(openUsagePage), keyEquivalent: "")
         viewUsageItem.target = self
@@ -173,6 +181,42 @@ class StatusBarController: NSObject {
         let quitItem = NSMenuItem(title: "Quit GrokBuild", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
+    }
+
+    private func loadGrokVersion() {
+        Task { [weak self] in
+            let title: String
+            do {
+                let output = try await GrokCLIService()
+                    .run(["--version"])
+                    .stdout
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                title = output.isEmpty ? "grok CLI: version unavailable" : "grok CLI: \(self?.formatGrokVersion(output) ?? output)"
+            } catch {
+                title = "grok CLI: not found"
+            }
+
+            await self?.setGrokVersionTitle(title)
+        }
+    }
+
+    @MainActor
+    private func setGrokVersionTitle(_ title: String) {
+        grokVersionItem.title = title
+    }
+
+    private func formatGrokVersion(_ output: String) -> String {
+        // `grok --version` returns: "grok 0.2.56 (hash) [stable]".
+        let withoutName = output.replacingOccurrences(
+            of: #"^grok\s+"#,
+            with: "",
+            options: .regularExpression
+        )
+        return withoutName.replacingOccurrences(
+            of: #"\s+\([^)]+\)"#,
+            with: "",
+            options: .regularExpression
+        )
     }
 
     @objc private func statusItemClicked() {

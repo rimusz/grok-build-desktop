@@ -86,7 +86,7 @@ The menu bar icon is in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imagese
 - Sidebar shows Project Instructions (AGENTS.md / CLAUDE.md loaded automatically by the CLI)
 - Spawn & control grok via stdio (`--no-alt-screen`)
 - Project folder picker + persistence
-- Streaming chat
+- Streaming sessions
 - Command history (↑ / ↓)
 - Markdown rendering in assistant messages
 - Diff detection + Preview pane

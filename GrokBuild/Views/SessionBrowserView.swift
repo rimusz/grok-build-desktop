@@ -4,6 +4,7 @@ struct SessionBrowserView: View {
     @Bindable var store: ChatStore
     let workspace: Workspace?
     var onResume: () -> Void = {}
+    var onResumeSession: ((GrokSessionInfo) -> Void)?
 
     private let service = GrokCLIService()
 
@@ -56,7 +57,11 @@ struct SessionBrowserView: View {
                             Spacer()
                             Button("Resume") {
                                 Task {
-                                    await store.resumeSession(session)
+                                    if let onResumeSession {
+                                        onResumeSession(session)
+                                    } else {
+                                        await store.resumeSession(session)
+                                    }
                                     onResume()
                                 }
                             }
