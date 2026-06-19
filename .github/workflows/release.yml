@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      notarized:
+        description: 'Build notarized (signed) version'
+        required: false
+        default: false
+        type: boolean
+      version:
+        description: 'Version tag (only needed for manual notarized releases)'
+        required: false
+        default: ''
+
+env:
+  APP_NAME: GrokDesk
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine if notarized
+        id: config
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.notarized }}" = "true" ]; then
+            echo "notarized=true" >> $GITHUB_OUTPUT
+            echo "release_name=${{ github.event.inputs.version || github.ref_name }} (Notarized)" >> $GITHUB_OUTPUT
+          else
+            echo "notarized=false" >> $GITHUB_OUTPUT
+            echo "release_name=${{ github.ref_name }} (Unsigned)" >> $GITHUB_OUTPUT
+          fi
+
+      # Only import cert and set identity for notarized builds
+      - name: Import Apple Certificate (notarized only)
+        if: steps.config.outputs.notarized == 'true'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+
+      - name: Build unsigned .app + DMG
+        if: steps.config.outputs.notarized != 'true'
+        run: |
+          make app
+          make dmg
+
+      - name: Build signed + notarized
+        if: steps.config.outputs.notarized == 'true'
+        env:
+          SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY || 'Developer ID Application' }}
+        run: |
+          make signed SIGN_IDENTITY="$SIGN_IDENTITY"
+          ./scripts/notarize.sh dist/${{ env.APP_NAME }}.app
+          make dmg
+
+      - name: Zip the .app
+        run: |
+          ditto -c -k --keepParent dist/${{ env.APP_NAME }}.app dist/${{ env.APP_NAME }}.app.zip
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          if [ "${{ steps.config.outputs.notarized }}" = "true" ]; then
+            cat > release-body.txt << 'EOF'
+            ## Downloads
+
+            - `GrokDesk.app.zip` — Signed + notarized build (recommended)
+            - `GrokDesk-macOS.dmg` — Signed + notarized DMG
+
+            This version is properly code-signed and notarized. No Gatekeeper warnings.
+            EOF
+          else
+            cat > release-body.txt << 'EOF'
+            ## Downloads
+
+            - `GrokDesk.app.zip` — Unsigned build
+            - `GrokDesk-macOS.dmg` — Unsigned DMG
+
+            ## How to bypass Gatekeeper protection (unsigned builds)
+
+            macOS may block unsigned apps.
+
+            **Quick ways to open:**
+
+            1. Right-click `GrokDesk.app` (or the DMG) → **Open**
+            2. Terminal: `xattr -cr /path/to/GrokDesk.app`
+            3. System Settings → Privacy & Security → "Open Anyway"
+
+            ---
+
+            For a signed + notarized version with no warnings, use the manual dispatch and enable "notarized".
+            EOF
+          fi
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat release-body.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release (published)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.version }}
+          name: ${{ steps.config.outputs.release_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
+          files: |
+            dist/${{ env.APP_NAME }}.app.zip
+            dist/${{ env.APP_NAME }}-macOS.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
