@@ -147,7 +147,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let projectItem = NSMenuItem()
         projectItem.submenu = projectMenu
         mainMenu.addItem(projectItem)
-        let addProject = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "O")
+        let addProject = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "o")
         addProject.keyEquivalentModifierMask = [.command, .shift]
         addProject.target = self
         projectMenu.addItem(addProject)
