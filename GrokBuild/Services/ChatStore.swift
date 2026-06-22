@@ -189,6 +189,8 @@ final class ChatStore {
         startConnectionWatchdog()
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
+        let browserMCPServers = AgentBrowserService.browserMCPConfig()
+            .map { [$0] } ?? []
         let opts = GrokLaunchOptions(
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
             noMemory: settings.noMemory,
@@ -200,7 +202,8 @@ final class ChatStore {
             noSubagents: settings.noSubagents,
             allowRules: lineList(settings.allowRules),
             denyRules: lineList(settings.denyRules),
-            resumeSessionID: resumeSessionID
+            resumeSessionID: resumeSessionID,
+            mcpServers: browserMCPServers
         )
         await process.start(workspace: ws, options: opts)
         connectionWatchdogTask?.cancel()

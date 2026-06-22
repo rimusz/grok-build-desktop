@@ -27,6 +27,7 @@ struct GrokLaunchOptions: Sendable {
     var allowRules: [String] = []
     var denyRules: [String] = []
     var resumeSessionID: String? = nil
+    var mcpServers: [MCPServerConfig] = []
 }
 
 // MARK: - Typed ACP Models
@@ -327,9 +328,9 @@ final class GrokProcess: @unchecked Sendable {
         do {
             try await initializeACP()
             if let resumeSessionID = options.resumeSessionID, !resumeSessionID.isEmpty {
-                try await loadSession(id: resumeSessionID, workspace: workspace)
+                try await loadSession(id: resumeSessionID, workspace: workspace, mcpServers: options.mcpServers)
             } else {
-                try await createSession(workspace: workspace)
+                try await createSession(workspace: workspace, mcpServers: options.mcpServers)
             }
             state = .ready
             notifyStatus()
@@ -605,10 +606,10 @@ final class GrokProcess: @unchecked Sendable {
         }
     }
 
-    private func createSession(workspace: Workspace) async throws {
+    private func createSession(workspace: Workspace, mcpServers: [MCPServerConfig]) async throws {
         let res = try await sendRequestWithTimeout(method: "session/new", params: [
             "cwd": workspace.path.path,
-            "mcpServers": []
+            "mcpServers": mcpServers.map(\.jsonObject)
         ]) as? [String: Any]
         sessionId = res?["sessionId"] as? String
         updateModels(from: res?["models"] as? [String: Any])
@@ -625,11 +626,11 @@ final class GrokProcess: @unchecked Sendable {
         }
     }
 
-    private func loadSession(id: String, workspace: Workspace) async throws {
+    private func loadSession(id: String, workspace: Workspace, mcpServers: [MCPServerConfig]) async throws {
         let res = try await sendRequestWithTimeout(method: "session/load", params: [
             "sessionId": id,
             "cwd": workspace.path.path,
-            "mcpServers": []
+            "mcpServers": mcpServers.map(\.jsonObject)
         ]) as? [String: Any]
         sessionId = id
         updateModels(from: res?["models"] as? [String: Any])

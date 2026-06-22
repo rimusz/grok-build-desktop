@@ -19,6 +19,7 @@ struct ChatView: View {
     @State private var slashCommandsExpanded = false
     @State private var voiceInput = VoiceInputService()
     @FocusState private var inputFocused: Bool
+    @AppStorage(BrowserSettingsKeys.enabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -357,6 +358,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Branches & worktrees")
+                browserStatusPill
             } else {
                 Label("No project selected", systemImage: "folder")
             }
@@ -365,6 +367,22 @@ struct ChatView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+    }
+
+    private var browserStatusPill: some View {
+        let installed = AgentBrowserService.executableURL() != nil
+        let title = browserToolsEnabled
+            ? (installed ? "Browser tools on" : "Browser setup needed")
+            : "Browser tools off"
+        let icon = browserToolsEnabled && installed ? "globe.badge.chevron.backward" : "globe"
+
+        return Label(title, systemImage: icon)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(browserToolsEnabled ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10)))
+            .foregroundStyle(browserToolsEnabled ? (installed ? Color.accentColor : Color.orange) : Color.secondary)
+            .help(browserToolsEnabled ? "Browser MCP tools will be injected when this session starts." : "Enable browser tools in Settings.")
     }
 
     @ViewBuilder

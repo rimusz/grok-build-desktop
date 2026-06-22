@@ -77,6 +77,11 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     mkdir -p "$APP_BUNDLE/Contents/Resources"
 
     cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+    if [ -f "$ROOT_DIR/scripts/grokbuild-browser-mcp" ]; then
+        cp "$ROOT_DIR/scripts/grokbuild-browser-mcp" "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
+        chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
+        echo "==> Copied browser MCP bridge"
+    fi
 
     # Copy menu bar icon
     # Looks in these locations (in order):

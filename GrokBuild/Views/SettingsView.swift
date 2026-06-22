@@ -55,6 +55,13 @@ struct SettingsView: View {
                     Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
                 }
 
+                BrowserSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Browser", systemImage: "globe")
+                }
+
                 PermissionsSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
@@ -71,6 +78,107 @@ struct SettingsView: View {
 private func openPath(_ path: String) {
     let expanded = (path as NSString).expandingTildeInPath
     NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
+}
+
+private struct BrowserSettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    @AppStorage(BrowserSettingsKeys.enabled) private var enabled = BrowserSettings.defaults.enabled
+    @AppStorage(BrowserSettingsKeys.backend) private var backend = BrowserSettings.defaults.backend.rawValue
+    @AppStorage(BrowserSettingsKeys.cdpURL) private var cdpURL = BrowserSettings.defaults.cdpURL
+    @AppStorage(BrowserSettingsKeys.profileName) private var profileName = BrowserSettings.defaults.profileName
+
+    @State private var status = BrowserBackendStatus.unavailable
+    @State private var isChecking = false
+
+    var body: some View {
+        Form {
+            Section("Browser Tools") {
+                Toggle("Enable browser tools for Grok sessions", isOn: $enabled)
+
+                Picker("Backend", selection: $backend) {
+                    ForEach(BrowserBackendID.allCases) { backend in
+                        Text(backend.displayName).tag(backend.rawValue)
+                    }
+                }
+
+                TextField("CDP URL (optional, for example http://127.0.0.1:9222)", text: $cdpURL)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Profile/session name (optional)", text: $profileName)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Browser tools are injected into new and resumed Grok sessions through an app-managed MCP server.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Backend Status") {
+                LabeledContent("agent-browser") {
+                    Text(status.isInstalled ? "Installed" : "Not installed")
+                        .foregroundStyle(status.isInstalled ? .green : .orange)
+                }
+                if let path = status.executablePath {
+                    LabeledContent("Path", value: path)
+                }
+                if let version = status.version, !version.isEmpty {
+                    LabeledContent("Version", value: version)
+                }
+                Text(status.diagnostic.isEmpty ? "No diagnostics yet." : status.diagnostic)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Button(isChecking ? "Checking..." : "Run Diagnostics") {
+                        Task { await refreshStatus() }
+                    }
+                    .disabled(isChecking)
+
+                    Button("Open agent-browser Docs") {
+                        NSWorkspace.shared.open(URL(string: "https://agent-browser.dev")!)
+                    }
+                }
+            }
+
+            Section("Chrome Remote Debugging") {
+                Text("Start Chrome or Chromium with remote debugging enabled, then use the CDP URL above if you do not use the backend default.")
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Button("Copy Launch Command") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            """
+                            /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/grokbuild-chrome
+                            """,
+                            forType: .string
+                        )
+                    }
+
+                    Button("Open Setup Docs") {
+                        NSWorkspace.shared.open(URL(string: "https://developer.chrome.com/docs/devtools/remote-debugging/")!)
+                    }
+                }
+            }
+
+            Section {
+                Button("Apply and Restart Grok") {
+                    onConfigurationChanged()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .task {
+            await refreshStatus()
+        }
+    }
+
+    @MainActor
+    private func refreshStatus() async {
+        isChecking = true
+        defer { isChecking = false }
+        status = await AgentBrowserService.status()
+    }
 }
 
 private struct PluginsSettingsPane: View {
