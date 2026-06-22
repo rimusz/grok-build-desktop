@@ -465,6 +465,10 @@ final class GrokCLIService {
         return GrokSessionInfo.parseListOutput(result.stdout)
     }
 
+    func deleteSession(id: String, cwd: URL? = nil) async throws {
+        _ = try await run(["sessions", "delete", id], cwd: cwd)
+    }
+
     private func jsonValue(_ args: [String], cwd: URL? = nil, allowFailure: Bool = false) async throws -> Any {
         let result = try await run(args, cwd: cwd, allowFailure: allowFailure)
         let output = sanitizedJSONOutput(result.stdout)

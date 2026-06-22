@@ -3,6 +3,7 @@ import Observation
 import SwiftUI
 
 @Observable
+@MainActor
 final class ChatStore {
     private struct SessionSelection: Codable {
         var mode: String?
@@ -17,6 +18,20 @@ final class ChatStore {
     private(set) var isStreaming = false
     private(set) var lastError: String?
 
+    // VS Code extension-style turn state
+    private(set) var isGrokking = false
+    private(set) var thinkingText = ""
+    private(set) var thinkingDuration: TimeInterval?
+    private(set) var isThinkingExpanded = false
+    private(set) var liveToolCalls: [LiveToolCall] = []
+    private var thinkingStartedAt: Date?
+
+    struct LiveToolCall: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let kind: String
+    }
+
     /// Set when the underlying grok CLI indicates the user is not authenticated.
     var authRequiredMessage: String?
 
@@ -25,7 +40,13 @@ final class ChatStore {
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
     private(set) var pendingPermissions: [PermissionRequest] = []
+    private(set) var pendingExitPlan: ExitPlanRequest?
+    private(set) var pendingQuestions: [QuestionRequest] = []
+    private(set) var availableSlashCommands: [SlashCommand] = []
+    private(set) var fileAttachments: [FileAttachment] = []
     private(set) var isYolo: Bool = false
+
+    var grokSessionId: String? { process.sessionId }
 
     // MARK: - Model selection (real models from `grok models` + initialize modelState)
     private(set) var currentModel: String = "grok-composer-2.5-fast"
@@ -41,6 +62,7 @@ final class ChatStore {
         "grok-composer-2.5-fast": 200_000,
         "grok-build": 512_000
     ]
+    private(set) var usedContextTokens: Int?
 
     // Persist mode/model choices per Grok session id.
     private let sessionSelectionsKey = "grokbuild.sessionSelections.v1"
@@ -55,9 +77,10 @@ final class ChatStore {
     // (removed Agent personas - see AGENTS.md + sub-agents in Grok Build CLI)
 
     private var streamingMessageID: UUID?
+    private var connectionWatchdogTask: Task<Void, Never>?
 
-    init(process: GrokProcess = GrokProcess()) {
-        self.process = process
+    init(process: GrokProcess? = nil) {
+        self.process = process ?? GrokProcess()
         loadSessionSelections()
         Task { [weak self] in await self?.consumeOutput() }
     }
@@ -85,12 +108,33 @@ final class ChatStore {
         await start(workspace: workspace)
     }
 
+    func prepare(workspace: Workspace) {
+        currentWorkspace = workspace
+        messages.removeAll()
+        streamingMessageID = nil
+        authRequiredMessage = nil
+        pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
+        fileAttachments.removeAll()
+        clearTurnState()
+        connectionState = .idle
+        lastError = nil
+    }
+
+    var hasUserMessages: Bool {
+        messages.contains { $0.role == .user }
+    }
+
     func start(workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async {
         currentWorkspace = workspace
         messages.removeAll()
         streamingMessageID = nil
         authRequiredMessage = nil
         pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
+        fileAttachments.removeAll()
         await restartProcess(resumeSessionID: resumeSession?.id)
         if let resumeSession {
             appendSystemNote("Resumed session \(resumeSession.id).")
@@ -110,6 +154,9 @@ final class ChatStore {
         messages.removeAll()
         streamingMessageID = nil
         pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
+        fileAttachments.removeAll()
         if currentWorkspace != nil {
             await restartProcess()
         }
@@ -123,6 +170,9 @@ final class ChatStore {
         messages.removeAll()
         streamingMessageID = nil
         pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
+        fileAttachments.removeAll()
         await restartProcess(resumeSessionID: session.id)
         appendSystemNote("Resumed session \(session.id).")
     }
@@ -131,8 +181,12 @@ final class ChatStore {
         guard let ws = currentWorkspace else { return }
         isStreaming = false
         streamingMessageID = nil
+        connectionWatchdogTask?.cancel()
+        usedContextTokens = nil
         connectionState = .starting
+        lastError = nil
         postStatusUpdate("starting")
+        startConnectionWatchdog()
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
         let opts = GrokLaunchOptions(
@@ -149,22 +203,57 @@ final class ChatStore {
             resumeSessionID: resumeSessionID
         )
         await process.start(workspace: ws, options: opts)
+        connectionWatchdogTask?.cancel()
         connectionState = process.state
+        if case .failed(let message) = process.state {
+            lastError = message
+            postStatusUpdate(statusName(for: connectionState))
+            return
+        }
         postStatusUpdate(statusName(for: connectionState))
         availableModes = process.availableModes
         syncModelsFromProcess()
         restoreSessionSelection(savedSelection)
         saveCurrentSessionSelection()
+        availableSlashCommands = process.availableSlashCommands
+    }
+
+    private func startConnectionWatchdog() {
+        connectionWatchdogTask?.cancel()
+        connectionWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            await self?.markConnectionTimedOutIfNeeded()
+        }
+    }
+
+    private func markConnectionTimedOutIfNeeded() async {
+        guard connectionState == .starting else { return }
+        lastError = process.state.errorMessage ?? "Timed out while connecting to grok."
+        connectionState = .failed(lastError ?? "Timed out while connecting to grok.")
+        postStatusUpdate("error")
+        await process.stop()
     }
 
     // MARK: Messaging
 
-    func send(_ text: String) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    @discardableResult
+    func send(_ text: String) async -> Bool {
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty || !fileAttachments.isEmpty else { return false }
         guard currentWorkspace != nil else {
             lastError = "Select a project first."
-            return
+            return false
+        }
+        if connectionState != .ready {
+            if process.sessionId == nil && connectionState != .starting {
+                await restartProcess()
+            }
+            guard connectionState == .ready else {
+                lastError = connectionState == .starting
+                    ? "Grok is still starting…"
+                    : "Grok is not ready yet."
+                return false
+            }
         }
 
         if commandHistory.last != trimmed {
@@ -172,8 +261,18 @@ final class ChatStore {
         }
         historyIndex = nil
 
+        clearTurnState()
+        isGrokking = true
+
+        let attachmentRefs = fileAttachments.map(\.reference).joined(separator: "\n")
+        if !attachmentRefs.isEmpty {
+            trimmed = trimmed.isEmpty ? attachmentRefs : "\(attachmentRefs)\n\(trimmed)"
+        }
+        fileAttachments.removeAll()
+
         let userMsg = Message(role: .user, content: trimmed)
         messages.append(userMsg)
+        NotificationCenter.default.post(name: .liveSessionMessagesChanged, object: self)
 
         let assistant = Message(role: .assistant, content: "")
         messages.append(assistant)
@@ -182,39 +281,118 @@ final class ChatStore {
         lastError = nil
         authRequiredMessage = nil
         pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
         connectionState = .busy
         postStatusUpdate("busy")
 
         let payload = trimmed
+        let assistantID = assistant.id
 
-        let ok = await process.send(payload)
-        if !ok {
-            isStreaming = false
-            streamingMessageID = nil
-            lastError = "Failed to send to grok."
-            connectionState = process.state == .ready ? .ready : process.state
-            postStatusUpdate(statusName(for: connectionState))
-            if let id = streamingMessageID, let idx = messages.firstIndex(where: { $0.id == id }) {
-                messages.remove(at: idx)
-            }
-        } else {
-            isStreaming = false
-            streamingMessageID = nil
+        Task { [weak self] in
+            guard let self else { return }
+            let ok = await self.process.send(payload)
+            self.finishPrompt(assistantID: assistantID, ok: ok)
+        }
+
+        return true
+    }
+
+    private func finishPrompt(assistantID: UUID, ok: Bool) {
+        isStreaming = false
+        isGrokking = false
+        streamingMessageID = nil
+        if let start = thinkingStartedAt, !thinkingText.isEmpty {
+            thinkingDuration = Date().timeIntervalSince(start)
+        }
+        if ok {
             connectionState = .ready
             postStatusUpdate("ready")
+            return
         }
+
+        lastError = process.state.errorMessage ?? "Failed to send to grok."
+        connectionState = process.state == .ready ? .ready : process.state
+        postStatusUpdate(statusName(for: connectionState))
+        if let idx = messages.firstIndex(where: { $0.id == assistantID }),
+           messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.remove(at: idx)
+        }
+    }
+
+    func toggleThinkingExpanded() {
+        isThinkingExpanded.toggle()
+    }
+
+    func clearTurnState() {
+        isGrokking = false
+        thinkingText = ""
+        thinkingDuration = nil
+        thinkingStartedAt = nil
+        isThinkingExpanded = false
+        liveToolCalls = []
     }
 
     func stop() {
         isStreaming = false
+        isGrokking = false
         streamingMessageID = nil
         pendingPermissions.removeAll()
+        pendingExitPlan = nil
+        pendingQuestions.removeAll()
         process.interrupt()
         connectionState = .ready
         postStatusUpdate("ready")
     }
 
-    // MARK: - ACP Responses & Modes
+    func shutdown() async {
+        connectionWatchdogTask?.cancel()
+        isStreaming = false
+        isGrokking = false
+        streamingMessageID = nil
+        await process.stop()
+        connectionState = .idle
+        postStatusUpdate("idle")
+    }
+
+    func respondToExitPlan(_ request: ExitPlanRequest, verdict: ExitPlanRequest.PlanVerdict, comment: String = "") {
+        process.respondToExitPlan(request.id.base, verdict: verdict)
+        let marker: String
+        switch verdict {
+        case .approved: marker = "[Plan approved]"
+        case .rejected: marker = "[Plan rejected]"
+        case .abandoned: marker = "[Plan cancelled]"
+        }
+        let trimmedComment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = trimmedComment.isEmpty ? marker : "\(marker) \(trimmedComment)"
+        Task { _ = await send(payload) }
+        pendingExitPlan = nil
+    }
+
+    func respondToQuestion(_ request: QuestionRequest, answers: [String: String]) {
+        process.respondToQuestion(request.id.base, answers: answers)
+        pendingQuestions.removeAll { $0.id == request.id }
+    }
+
+    func cancelQuestion(_ request: QuestionRequest) {
+        process.respondToQuestionCancelled(request.id.base)
+        pendingQuestions.removeAll { $0.id == request.id }
+    }
+
+    func addFileAttachment(path: String) {
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard !fileAttachments.contains(where: { $0.path == standardized }) else { return }
+        fileAttachments.append(FileAttachment(path: standardized, workspaceRoot: currentWorkspace?.path))
+    }
+
+    func removeFileAttachment(id: UUID) {
+        fileAttachments.removeAll { $0.id == id }
+    }
+
+    func toggleFileAttachmentHidden(id: UUID) {
+        guard let idx = fileAttachments.firstIndex(where: { $0.id == id }) else { return }
+        fileAttachments[idx].isHidden.toggle()
+    }
 
     func respondToPermission(_ request: PermissionRequest, with optionId: String) {
         let isAllow = optionId.lowercased().contains("allow")
@@ -270,8 +448,18 @@ final class ChatStore {
     }
 
     var currentModelContextLabel: String {
-        guard let tokens = modelContextTokens[currentModel] else { return "Context: unknown" }
-        return "Context: \(Self.compactTokenCount(tokens))"
+        guard let limit = modelContextTokens[currentModel] else { return "—/—" }
+        let used = usedContextTokens ?? 0
+        return "\(Self.compactTokenCount(used))/\(Self.compactTokenCount(limit))"
+    }
+
+    var contextUsageFraction: Double {
+        guard let limit = modelContextTokens[currentModel], limit > 0 else { return 0 }
+        return min(1, Double(usedContextTokens ?? 0) / Double(limit))
+    }
+
+    var currentModelContextLimit: Int? {
+        modelContextTokens[currentModel]
     }
 
     private static func compactTokenCount(_ tokens: Int) -> String {
@@ -304,6 +492,10 @@ final class ChatStore {
         if currentWorkspace != nil {
             await restartProcess()
         }
+    }
+
+    func reportError(_ message: String) {
+        lastError = message
     }
 
     // MARK: History
@@ -393,25 +585,68 @@ final class ChatStore {
     // MARK: Internal
 
     private func consumeOutput() async {
-        // Primary: structured ACP events from `grok agent stdio`
         for await event in process.acpEventStream {
-            await MainActor.run { self.handleAcpEvent(event) }
+            handleAcpEvent(event)
         }
     }
 
     private func handleAcpEvent(_ event: AcpEvent) {
         switch event {
         case .messageChunk(let text):
+            isGrokking = false
             appendAssistantText(text)
         case .thoughtChunk(let text):
-            appendAssistantText(text)
-        case .toolCall:
-            // TODO: create rich tool call UI entry if desired
-            break
-        case .toolCallUpdate:
-            break
+            isGrokking = false
+            if thinkingStartedAt == nil { thinkingStartedAt = Date() }
+            thinkingText += text
+        case .toolCall(let tc):
+            isGrokking = false
+            if !liveToolCalls.contains(where: { $0.id == tc.id }) {
+                liveToolCalls.append(LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind))
+            }
+            if QuestionRequest.isQuestionTool(tc),
+               let items = QuestionRequest.questionsFromToolCall(tc),
+               !pendingQuestions.contains(where: { $0.id == AnyHashable(tc.id) }) {
+                pendingQuestions.append(QuestionRequest(
+                    id: AnyHashable(tc.id),
+                    sessionId: process.sessionId ?? "",
+                    questions: items,
+                    isResolved: false,
+                    answerSummary: nil
+                ))
+            }
+        case .toolCallUpdate(let tc):
+            if let idx = liveToolCalls.firstIndex(where: { $0.id == tc.id }) {
+                liveToolCalls[idx] = LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind)
+            } else {
+                liveToolCalls.append(LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind))
+            }
+            if QuestionRequest.isQuestionTool(tc),
+               let items = QuestionRequest.questionsFromToolCall(tc),
+               !pendingQuestions.contains(where: { $0.id == AnyHashable(tc.id) }) {
+                pendingQuestions.append(QuestionRequest(
+                    id: AnyHashable(tc.id),
+                    sessionId: process.sessionId ?? "",
+                    questions: items,
+                    isResolved: false,
+                    answerSummary: nil
+                ))
+            }
         case .plan:
             break
+        case .planFileContent(let content):
+            if !content.isEmpty, var plan = pendingExitPlan {
+                plan.planText = content
+                pendingExitPlan = plan
+            }
+        case .exitPlanRequest(let req):
+            pendingExitPlan = req
+        case .questionRequest(let req):
+            if !pendingQuestions.contains(where: { $0.id == req.id }) {
+                pendingQuestions.append(req)
+            }
+        case .availableCommands(let commands):
+            availableSlashCommands = commands
         case .permissionRequest(let req):
             if isYolo {
                 // Auto-approve in YOLO mode (prefer allow_always or first allow)
@@ -428,7 +663,8 @@ final class ChatStore {
             currentMode = mode
             availableModes = process.availableModes // keep in sync
             saveCurrentSessionSelection()
-            // availableModes stay as reported from CLI, but we can filter if needed
+        case .contextUsage(let totalTokens):
+            usedContextTokens = totalTokens
 
         case .rawLine(let line):
             appendAssistantText(line)

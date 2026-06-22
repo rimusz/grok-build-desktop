@@ -6,13 +6,16 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      notarized:
-        description: 'Build notarized (signed) version'
-        required: false
-        default: false
-        type: boolean
+      release_type:
+        description: 'Manual release type'
+        required: true
+        default: unsigned
+        type: choice
+        options:
+          - unsigned
+          - notarized
       version:
-        description: 'Version tag (only needed for manual notarized releases)'
+        description: 'Version tag override; must match VERSION (for example v0.1.1)'
         required: false
         default: ''
 
@@ -26,15 +29,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          app_version="$(tr -d '[:space:]' < VERSION)"
+          build_number="$(tr -d '[:space:]' < BUILD_NUMBER)"
+          default_tag="v${app_version}"
+          input_version="${{ github.event.inputs.version || '' }}"
+
+          if [ -n "$input_version" ]; then
+            case "$input_version" in
+              v*) tag_name="$input_version" ;;
+              *) tag_name="v${input_version}" ;;
+            esac
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag_name="$default_tag"
+          else
+            tag_name="${{ github.ref_name }}"
+          fi
+
+          if [ "$tag_name" != "$default_tag" ]; then
+            echo "::error::Release tag '$tag_name' does not match VERSION '$default_tag'. Update VERSION or use the matching tag."
+            exit 1
+          fi
+
+          echo "app_version=$app_version" >> "$GITHUB_OUTPUT"
+          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$tag_name" >> "$GITHUB_OUTPUT"
+
       - name: Determine if notarized
         id: config
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.notarized }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.release_type }}" = "notarized" ]; then
             echo "notarized=true" >> $GITHUB_OUTPUT
-            echo "release_name=${{ github.event.inputs.version || github.ref_name }} (Notarized)" >> $GITHUB_OUTPUT
+            echo "release_name=${{ steps.version.outputs.tag_name }} (${{ steps.version.outputs.build_number }}) (Notarized)" >> $GITHUB_OUTPUT
           else
             echo "notarized=false" >> $GITHUB_OUTPUT
-            echo "release_name=${{ github.ref_name }} (Unsigned)" >> $GITHUB_OUTPUT
+            echo "release_name=${{ steps.version.outputs.tag_name }} (${{ steps.version.outputs.build_number }}) (Unsigned)" >> $GITHUB_OUTPUT
           fi
 
       # Only import cert and set identity for notarized builds
@@ -95,7 +127,7 @@ jobs:
 
             ---
 
-            For a signed + notarized version with no warnings, use the manual dispatch and enable "notarized".
+            For a signed + notarized version with no warnings, run this workflow manually.
             EOF
           fi
           echo "body<<EOF" >> $GITHUB_OUTPUT
@@ -105,12 +137,13 @@ jobs:
       - name: Create GitHub Release (published)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name || github.event.inputs.version }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
           name: ${{ steps.config.outputs.release_name }}
           draft: false
           prerelease: false
           generate_release_notes: true
           body: ${{ steps.notes.outputs.body }}
+          overwrite_files: true
           files: |
             dist/${{ env.APP_NAME }}.app.zip
             dist/${{ env.APP_NAME }}-macOS.dmg

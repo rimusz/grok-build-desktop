@@ -59,7 +59,7 @@ class StatusBarController: NSObject {
         // Menu bar icon is in GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/
         // The packaging script copies the PNGs into Contents/Resources/.
         // We prefer NSImage(named:) or direct resource lookup; falls back to SF Symbol.
-        let iconImage: NSImage? = loadTemplateIcon()
+        let iconImage: NSImage? = GrokBrandIcon.mark()
 
         if let image = iconImage {
             image.size = NSSize(width: 22, height: 22)
@@ -81,56 +81,6 @@ class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Robustly load the menu bar icon for both packaged .app and bare `swift build` / `make run` binaries.
-    private func loadTemplateIcon() -> NSImage? {
-        // 1. Prefer explicit flat icons next to the executable.
-        // This ensures `make run` / direct binary always gets the freshly copied versions
-        // (bypasses potentially stale SPM resource bundles in .build/.../GrokBuild_GrokBuild.bundle)
-        if let execDir = Bundle.main.executableURL?.deletingLastPathComponent() {
-            for name in ["MenuBarIcon@2x.png", "MenuBarIcon.png", "MenuBarIcon@3x.png"] {
-                let direct = execDir.appendingPathComponent(name).path
-                if FileManager.default.fileExists(atPath: direct),
-                   let img = NSImage(contentsOfFile: direct) {
-                    return img
-                }
-            }
-        }
-
-        // 2. Also check current working directory
-        for name in ["MenuBarIcon@2x.png", "MenuBarIcon.png"] {
-            if FileManager.default.fileExists(atPath: name),
-               let img = NSImage(contentsOfFile: name) {
-                return img
-            }
-        }
-
-        // 3. Asset catalog name (best for properly packaged .app bundles)
-        if let image = NSImage(named: "MenuBarIcon") {
-            return image
-        }
-
-        // 4. Standard bundle resource lookup (flat PNGs)
-        let candidates = ["MenuBarIcon@2x", "MenuBarIcon", "MenuBarIcon@3x"]
-        for name in candidates {
-            if let path = Bundle.main.path(forResource: name, ofType: "png") {
-                if let img = NSImage(contentsOfFile: path) {
-                    return img
-                }
-            }
-        }
-
-        // 5. xcassets subdir fallback (SPM sometimes puts them here)
-        for name in ["MenuBarIcon@2x", "MenuBarIcon", "MenuBarIcon@3x"] {
-            if let path = Bundle.main.path(forResource: name, ofType: "png", inDirectory: "Assets.xcassets/MenuBarIcon.imageset") {
-                if let img = NSImage(contentsOfFile: path) {
-                    return img
-                }
-            }
-        }
-
-        return nil
-    }
-
     private var grokBuildTitleItem: NSMenuItem!
     private var grokVersionItem: NSMenuItem!
     private func setupMenu() {
@@ -143,6 +93,12 @@ class StatusBarController: NSObject {
         grokVersionItem.isEnabled = false
         menu.addItem(grokVersionItem)
         loadGrokVersion()
+
+        menu.addItem(.separator())
+
+        let aboutItem = NSMenuItem(title: "About GrokBuild", action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
 
         menu.addItem(.separator())
 
@@ -171,7 +127,7 @@ class StatusBarController: NSObject {
         menu.addItem(.separator())
 
         // Quick actions
-        let chooseWorkspace = NSMenuItem(title: "Choose Project…", action: #selector(chooseWorkspace), keyEquivalent: "")
+        let chooseWorkspace = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "")
         chooseWorkspace.target = self
         menu.addItem(chooseWorkspace)
 
@@ -254,6 +210,10 @@ class StatusBarController: NSObject {
         showMainWindow()
     }
 
+    @objc private func showAbout() {
+        AboutPanel.show()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -281,7 +241,7 @@ class StatusBarController: NSObject {
             dotColor = .clear
         }
 
-        let baseIcon: NSImage? = loadTemplateIcon()
+        let baseIcon: NSImage? = GrokBrandIcon.mark()
         if let img = baseIcon {
             if img.size.width > 20 {
                 img.size = NSSize(width: 22, height: 22)

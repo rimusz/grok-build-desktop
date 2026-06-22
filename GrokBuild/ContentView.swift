@@ -18,28 +18,49 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showSessions = false
     @State private var showPreview = false
-    @State private var branchSwitchProject: Workspace?
-    @State private var worktreeProject: Workspace?
+    @State private var gitCheckoutRequest: GitCheckoutRequest?
     @State private var gitError: String?
     @State private var previewMessageID: UUID?
     @State private var previewDiffs: [ChatStore.DetectedDiff] = []
+    @State private var didBootstrap = false
+    @State private var sessionListRevision = 0
+    @State private var sessionLayout = SessionLayoutStore.loadSessions()
 
     var body: some View {
         HSplitView {
             SidebarView(
                 workspaces: $workspaceStore.workspaces,
+                orderedWorkspaces: workspaceStore.orderedWorkspaces,
+                pinnedWorkspaceIDs: workspaceStore.pinnedWorkspaceIDs,
                 selectedWorkspaceID: $selectedWorkspaceID,
                 sessions: sidebarSessions,
+                hiddenSessionCounts: hiddenSessionCounts,
                 selectedSessionID: selectedSessionID,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
                     showSettings = false
                     selectProject(ws)
-                    workspaceStore.moveToTop(ws)
                 },
                 onSelectSession: { selectSession($0) },
-                onSwitchBranch: { branchSwitchProject = $0 },
-                onCreateWorktree: { worktreeProject = $0 },
+                onNewSessionForWorkspace: { workspace in
+                    Task { await createLiveSession(for: workspace) }
+                },
+                onRenameSession: { id, name in
+                    renameSession(id: id, to: name)
+                },
+                onCloseSession: { id in
+                    closeSession(id: id)
+                },
+                onMoveWorkspace: { source, destination in
+                    workspaceStore.moveWorkspaces(from: source, to: destination)
+                },
+                onPinWorkspace: { workspaceStore.pin($0) },
+                onUnpinWorkspace: { workspaceStore.unpin($0) },
+                onMoveSession: { workspaceID, source, destination in
+                    moveSessions(for: workspaceID, from: source, to: destination)
+                },
+                onSwitchBranch: { gitCheckoutRequest = GitCheckoutRequest(project: $0) },
+                onCreateWorktree: { gitCheckoutRequest = GitCheckoutRequest(project: $0, focusCreateWorktree: true) },
                 onOpenSettings: { showSettings = true },
                 isSettingsSelected: showSettings
             )
@@ -54,24 +75,36 @@ struct ContentView: View {
                 HSplitView {
                     ChatView(
                         store: activeStore,
-                        isPreviewVisible: $showPreview,
-                        hasPreviewContent: !previewDiffs.isEmpty,
+                        reviewFileCount: previewDiffs.count,
+                        isReviewVisible: showPreview,
+                        onToggleReview: {
+                            if !previewDiffs.isEmpty {
+                                showPreview.toggle()
+                            }
+                        },
+                        onSelectSession: { selectSession($0) },
+                        onBrowseSessions: { showSessions = true },
                         onNewSession: { startNewSessionForCurrentProject() },
-                        onSwitchBranch: { if let project = currentWorkspace { branchSwitchProject = project } }
+                        onSwitchBranch: {
+                            if let workspace = currentWorkspace {
+                                gitCheckoutRequest = GitCheckoutRequest(project: workspace)
+                            }
+                        }
                     )
-                        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
 
                     if showPreview {
                         PreviewPane(
                             message: previewMessage,
                             diffs: previewDiffs,
-                            workspace: activeStore.currentWorkspace,
-                            onApply: { msg in applyDiffs(from: msg) },
-                            onApplySingle: { diff in applySingle(diff) }
+                            workspace: currentWorkspace,
+                            onApply: applyDiffs,
+                            onApplySingle: applySingle
                         )
-                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 520)
+                        .frame(minWidth: 360, idealWidth: 460, maxWidth: 620, maxHeight: .infinity)
                     }
                 }
+                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onAppear(perform: bootstrap)
@@ -81,23 +114,35 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showSessions) {
-            SessionBrowserView(store: activeStore, workspace: currentWorkspace) {
-                showSessions = false
-            } onResumeSession: { session in
-                if let workspace = currentWorkspace {
+            SessionBrowserView(
+                workspaces: currentWorkspace.map { [$0] } ?? [],
+                highlightedWorkspaceID: selectedWorkspaceID,
+                liveSessionsByGrokID: liveSessionsByGrokID,
+                selectedGrokSessionID: activeStore.grokSessionId,
+                onResume: { showSessions = false },
+                onResumeSession: { session, workspace in
                     Task { await createLiveSession(for: workspace, resumeSession: session) }
+                },
+                onSelectLive: { selectSession($0) }
+            )
+        }
+        .sheet(item: $gitCheckoutRequest) { request in
+            GitCheckoutSheet(
+                project: request.project,
+                focusCreateWorktree: request.focusCreateWorktree,
+                onSwitchBranch: { branch in
+                    Task { await switchBranch(project: request.project, branch: branch) }
+                },
+                onOpenWorktree: { worktree in
+                    Task { await openWorktree(worktree, from: request.project) }
+                },
+                onCreateBranch: { branch in
+                    Task { await createAndSwitchBranch(project: request.project, branch: branch) }
+                },
+                onCreateWorktree: { branch, path in
+                    Task { await createWorktree(project: request.project, branch: branch, path: path) }
                 }
-            }
-        }
-        .sheet(item: $branchSwitchProject) { project in
-            BranchSwitchSheet(project: project) { branch in
-                Task { await switchBranch(project: project, branch: branch) }
-            }
-        }
-        .sheet(item: $worktreeProject) { project in
-            WorktreeCreateSheet(project: project) { branch, path in
-                Task { await createWorktree(project: project, branch: branch, path: path) }
-            }
+            )
         }
         .alert("Git action failed", isPresented: Binding(
             get: { gitError != nil },
@@ -129,6 +174,13 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
             startNewSessionForCurrentProject()
         }
+        .onChange(of: activeStore.grokSessionId) { _, _ in
+            persistSessionLayout()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { _ in
+            sessionListRevision &+= 1
+            persistSessionLayout()
+        }
     }
 
     // MARK: - Subviews
@@ -153,32 +205,302 @@ struct ContentView: View {
         return activeStore.messages.first { $0.id == id }
     }
 
+    private var liveSessionsByGrokID: [String: UUID] {
+        Dictionary(
+            uniqueKeysWithValues: liveSessions.compactMap { session in
+                guard let grokID = session.store.grokSessionId else { return nil }
+                return (grokID, session.id)
+            }
+        )
+    }
+
+    private func sessionTitle(for session: LiveSession) -> String {
+        let liveKey = session.id.uuidString
+        if let custom = SessionNameStore.name(for: liveKey) {
+            return custom
+        }
+        if let grokId = session.store.grokSessionId,
+           let custom = SessionNameStore.name(for: grokId) {
+            return custom
+        }
+        if let auto = SessionTitle.auto(from: session.store.messages) {
+            return auto
+        }
+        if let saved = sessionLayout.records.first(where: { $0.id == session.id })?.title,
+           !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return saved
+        }
+        return session.title
+    }
+
+    private func renameSession(id: UUID, to name: String) {
+        SessionNameStore.setName(name, for: id.uuidString)
+        if let grokId = liveSessions.first(where: { $0.id == id })?.store.grokSessionId {
+            SessionNameStore.setName(name, for: grokId)
+        }
+        sessionListRevision &+= 1
+        persistSessionLayout()
+    }
+
+    private func closeSession(id: UUID) {
+        guard let index = liveSessions.firstIndex(where: { $0.id == id }) else { return }
+        let closing = liveSessions[index]
+        let store = closing.store
+        liveSessions.remove(at: index)
+
+        if selectedSessionID == id {
+            if let sibling = liveSessions.last(where: { $0.workspace.id == closing.workspace.id }) {
+                selectSession(sibling.id)
+            } else if let any = liveSessions.last {
+                selectSession(any.id)
+            } else {
+                selectedSessionID = nil
+            }
+        }
+        sessionListRevision &+= 1
+        persistSessionLayout()
+        Task {
+            await store.shutdown()
+        }
+    }
+
+    private func isSessionEmpty(_ session: LiveSession) -> Bool {
+        !session.store.hasUserMessages && session.store.grokSessionId == nil
+    }
+
+    private func purgeEmptySessions(keeping id: UUID? = nil) {
+        let staleIDs = liveSessions
+            .filter { $0.id != id && isSessionEmpty($0) }
+            .map(\.id)
+        for staleID in staleIDs {
+            closeSession(id: staleID)
+        }
+    }
+
+    private var hiddenSessionCounts: [Workspace.ID: Int] {
+        _ = sessionListRevision
+        var counts: [Workspace.ID: Int] = [:]
+        for workspace in workspaceStore.workspaces {
+            let total = liveSessions.filter {
+                $0.workspace.id == workspace.id && ($0.id == selectedSessionID || !isSessionEmpty($0))
+            }.count
+            counts[workspace.id] = max(0, total - SessionLayoutStore.maxSidebarSessions)
+        }
+        return counts
+    }
+
     private var sidebarSessions: [SidebarSession] {
-        liveSessions.map { session in
-            SidebarSession(
-                id: session.id,
-                title: session.title,
-                projectName: session.workspace.displayName,
-                isRunning: session.store.connectionState == .busy || session.store.connectionState == .starting
+        _ = sessionListRevision
+        var result: [SidebarSession] = []
+        for workspace in workspaceStore.workspaces {
+            let visibleIDs = visibleSessionIDs(for: workspace.id)
+            for session in liveSessions where visibleIDs.contains(session.id) {
+                guard session.id == selectedSessionID || !isSessionEmpty(session) else { continue }
+                result.append(
+                    SidebarSession(
+                        id: session.id,
+                        workspaceID: session.workspace.id,
+                        title: sessionTitle(for: session),
+                        isRunning: session.store.connectionState == .busy
+                            || session.store.connectionState == .starting
+                            || session.store.isStreaming
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private func visibleSessionIDs(for workspaceID: Workspace.ID) -> [UUID] {
+        let eligible = liveSessions.filter {
+            $0.workspace.id == workspaceID && ($0.id == selectedSessionID || !isSessionEmpty($0))
+        }
+        var order = sessionLayout.sessionOrderByWorkspace[workspaceID] ?? eligible.map(\.id)
+        order.removeAll { id in !eligible.contains { $0.id == id } }
+        for session in eligible where !order.contains(session.id) {
+            order.append(session.id)
+        }
+        if order.count > SessionLayoutStore.maxSidebarSessions {
+            let selected = selectedSessionID
+            var trimmed = Array(order.prefix(SessionLayoutStore.maxSidebarSessions))
+            if let selected, eligible.contains(where: { $0.id == selected }), !trimmed.contains(selected) {
+                trimmed[SessionLayoutStore.maxSidebarSessions - 1] = selected
+            }
+            order = trimmed
+        }
+        return order
+    }
+
+    private func moveSessions(for workspaceID: UUID, from source: IndexSet, to destination: Int) {
+        let order = visibleSessionIDs(for: workspaceID)
+        let allForWorkspace = liveSessions.filter { $0.workspace.id == workspaceID }.map(\.id)
+        var fullOrder = sessionLayout.sessionOrderByWorkspace[workspaceID] ?? allForWorkspace
+        fullOrder.removeAll { id in !allForWorkspace.contains(id) }
+        for id in allForWorkspace where !fullOrder.contains(id) {
+            fullOrder.append(id)
+        }
+
+        let visible = order
+        var movedVisible = visible
+        movedVisible.move(fromOffsets: source, toOffset: destination)
+
+        var newFull = fullOrder
+        let visibleSet = Set(visible)
+        var visibleIndex = 0
+        for idx in newFull.indices {
+            if visibleSet.contains(newFull[idx]) {
+                newFull[idx] = movedVisible[visibleIndex]
+                visibleIndex += 1
+            }
+        }
+
+        sessionLayout.sessionOrderByWorkspace[workspaceID] = newFull
+        persistSessionLayout()
+        sessionListRevision &+= 1
+    }
+
+    private func persistSessionLayout() {
+        var records: [SavedSessionRecord] = []
+        for session in liveSessions {
+            guard session.store.hasUserMessages || session.store.grokSessionId != nil else { continue }
+            let existing = sessionLayout.records.first { $0.id == session.id }
+            records.append(
+                SavedSessionRecord(
+                    id: session.id,
+                    workspaceID: session.workspace.id,
+                    grokSessionID: session.store.grokSessionId,
+                    title: sessionTitle(for: session),
+                    lastAccessed: existing?.lastAccessed ?? Date()
+                )
             )
         }
+
+        if let selectedSessionID,
+           let idx = records.firstIndex(where: { $0.id == selectedSessionID }) {
+            records[idx].lastAccessed = Date()
+        }
+
+        var order = sessionLayout.sessionOrderByWorkspace
+        for workspace in workspaceStore.workspaces {
+            let ids = liveSessions
+                .filter { $0.workspace.id == workspace.id && ($0.id == selectedSessionID || !isSessionEmpty($0)) }
+                .map(\.id)
+            var workspaceOrder = order[workspace.id] ?? ids
+            workspaceOrder.removeAll { id in !ids.contains(id) }
+            for id in ids where !workspaceOrder.contains(id) {
+                workspaceOrder.append(id)
+            }
+            order[workspace.id] = workspaceOrder
+        }
+
+        sessionLayout = SessionLayoutSnapshot(
+            records: records,
+            sessionOrderByWorkspace: order,
+            selectedSessionID: selectedSessionID,
+            selectedWorkspaceID: selectedWorkspaceID
+        )
+        SessionLayoutStore.saveSessions(sessionLayout)
     }
 
     // MARK: - Logic
 
     private func bootstrap() {
-        // Restore or seed projects
-        if let first = workspaceStore.workspaces.first {
-            selectedWorkspaceID = first.id
-            Task { await createLiveSession(for: first) }
+        guard !didBootstrap else { return }
+        didBootstrap = true
+
+        Task { await restorePersistedSessions() }
+    }
+
+    private func restorePersistedSessions() async {
+        let saved = sessionLayout
+        guard !saved.records.isEmpty else {
+            if let first = workspaceStore.orderedWorkspaces.first {
+                await createLiveSession(for: first)
+            }
+            return
         }
 
+        var titleCacheByWorkspace: [Workspace.ID: [String: String]] = [:]
+        let cli = GrokCLIService()
+
+        for record in saved.records {
+            guard let workspace = workspaceStore.workspaces.first(where: { $0.id == record.workspaceID }) else {
+                continue
+            }
+            guard liveSessions.first(where: { $0.id == record.id }) == nil else { continue }
+
+            let store = ChatStore()
+            let title = await restoredTitle(
+                for: record,
+                workspace: workspace,
+                cache: &titleCacheByWorkspace,
+                cli: cli
+            )
+            liveSessions.append(
+                LiveSession(id: record.id, store: store, workspace: workspace, title: title)
+            )
+
+            if let grokID = record.grokSessionID {
+                let info = GrokSessionInfo(
+                    id: grokID,
+                    created: "",
+                    updated: "",
+                    status: "",
+                    summary: title == SessionTitle.defaultTitle ? "" : title
+                )
+                await store.start(workspace: workspace, resumeSession: info)
+                persistSessionLayout()
+            } else {
+                store.prepare(workspace: workspace)
+            }
+        }
+
+        sessionListRevision &+= 1
+
+        if let selected = saved.selectedSessionID,
+           liveSessions.contains(where: { $0.id == selected }) {
+            selectSession(selected)
+        } else if let wsID = saved.selectedWorkspaceID,
+                  let session = liveSessions.last(where: { $0.workspace.id == wsID }) {
+            selectSession(session.id)
+        } else if let first = liveSessions.first {
+            selectSession(first.id)
+        }
+    }
+
+    private func restoredTitle(
+        for record: SavedSessionRecord,
+        workspace: Workspace,
+        cache: inout [Workspace.ID: [String: String]],
+        cli: GrokCLIService
+    ) async -> String {
+        if let title = record.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+
+        guard let grokID = record.grokSessionID else {
+            return SessionTitle.defaultTitle
+        }
+
+        if cache[workspace.id] == nil {
+            let sessions = (try? await cli.listSessions(limit: 50, cwd: workspace.path)) ?? []
+            cache[workspace.id] = Dictionary(
+                uniqueKeysWithValues: sessions.map { ($0.id, $0.summary) }
+            )
+        }
+
+        if let summary = cache[workspace.id]?[grokID]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !summary.isEmpty {
+            return summary
+        }
+
+        return "Session \(grokID.prefix(8))"
     }
 
     private func addWorkspace(url: URL) {
         let ws = Workspace(name: url.lastPathComponent, path: url)
         workspaceStore.add(ws)
-        selectedWorkspaceID = ws.id
         Task {
             await createLiveSession(for: ws)
         }
@@ -210,6 +532,8 @@ struct ContentView: View {
     private func handleWorkspaceChange(_ newID: Workspace.ID?) {
         if let id = newID,
            let ws = workspaceStore.workspaces.first(where: { $0.id == id }) {
+            showSettings = false
+            if activeSession?.workspace.id == id { return }
             selectProject(ws)
         }
     }
@@ -224,12 +548,14 @@ struct ContentView: View {
     }
 
     private func selectSession(_ id: UUID) {
+        purgeEmptySessions(keeping: id)
         guard let session = liveSessions.first(where: { $0.id == id }) else { return }
         selectedSessionID = id
         selectedWorkspaceID = session.workspace.id
         previewMessageID = nil
         previewDiffs = []
         autoSelectLatestDiffMessage()
+        persistSessionLayout()
     }
 
     private func startNewSessionForCurrentProject() {
@@ -239,151 +565,83 @@ struct ContentView: View {
 
     @discardableResult
     private func createLiveSession(for workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async -> UUID {
+        purgeEmptySessions()
         let id = UUID()
         let store = ChatStore()
-        let title = "Session \(liveSessions.filter { $0.workspace.id == workspace.id }.count + 1)"
+        let title = resumeSession.flatMap { session in
+            SessionNameStore.name(for: session.id)
+                ?? (session.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : session.summary)
+        } ?? SessionTitle.defaultTitle
         liveSessions.append(LiveSession(id: id, store: store, workspace: workspace, title: title))
         selectedSessionID = id
         selectedWorkspaceID = workspace.id
         previewMessageID = nil
         previewDiffs = []
-        await store.start(workspace: workspace, resumeSession: resumeSession)
+        sessionListRevision &+= 1
+        persistSessionLayout()
+        if let resumeSession {
+            await store.start(workspace: workspace, resumeSession: resumeSession)
+        } else {
+            store.prepare(workspace: workspace)
+        }
         return id
     }
 
     private func switchBranch(project: Workspace, branch: String) async {
         do {
-            _ = try await runGit(["switch", branch], in: project.path)
+            _ = try await GitService.run(["switch", branch], in: project.path)
             await createLiveSession(for: project)
-            branchSwitchProject = nil
+            gitCheckoutRequest = nil
         } catch {
             gitError = error.localizedDescription
         }
+    }
+
+    private func createAndSwitchBranch(project: Workspace, branch: String) async {
+        do {
+            _ = try await GitService.run(["switch", "-c", branch], in: project.path)
+            await createLiveSession(for: project)
+            gitCheckoutRequest = nil
+        } catch {
+            gitError = error.localizedDescription
+        }
+    }
+
+    private func openWorktree(_ worktree: GitWorktreeInfo, from project: Workspace) async {
+        let path = worktree.path.standardizedFileURL
+        if path.path == project.path.standardizedFileURL.path {
+            if let branch = worktree.branch,
+               branch != GitService.currentBranch(in: project.path) {
+                await switchBranch(project: project, branch: branch)
+            } else {
+                gitCheckoutRequest = nil
+            }
+            return
+        }
+
+        if let existing = workspaceStore.workspaces.first(where: {
+            $0.path.standardizedFileURL.path == path.path
+        }) {
+            selectProject(existing)
+            await createLiveSession(for: existing)
+        } else {
+            let workspace = Workspace(name: path.lastPathComponent, path: path)
+            workspaceStore.add(workspace)
+            await createLiveSession(for: workspace)
+        }
+        gitCheckoutRequest = nil
     }
 
     private func createWorktree(project: Workspace, branch: String, path: String) async {
         do {
             let pathURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-            _ = try await runGit(["worktree", "add", "-b", branch, pathURL.path], in: project.path)
+            _ = try await GitService.run(["worktree", "add", "-b", branch, pathURL.path], in: project.path)
             let workspace = Workspace(name: pathURL.lastPathComponent, path: pathURL)
             workspaceStore.add(workspace)
             await createLiveSession(for: workspace)
-            worktreeProject = nil
+            gitCheckoutRequest = nil
         } catch {
             gitError = error.localizedDescription
-        }
-    }
-
-    private func runGit(_ args: [String], in directory: URL) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = args
-            process.currentDirectoryURL = directory
-
-            let stdout = Pipe()
-            let stderr = Pipe()
-            process.standardOutput = stdout
-            process.standardError = stderr
-            process.terminationHandler = { process in
-                let out = String(decoding: stdout.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                let err = String(decoding: stderr.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: out)
-                } else {
-                    continuation.resume(throwing: NSError(
-                        domain: "Git",
-                        code: Int(process.terminationStatus),
-                        userInfo: [NSLocalizedDescriptionKey: err.isEmpty ? out : err]
-                    ))
-                }
-            }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-    }
-}
-
-private struct BranchSwitchSheet: View {
-    let project: Workspace
-    var onSwitch: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var branch = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Switch Branch")
-                .font(.title2.weight(.semibold))
-            Text(project.path.path)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            TextField("Branch name", text: $branch)
-                .textFieldStyle(.roundedBorder)
-            Text("This switches the project checkout and starts a fresh session.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Switch") {
-                    onSwitch(branch.trimmingCharacters(in: .whitespacesAndNewlines))
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(24)
-        .frame(width: 460)
-    }
-}
-
-private struct WorktreeCreateSheet: View {
-    let project: Workspace
-    var onCreate: (String, String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var branch = ""
-    @State private var path = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("New Worktree")
-                .font(.title2.weight(.semibold))
-            Text("Create a new branch in a new worktree and start a fresh session there.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("New branch name", text: $branch)
-                .textFieldStyle(.roundedBorder)
-            TextField("Worktree path", text: $path)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                Button("Create") {
-                    onCreate(
-                        branch.trimmingCharacters(in: .whitespacesAndNewlines),
-                        path.trimmingCharacters(in: .whitespacesAndNewlines)
-                    )
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                          path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(24)
-        .frame(width: 520)
-        .onAppear {
-            if path.isEmpty {
-                let sibling = project.path.deletingLastPathComponent()
-                path = sibling.appendingPathComponent("\(project.path.lastPathComponent)-worktree").path
-            }
         }
     }
 }
@@ -396,4 +654,5 @@ extension Notification.Name {
     static let showMainWindowRequested = Notification.Name("showMainWindowRequested")
     static let newSessionRequested = Notification.Name("newSessionRequested")
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
+    static let liveSessionMessagesChanged = Notification.Name("liveSessionMessagesChanged")
 }

@@ -5,6 +5,7 @@
 #
 # Usage:
 #   make build          # Build Release binary with SwiftPM
+#   make test           # Run unit tests
 #   make run            # Build + launch the menu bar app
 #   make app            # Package .app into dist/
 #   make dmg            # Package .app + DMG (auto-notarizes if NOTARY_PROFILE set)
@@ -28,12 +29,13 @@ GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 NC     := \033[0m
 
-.PHONY: help build run app dmg signed clean open notarize
+.PHONY: help build test run app dmg signed clean open notarize
 
 help: ## Show this help
 	@echo "GrokBuild macOS Build Commands"
 	@echo ""
 	@echo "  $(YELLOW)make build$(NC)            Build release binary (SwiftPM)"
+	@echo "  $(YELLOW)make test$(NC)             Run unit tests"
 	@echo "  $(YELLOW)make run$(NC)             Build + launch the menu bar app"
 	@echo "  $(YELLOW)make app$(NC)              Package .app into dist/"
 	@echo "  $(YELLOW)make dmg$(NC)              Build .app + DMG (auto-notarizes + re-DMG if NOTARY_PROFILE set)"
@@ -57,8 +59,14 @@ build: ## Build using SwiftPM (Release) - recommended
 	@cp -f AppIcon.png .build/release/ 2>/dev/null || true
 	@echo "$(GREEN)==> Build complete. Use 'make run' to launch (or ./.build/release/GrokBuild directly).$(NC)"
 
+test: ## Run unit tests
+	@echo "$(GREEN)==> Running unit tests...$(NC)"
+	@swift test
+
 run: build ## Build + launch the menu bar app
 	@echo "$(GREEN)==> Starting GrokBuild...$(NC)"
+	@pkill -x GrokBuild 2>/dev/null || true
+	@sleep 0.2
 	@./.build/release/GrokBuild > /dev/null 2>&1 & disown
 	@echo "$(GREEN)==> GrokBuild launched.$(NC)"
 

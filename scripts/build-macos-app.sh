@@ -23,6 +23,8 @@ APP_NAME="GrokBuild"
 EXECUTABLE_NAME="GrokBuild"
 SCHEME="GrokBuild"
 CONFIGURATION="Release"
+APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
+BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
 
 BUILD_DIR="$ROOT_DIR/.build"
 DIST_DIR="$ROOT_DIR/dist"
@@ -162,13 +164,17 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.0</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUILD_NUMBER</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>GrokBuild transcribes your speech to text for chat messages.</string>
 </dict>
 </plist>
 EOF

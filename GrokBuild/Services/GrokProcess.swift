@@ -128,8 +128,13 @@ enum AcpEvent: @unchecked Sendable {
     case toolCall(ToolCall)
     case toolCallUpdate(ToolCall)   // simplified
     case plan(payload: [String: Any])
+    case planFileContent(String)
+    case exitPlanRequest(ExitPlanRequest)
+    case questionRequest(QuestionRequest)
     case permissionRequest(PermissionRequest)
     case modeChanged(mode: AgentMode)
+    case contextUsage(totalTokens: Int)
+    case availableCommands([SlashCommand])
     case rawLine(String)
     case error(String)
 }
@@ -137,7 +142,8 @@ enum AcpEvent: @unchecked Sendable {
 /// ACP client for `grok agent stdio`.
 /// Replaces the old TUI scraping approach with proper JSON-RPC.
 @Observable
-final class GrokProcess {
+final class GrokProcess: @unchecked Sendable {
+    private let ioLock = NSLock()
     private(set) var state: GrokProcessState = .idle
     private(set) var currentWorkspace: Workspace?
     private(set) var outputLines: [String] = []
@@ -165,9 +171,15 @@ final class GrokProcess {
     private var stdout: Pipe?
     private var stderr: Pipe?
     private var readerTask: Task<Void, Never>?
+    private var stdoutBuffer = ""
+    private var startupStderr = ""
 
     private var nextRequestId = 1
-    private var pendingRequests: [Int: CheckedContinuation<Any?, Error>] = [:]
+    private struct PendingRequest {
+        let continuation: CheckedContinuation<Any?, Error>
+        let timeoutTask: Task<Void, Never>?
+    }
+    private var pendingRequests: [Int: PendingRequest] = [:]
     private(set) var sessionId: String?
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
@@ -175,6 +187,8 @@ final class GrokProcess {
 
     // Populated from initialize modelState so we use real models from grok CLI
     private(set) var availableModelsInfo: [(id: String, name: String, contextTokens: Int?)] = []
+    private(set) var availableSlashCommands: [SlashCommand] = []
+    private var latestPlanFileContent = ""
 
     // MARK: - Parsing helpers (instance for access to state if needed)
 
@@ -305,8 +319,10 @@ final class GrokProcess {
         self.stdin = i.fileHandleForWriting
         self.stdout = o
         self.stderr = e
+        self.stdoutBuffer = ""
+        self.startupStderr = ""
 
-        readerTask = Task { [weak self] in await self?.readAcp(stdout: o, stderr: e) }
+        setupReaders(stdout: o, stderr: e)
 
         do {
             try await initializeACP()
@@ -318,15 +334,23 @@ final class GrokProcess {
             state = .ready
             notifyStatus()
         } catch {
-            state = .failed("ACP initialize failed: \(error.localizedDescription)")
-            await stop()
+            let stderrDetails = startupStderrSnapshot()
+            let suffix = stderrDetails.isEmpty ? "" : "\n\(stderrDetails)"
+            state = .failed("ACP initialize failed: \(error.localizedDescription)\(suffix)")
+            await cleanupProcess(setIdle: false)
             notifyStatus()
         }
     }
 
     func stop() async {
+        await cleanupProcess(setIdle: true)
+    }
+
+    private func cleanupProcess(setIdle: Bool) async {
         readerTask?.cancel()
         readerTask = nil
+        stdout?.fileHandleForReading.readabilityHandler = nil
+        stderr?.fileHandleForReading.readabilityHandler = nil
 
         if let sid = sessionId {
             _ = writeJson(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": sid]])
@@ -343,11 +367,17 @@ final class GrokProcess {
         stdout = nil
         stderr = nil
         sessionId = nil
-        pendingRequests.removeAll()
+        drainPendingRequests(with: NSError(
+            domain: "ACP",
+            code: -3,
+            userInfo: [NSLocalizedDescriptionKey: "Grok process stopped."]
+        ))
 
         acpEventContinuation?.yield(.rawLine("[process stopped]"))
         outputContinuation?.yield("\n[process stopped]\n")
-        state = .idle
+        if setIdle {
+            state = .idle
+        }
         currentWorkspace = nil
         notifyStatus()
     }
@@ -366,6 +396,8 @@ final class GrokProcess {
                 "sessionId": sid,
                 "prompt": [["type": "text", "text": text]]
             ])
+            state = .ready
+            notifyStatus()
             return true
         } catch {
             state = .failed("Prompt error: \(error.localizedDescription)")
@@ -389,13 +421,27 @@ final class GrokProcess {
         ])
     }
 
-    func respondToExitPlan(_ planRequestId: Any, approved: Bool) {
-        let verdict = approved ? "approved" : "rejected"
-        if approved {
+    func respondToExitPlan(_ planRequestId: Any, verdict: ExitPlanRequest.PlanVerdict) {
+        switch verdict {
+        case .approved:
             _ = writeJson(["jsonrpc": "2.0", "id": planRequestId, "result": ["outcome": "approved"]])
-        } else {
-            _ = writeJson(["jsonrpc": "2.0", "id": planRequestId, "error": ["code": -32000, "message": "User \(verdict) the plan"]])
+        case .rejected:
+            _ = writeJson(["jsonrpc": "2.0", "id": planRequestId, "error": ["code": -32000, "message": "User rejected the plan"]])
+        case .abandoned:
+            _ = writeJson(["jsonrpc": "2.0", "id": planRequestId, "error": ["code": -32000, "message": "User abandoned the plan"]])
         }
+    }
+
+    func respondToQuestion(_ requestId: Any, answers: [String: String]) {
+        _ = writeJson([
+            "jsonrpc": "2.0",
+            "id": requestId,
+            "result": ["outcome": "accepted", "answers": answers, "annotations": [:] as [String: Any]]
+        ])
+    }
+
+    func respondToQuestionCancelled(_ requestId: Any) {
+        _ = writeJson(["jsonrpc": "2.0", "id": requestId, "result": ["outcome": "cancelled"]])
     }
 
     // MARK: - Mode switching
@@ -437,27 +483,107 @@ final class GrokProcess {
     // MARK: - ACP Implementation
 
     private func writeJson(_ obj: [String: Any]) -> Bool {
-        guard let h = stdin,
-              let d = try? JSONSerialization.data(withJSONObject: obj) else { return false }
-        var l = d; l.append("\n".data(using: .utf8)!)
-        do { try h.write(contentsOf: l); return true } catch { return false }
+        guard let h = stdin else { return false }
+        let data: Data
+        if #available(macOS 12.0, *) {
+            guard let encoded = try? JSONSerialization.data(
+                withJSONObject: obj,
+                options: [.withoutEscapingSlashes]
+            ) else { return false }
+            data = encoded
+        } else {
+            guard let encoded = try? JSONSerialization.data(withJSONObject: obj) else { return false }
+            data = encoded
+        }
+        var line = data
+        line.append("\n".data(using: .utf8)!)
+        do { try h.write(contentsOf: line); return true } catch { return false }
     }
 
     private func sendRequest(method: String, params: [String: Any]) async throws -> Any? {
-        let id = nextRequestId; nextRequestId += 1
+        let id: Int = {
+            ioLock.lock()
+            defer { ioLock.unlock() }
+            let current = nextRequestId
+            nextRequestId += 1
+            return current
+        }()
         let req: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
 
         return try await withCheckedThrowingContinuation { c in
-            pendingRequests[id] = c
+            ioLock.lock()
+            pendingRequests[id] = PendingRequest(continuation: c, timeoutTask: nil)
+            ioLock.unlock()
             if !writeJson(req) {
+                ioLock.lock()
                 pendingRequests.removeValue(forKey: id)
+                ioLock.unlock()
                 c.resume(throwing: NSError(domain: "ACP", code: -1))
             }
         }
     }
 
+    private func sendRequestWithTimeout(method: String, params: [String: Any], seconds: Double = 15) async throws -> Any? {
+        let id: Int = {
+            ioLock.lock()
+            defer { ioLock.unlock() }
+            let current = nextRequestId
+            nextRequestId += 1
+            return current
+        }()
+        let req: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method, "params": params]
+
+        return try await withCheckedThrowingContinuation { c in
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(seconds))
+                self?.timeoutPendingRequest(id: id)
+            }
+            ioLock.lock()
+            pendingRequests[id] = PendingRequest(continuation: c, timeoutTask: timeoutTask)
+            ioLock.unlock()
+            if !writeJson(req) {
+                timeoutTask.cancel()
+                ioLock.lock()
+                pendingRequests.removeValue(forKey: id)
+                ioLock.unlock()
+                c.resume(throwing: NSError(domain: "ACP", code: -1))
+            }
+        }
+    }
+
+    private func timeoutPendingRequest(id: Int) {
+        ioLock.lock()
+        guard let pending = pendingRequests.removeValue(forKey: id) else {
+            ioLock.unlock()
+            return
+        }
+        ioLock.unlock()
+        pending.continuation.resume(throwing: NSError(
+            domain: "ACP",
+            code: -2,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for grok."]
+        ))
+    }
+
+    private func drainPendingRequests(with error: Error) {
+        ioLock.lock()
+        let pending = Array(pendingRequests.values)
+        pendingRequests.removeAll()
+        ioLock.unlock()
+        for item in pending {
+            item.timeoutTask?.cancel()
+            item.continuation.resume(throwing: error)
+        }
+    }
+
+    private func startupStderrSnapshot() -> String {
+        ioLock.lock()
+        defer { ioLock.unlock() }
+        return startupStderr.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func initializeACP() async throws {
-        let res = try await sendRequest(method: "initialize", params: [
+        let res = try await sendRequestWithTimeout(method: "initialize", params: [
             "protocolVersion": 1,
             "clientCapabilities": [
                 "fs": ["readTextFile": true, "writeTextFile": true],
@@ -466,7 +592,8 @@ final class GrokProcess {
         ]) as? [String: Any]
 
         // Parse real models from modelState (do not make up)
-        if let ms = res?["modelState"] as? [String: Any],
+        let meta = res?["_meta"] as? [String: Any]
+        if let ms = (res?["modelState"] as? [String: Any]) ?? (meta?["modelState"] as? [String: Any]),
            let models = ms["availableModels"] as? [[String: Any]] {
             availableModelsInfo = models.compactMap { m in
                 guard let id = m["modelId"] as? String else { return nil }
@@ -479,7 +606,7 @@ final class GrokProcess {
     }
 
     private func createSession(workspace: Workspace) async throws {
-        let res = try await sendRequest(method: "session/new", params: [
+        let res = try await sendRequestWithTimeout(method: "session/new", params: [
             "cwd": workspace.path.path,
             "mcpServers": []
         ]) as? [String: Any]
@@ -499,7 +626,7 @@ final class GrokProcess {
     }
 
     private func loadSession(id: String, workspace: Workspace) async throws {
-        let res = try await sendRequest(method: "session/load", params: [
+        let res = try await sendRequestWithTimeout(method: "session/load", params: [
             "sessionId": id,
             "cwd": workspace.path.path,
             "mcpServers": []
@@ -524,21 +651,65 @@ final class GrokProcess {
         }
     }
 
-    private func readAcp(stdout: Pipe, stderr: Pipe) async {
-        Task {
-            for await d in stderr.fileHandleForReading.bytesStream() {
-                if let s = String(data: d, encoding: .utf8) { outputContinuation?.yield("[stderr] \(s)") }
+    private func setupReaders(stdout: Pipe, stderr: Pipe) {
+        // Process pipe I/O synchronously on the reader thread. Dispatching to
+        // MainActor here deadlocks because start() awaits ACP responses on MainActor.
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.handleStdoutData(data)
+        }
+
+        stderr.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                return
+            }
+            self?.handleStderrData(data)
+        }
+    }
+
+    private func handleStdoutData(_ data: Data) {
+        var lines: [String] = []
+        ioLock.lock()
+        if let chunk = String(data: data, encoding: .utf8) {
+            stdoutBuffer += chunk
+            while let newline = stdoutBuffer.firstIndex(of: "\n") {
+                lines.append(String(stdoutBuffer[..<newline]))
+                stdoutBuffer.removeSubrange(...newline)
             }
         }
+        ioLock.unlock()
 
-        for await d in stdout.fileHandleForReading.bytesStream() {
-            guard let line = String(data: d, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines), !line.isEmpty else { continue }
-
-            outputLines.append(line)
-            outputContinuation?.yield(line + "\n")
-            handleJsonLine(line)
+        for rawLine in lines {
+            handleAcpRawLine(rawLine)
         }
+    }
+
+    private func handleStderrData(_ data: Data) {
+        ioLock.lock()
+        let chunk = String(data: data, encoding: .utf8)
+        if let chunk {
+            startupStderr += chunk
+        }
+        ioLock.unlock()
+
+        if let chunk {
+            outputContinuation?.yield("[stderr] \(chunk)")
+        }
+    }
+
+    private func handleAcpRawLine(_ rawLine: String) {
+        let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return }
+
+        outputLines.append(line)
+        outputContinuation?.yield(line + "\n")
+        handleJsonLine(line)
     }
 
     private func handleJsonLine(_ line: String) {
@@ -548,22 +719,14 @@ final class GrokProcess {
             return
         }
 
-        if let id = j["id"] as? Int {
-            if let c = pendingRequests.removeValue(forKey: id) {
-                if let err = j["error"] {
-                    c.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: [NSLocalizedDescriptionKey: "\(err)"]))
-                } else {
-                    c.resume(returning: j["result"])
-                }
-            }
-            return
-        }
-
         if let method = j["method"] as? String {
             let params = j["params"] as? [String: Any] ?? [:]
             let rid = j["id"]
 
             if method == "session/update" {
+                if let total = totalTokens(from: params) {
+                    acpEventContinuation?.yield(.contextUsage(totalTokens: total))
+                }
                 if let u = params["update"] as? [String: Any] { routeUpdate(u) }
                 return
             }
@@ -576,8 +739,31 @@ final class GrokProcess {
                 return
             }
 
-            if method == "x.ai/exit_plan_mode" || method == "session/exit_plan_mode" {
-                acpEventContinuation?.yield(.plan(payload: params))
+            if method == "x.ai/exit_plan_mode" || method == "session/exit_plan_mode"
+                || method == "_x.ai/exit_plan_mode" {
+                let planText = exitPlanText(from: params)
+                let req = ExitPlanRequest(
+                    id: requestIdHash(rid),
+                    sessionId: params["sessionId"] as? String ?? sessionId ?? "",
+                    planText: planText.isEmpty ? latestPlanFileContent : planText,
+                    isResolved: false,
+                    verdict: nil
+                )
+                acpEventContinuation?.yield(.exitPlanRequest(req))
+                return
+            }
+
+            if method == "x.ai/ask_user_question" || method == "_x.ai/ask_user_question" {
+                let questions = (params["questions"] as? [[String: Any]] ?? [])
+                    .compactMap { QuestionItem.parse(from: $0) }
+                let req = QuestionRequest(
+                    id: requestIdHash(rid),
+                    sessionId: params["sessionId"] as? String ?? sessionId ?? "",
+                    questions: questions,
+                    isResolved: false,
+                    answerSummary: nil
+                )
+                acpEventContinuation?.yield(.questionRequest(req))
                 return
             }
 
@@ -591,7 +777,43 @@ final class GrokProcess {
             default:
                 if let r = rid { _ = writeJson(["jsonrpc": "2.0", "id": r, "result": [:]]) }
             }
+            return
         }
+
+        if let id = jsonRequestId(from: j) {
+            ioLock.lock()
+            let pending = pendingRequests.removeValue(forKey: id)
+            ioLock.unlock()
+            if let pending {
+                pending.timeoutTask?.cancel()
+                if let err = j["error"] {
+                    pending.continuation.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: [NSLocalizedDescriptionKey: "\(err)"]))
+                } else {
+                    pending.continuation.resume(returning: j["result"])
+                }
+            }
+            return
+        }
+    }
+
+    private func jsonRequestId(from json: [String: Any]) -> Int? {
+        if let id = json["id"] as? Int { return id }
+        if let id = json["id"] as? NSNumber { return id.intValue }
+        if let id = json["id"] as? String, let parsed = Int(id) { return parsed }
+        return nil
+    }
+
+    private func totalTokens(from params: [String: Any]) -> Int? {
+        if let meta = params["_meta"] as? [String: Any],
+           let total = meta["totalTokens"] as? Int {
+            return total
+        }
+        if let update = params["update"] as? [String: Any],
+           let meta = update["_meta"] as? [String: Any],
+           let total = meta["totalTokens"] as? Int {
+            return total
+        }
+        return nil
     }
 
     private func routeUpdate(_ u: [String: Any]) {
@@ -615,6 +837,11 @@ final class GrokProcess {
             }
         case "plan":
             acpEventContinuation?.yield(.plan(payload: u))
+        case "available_commands_update":
+            let commands = (u["availableCommands"] as? [[String: Any]] ?? [])
+                .compactMap { SlashCommand.parse(from: $0) }
+            availableSlashCommands = commands
+            acpEventContinuation?.yield(.availableCommands(commands))
         case "current_mode_update":
             if let m = u["currentModeId"] as? String {
                 currentMode = AgentMode(rawValue: m)
@@ -624,6 +851,12 @@ final class GrokProcess {
         }
     }
 
+    private func requestIdHash(_ id: Any?) -> AnyHashable {
+        if let intId = id as? Int { return AnyHashable(intId) }
+        if let strId = id as? String { return AnyHashable(strId) }
+        return AnyHashable(UUID().uuidString)
+    }
+
     private func respond(rid: Any?, result: Any = [:]) {
         guard let id = rid else { return }
         _ = writeJson(["jsonrpc": "2.0", "id": id, "result": result])
@@ -631,7 +864,7 @@ final class GrokProcess {
 
     private func handleFsRead(rid: Any?, path: String) {
         do {
-            let c = try String(contentsOfFile: path, encoding: .utf8)
+            let c = try String(contentsOf: resolvedProjectURL(path), encoding: .utf8)
             respond(rid: rid, result: ["content": c])
         } catch {
             _ = writeJson(["jsonrpc": "2.0", "id": rid as Any, "error": ["code": -32001, "message": error.localizedDescription]])
@@ -639,12 +872,39 @@ final class GrokProcess {
     }
 
     private func handleFsWrite(rid: Any?, path: String, content: String) {
+        if isPlanFileWrite(path) {
+            latestPlanFileContent = content
+            acpEventContinuation?.yield(.planFileContent(content))
+        }
         do {
-            try content.write(toFile: path, atomically: true, encoding: .utf8)
+            let url = resolvedProjectURL(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try content.write(to: url, atomically: true, encoding: .utf8)
             respond(rid: rid)
         } catch {
             _ = writeJson(["jsonrpc": "2.0", "id": rid as Any, "error": ["code": -32001, "message": error.localizedDescription]])
         }
+    }
+
+    private func isPlanFileWrite(_ path: String) -> Bool {
+        let normalized = path.replacingOccurrences(of: "\\", with: "/").lowercased()
+        return normalized.hasSuffix("/plan.md") || normalized.contains("/sessions/") && normalized.hasSuffix("plan.md")
+    }
+
+    private func exitPlanText(from params: [String: Any]) -> String {
+        if let plan = params["planContent"] as? String, !plan.isEmpty { return plan }
+        if let plan = params["plan"] as? String, !plan.isEmpty { return plan }
+        if let input = params["input"] as? [String: Any], let plan = input["plan"] as? String { return plan }
+        return ""
+    }
+
+    private func resolvedProjectURL(_ path: String) -> URL {
+        if path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+        return (currentWorkspace?.path ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+            .appendingPathComponent(path)
+            .standardizedFileURL
     }
 
     // MARK: - Utils
@@ -667,11 +927,6 @@ final class GrokProcess {
             }
         }
         return nil
-    }
-
-    deinit {
-        acpEventContinuation?.finish()
-        outputContinuation?.finish()
     }
 
     private func notifyStatus() {

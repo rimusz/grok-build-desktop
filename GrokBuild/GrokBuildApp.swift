@@ -17,21 +17,12 @@ struct GrokBuildApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About GrokBuild") {
-                    NSApplication.shared.orderFrontStandardAboutPanel(
-                        options: [
-                            .applicationName: "GrokBuild",
-                            .version: "0.2.0",
-                            .credits: NSAttributedString(
-                                string: "Native SwiftUI Mac frontend for the Grok Build CLI.",
-                                attributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)]
-                            )
-                        ]
-                    )
+                    AboutPanel.show()
                 }
             }
 
             CommandMenu("Project") {
-                Button("Choose Project…") {
+                Button("Add Project…") {
                     NotificationCenter.default.post(name: .chooseWorkspaceRequested, object: nil)
                 }
                 .keyboardShortcut("O", modifiers: [.command, .shift])

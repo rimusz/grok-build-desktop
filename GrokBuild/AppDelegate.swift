@@ -49,7 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Normal app (shows in Dock, supports windows + menu bar icon)
         NSApp.setActivationPolicy(.regular)
-        if let appIcon = loadAppIcon() {
+        if let appIcon = AppIconProvider.image() {
             NSApp.applicationIconImage = appIcon
         }
 
@@ -113,35 +113,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
 
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func loadAppIcon() -> NSImage? {
-        if let execDir = Bundle.main.executableURL?.deletingLastPathComponent() {
-            for name in ["AppIcon.png", "AppIcon.icns"] {
-                let path = execDir.appendingPathComponent(name).path
-                if FileManager.default.fileExists(atPath: path),
-                   let image = NSImage(contentsOfFile: path) {
-                    return image
-                }
-            }
-        }
-
-        if let image = NSImage(named: "AppIcon") {
-            return image
-        }
-
-        for name in ["AppIcon", "AppIcon1024"] {
-            if let path = Bundle.main.path(forResource: name, ofType: "png"),
-               let image = NSImage(contentsOfFile: path) {
-                return image
-            }
-            if let path = Bundle.main.path(forResource: name, ofType: "icns"),
-               let image = NSImage(contentsOfFile: path) {
-                return image
-            }
-        }
-
-        return nil
     }
 
     @objc private func openMainWindowRequested() {

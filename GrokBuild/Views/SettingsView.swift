@@ -55,11 +55,6 @@ struct SettingsView: View {
                     Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
                 }
 
-                ModelsSettingsPane(store: store)
-                    .tabItem {
-                        Label("Models", systemImage: "cpu")
-                    }
-
                 PermissionsSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
@@ -853,85 +848,6 @@ private struct MCPSettingsPane: View {
         errorMessage = nil
         do {
             try await operation()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isLoading = false
-    }
-}
-
-private struct ModelsSettingsPane: View {
-    @Bindable var store: ChatStore
-    private let service = GrokCLIService()
-    @State private var models: [GrokModelInfo] = []
-    @State private var errorMessage: String?
-    @State private var isLoading = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                header("Models", systemImage: "cpu")
-                Spacer()
-                Button("Refresh") {
-                    Task { await refresh() }
-                }
-                Button("Reload Session") {
-                    Task { await store.reloadConfiguration() }
-                }
-            }
-
-            List {
-                ForEach(models) { model in
-                    HStack {
-                        VStack(alignment: .leading) {
-                            Text(model.name)
-                                .font(.headline)
-                            Text(model.id)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if model.isDefault {
-                            Text("CLI Default")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if store.currentModel == model.id {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Button("Use") {
-                                store.setModel(model.id)
-                            }
-                        }
-                    }
-                }
-            }
-
-            Text("Custom model endpoints are configured in `~/.grok/config.toml`. This tab reflects `grok models` and the current ACP model picker.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if isLoading { ProgressView() }
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
-        .task { await refresh() }
-    }
-
-    private func header(_ text: String, systemImage: String) -> some View {
-        Label(text, systemImage: systemImage)
-            .font(.headline)
-    }
-
-    private func refresh() async {
-        isLoading = true
-        errorMessage = nil
-        do {
-            models = try await service.listModels()
         } catch {
             errorMessage = error.localizedDescription
         }
