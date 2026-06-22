@@ -185,7 +185,6 @@ struct ContentView: View {
         }
         .onChange(of: activeStore.messages) { _, _ in
             autoSelectLatestDiffMessage()
-            Task { await refreshProjectChangedFiles() }
         }
         // Menu bar quick actions
         .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
