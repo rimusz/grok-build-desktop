@@ -281,6 +281,7 @@ class StatusBarController: NSObject {
         let hasUpdate = compareVersions(latest, current) == .orderedDescending
 
         let alert = NSAlert()
+        alert.icon = AppIconProvider.image()
         alert.messageText = hasUpdate ? "A New GrokBuild Version Is Available" : "GrokBuild Is Up to Date"
         alert.informativeText = hasUpdate
             ? "Installed: \(current)\nLatest: \(latest)\n\nDownload the latest release from GitHub."
@@ -302,6 +303,7 @@ class StatusBarController: NSObject {
         resetUpdateMenuItem()
 
         let alert = NSAlert()
+        alert.icon = AppIconProvider.image()
         alert.messageText = "Could Not Check for Updates"
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .warning
