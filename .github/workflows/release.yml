@@ -101,34 +101,34 @@ jobs:
         run: |
           if [ "${{ steps.config.outputs.notarized }}" = "true" ]; then
             cat > release-body.txt << 'EOF'
-            ## Downloads
+          ## Downloads
 
-            - `GrokBuild.app.zip` — Signed + notarized build (recommended)
-            - `GrokBuild-macOS.dmg` — Signed + notarized DMG
+          - `GrokBuild.app.zip` — Signed + notarized build (recommended)
+          - `GrokBuild-macOS.dmg` — Signed + notarized DMG
 
-            This version is properly code-signed and notarized. No Gatekeeper warnings.
-            EOF
+          This version is properly code-signed and notarized. No Gatekeeper warnings.
+          EOF
           else
             cat > release-body.txt << 'EOF'
-            ## Downloads
+          ## Downloads
 
-            - `GrokBuild.app.zip` — Unsigned build
-            - `GrokBuild-macOS.dmg` — Unsigned DMG
+          - `GrokBuild.app.zip` — Unsigned build
+          - `GrokBuild-macOS.dmg` — Unsigned DMG
 
-            ## How to bypass Gatekeeper protection (unsigned builds)
+          ## How to bypass Gatekeeper protection (unsigned builds)
 
-            macOS may block unsigned apps.
+          macOS may block unsigned apps.
 
-            **Quick ways to open:**
+          **Quick ways to open:**
 
-            1. Right-click `GrokBuild.app` (or the DMG) → **Open**
-            2. Terminal: `xattr -cr /path/to/GrokBuild.app`
-            3. System Settings → Privacy & Security → "Open Anyway"
+          1. Right-click `GrokBuild.app` (or the DMG) → **Open**
+          2. Terminal: `xattr -cr /path/to/GrokBuild.app`
+          3. System Settings → Privacy & Security → "Open Anyway"
 
-            ---
+          ---
 
-            For a signed + notarized version with no warnings, run this workflow manually.
-            EOF
+          For a signed + notarized version with no warnings, run this workflow manually.
+          EOF
           fi
           echo "body<<EOF" >> $GITHUB_OUTPUT
           cat release-body.txt >> $GITHUB_OUTPUT
