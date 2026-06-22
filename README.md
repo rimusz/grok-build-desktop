@@ -8,6 +8,17 @@ Native SwiftUI Mac app for the `grok` CLI.
 - The `grok` CLI installed (usually at `~/.grok/bin/grok`)
 - You must be logged in to the CLI (`grok login` in your terminal)
 
+## Running Unsigned Builds
+
+macOS Gatekeeper blocks unsigned apps by default. To open an unsigned build:
+
+1. **Right-click** the app → **Open** (bypasses the block once)
+2. Or remove the quarantine attribute:
+   ```bash
+   xattr -cr /Applications/GrokBuild.app
+   ```
+3. Or go to **System Settings → Privacy & Security** and click **"Open Anyway"** next to the blocked app message.
+
 ## To Build & Run (Minimal Setup)
 
 You only need **Xcode Command Line Tools**:
