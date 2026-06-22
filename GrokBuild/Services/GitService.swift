@@ -143,19 +143,37 @@ enum GitService {
 
     static func changedFiles(in directory: URL) async throws -> [GitChangedFile] {
         guard isRepository(directory) else { throw GitError.notARepository }
-        let output = try await run(["status", "--porcelain=v1"], in: directory)
-        return output
-            .components(separatedBy: .newlines)
-            .compactMap { line -> GitChangedFile? in
-                guard line.count > 3 else { return nil }
-                let status = String(line.prefix(2))
-                var path = String(line.dropFirst(3))
-                if let range = path.range(of: " -> ") {
-                    path = String(path[range.upperBound...])
-                }
-                path = path.trimmingCharacters(in: .whitespacesAndNewlines)
-                return path.isEmpty ? nil : GitChangedFile(path: path, status: status)
+        let output = try await run(["status", "--porcelain=v1", "-z"], in: directory)
+        let fields = output.split(separator: "\0", omittingEmptySubsequences: true)
+
+        var result: [GitChangedFile] = []
+        var index = 0
+        while index < fields.count {
+            let field = fields[index]
+            guard field.count > 3 else {
+                index += 1
+                continue
             }
+
+            let status = String(field.prefix(2))
+            var pathField = field.dropFirst(3)
+
+            // For rename/copy, porcelain emits: "R  old\0new\0" (same for "C ")
+            if status.hasPrefix("R") || status.hasPrefix("C") {
+                index += 1
+                if index < fields.count {
+                    pathField = fields[index]
+                }
+            }
+
+            let path = String(pathField).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty {
+                result.append(GitChangedFile(path: path, status: status))
+            }
+            index += 1
+        }
+
+        return result
     }
 
     static func diffForChangedFile(_ file: GitChangedFile, in directory: URL) async throws -> String {
