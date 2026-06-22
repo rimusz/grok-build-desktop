@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Bindable var store: ChatStore
@@ -80,97 +81,445 @@ private func openPath(_ path: String) {
     NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
 }
 
+private struct SettingsPaneHeader: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(color.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+}
+
+private func settingsPaneHeader(_ title: String, subtitle: String, systemImage: String, color: Color) -> SettingsPaneHeader {
+    SettingsPaneHeader(title: title, subtitle: subtitle, systemImage: systemImage, color: color)
+}
+
 private struct BrowserSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
     @AppStorage(BrowserSettingsKeys.enabled) private var enabled = BrowserSettings.defaults.enabled
     @AppStorage(BrowserSettingsKeys.backend) private var backend = BrowserSettings.defaults.backend.rawValue
+    @AppStorage(BrowserSettingsKeys.runtimeMode) private var runtimeMode = BrowserSettings.defaults.runtimeMode.rawValue
     @AppStorage(BrowserSettingsKeys.cdpURL) private var cdpURL = BrowserSettings.defaults.cdpURL
     @AppStorage(BrowserSettingsKeys.profileName) private var profileName = BrowserSettings.defaults.profileName
+    @AppStorage(BrowserSettingsKeys.showBrowserWindow) private var showBrowserWindow = BrowserSettings.defaults.showBrowserWindow
+    @AppStorage(BrowserSettingsKeys.externalBrowserAppID) private var externalBrowserAppID = BrowserSettings.defaults.externalBrowserAppID.rawValue
+    @AppStorage(BrowserSettingsKeys.externalBrowserAppPath) private var externalBrowserAppPath = BrowserSettings.defaults.externalBrowserAppPath
+    @AppStorage(BrowserSettingsKeys.autoStartExternalBrowser) private var autoStartExternalBrowser = BrowserSettings.defaults.autoStartExternalBrowser
 
     @State private var status = BrowserBackendStatus.unavailable
+    @State private var externalStatus = ExternalBrowserStatus.unavailable(endpoint: "http://127.0.0.1:9222")
     @State private var isChecking = false
+    @State private var isInstallingRuntime = false
+    @State private var isStartingExternalBrowser = false
+    @State private var installOutput: String?
+    @State private var externalBrowserOutput: String?
+    @State private var showBrowserSessionOptions = false
+    @State private var showDiagnosticsLog = false
+    @State private var showRuntimeUninstallConfirmation = false
+    @State private var appliedSettings = BrowserSettingsStore.loadApplied()
 
     var body: some View {
-        Form {
-            Section("Browser Tools") {
-                Toggle("Enable browser tools for Grok sessions", isOn: $enabled)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                browserToolsCard
+                statusCard
+                installCard
+                browserRuntimeCard
+                applyCard
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            normalizeExternalBrowserSelection()
+            await refreshStatus()
+        }
+        .alert("Uninstall Managed Browser Runtime?", isPresented: $showRuntimeUninstallConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Uninstall Runtime", role: .destructive) {
+                uninstallManagedRuntime()
+            }
+        } message: {
+            Text("This removes the Chrome/Chromium runtime downloaded by `agent-browser install` from `~/.agent-browser/browsers`. The agent-browser CLI and saved settings are kept.")
+        }
+    }
 
-                Picker("Backend", selection: $backend) {
-                    ForEach(BrowserBackendID.allCases) { backend in
-                        Text(backend.displayName).tag(backend.rawValue)
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "globe.badge.chevron.backward")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.blue)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.blue.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Browser Control")
+                    .font(.title3.weight(.semibold))
+                Text("Expose Chrome/Chromium browser tools to Grok sessions through the app-managed MCP bridge.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            statusBadge
+        }
+    }
+
+    private var browserToolsCard: some View {
+        settingsCard(title: "1. Enable Browser Tools", systemImage: "wrench.and.screwdriver") {
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle(isOn: $enabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable browser tools for Grok sessions")
+                            .font(.headline)
+                        Text("When enabled, GrokBuild injects browser MCP tools into new and resumed Grok sessions.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .toggleStyle(.switch)
 
-                TextField("CDP URL (optional, for example http://127.0.0.1:9222)", text: $cdpURL)
-                    .textFieldStyle(.roundedBorder)
-                TextField("Profile/session name (optional)", text: $profileName)
-                    .textFieldStyle(.roundedBorder)
+                Divider()
 
-                Text("Browser tools are injected into new and resumed Grok sessions through an app-managed MCP server.")
+                settingRow("Backend") {
+                    Picker("", selection: $backend) {
+                        ForEach(BrowserBackendID.allCases) { backend in
+                            Text(backend.displayName).tag(backend.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 190)
+                }
+
+                Text("For the normal setup, leave the browser runtime choice below on Managed Runtime and click Apply after enabling tools. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
 
-            Section("Backend Status") {
-                LabeledContent("agent-browser") {
-                    Text(status.isInstalled ? "Installed" : "Not installed")
-                        .foregroundStyle(status.isInstalled ? .green : .orange)
-                }
-                if let path = status.executablePath {
-                    LabeledContent("Path", value: path)
-                }
-                if let version = status.version, !version.isEmpty {
-                    LabeledContent("Version", value: version)
-                }
-                Text(status.diagnostic.isEmpty ? "No diagnostics yet." : status.diagnostic)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
-
-                HStack {
+    private var statusCard: some View {
+        settingsCard(title: "Backend Status", systemImage: "checkmark.seal", tint: browserStatusColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Label(browserStatusTitle, systemImage: browserStatusIcon)
+                        .foregroundStyle(browserStatusColor)
+                        .font(.headline)
+                    Spacer()
                     Button(isChecking ? "Checking..." : "Run Diagnostics") {
                         Task { await refreshStatus() }
                     }
                     .disabled(isChecking)
+                }
 
-                    Button("Open agent-browser Docs") {
-                        NSWorkspace.shared.open(URL(string: "https://agent-browser.dev")!)
-                    }
+                if let path = status.executablePath {
+                    infoLine("Path", path)
+                }
+                if let version = status.version, !version.isEmpty {
+                    infoLine("Version", version)
+                }
+
+                DisclosureGroup(isExpanded: $showDiagnosticsLog) {
+                    Text(status.diagnostic.isEmpty ? "No diagnostics yet." : status.diagnostic)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                } label: {
+                    Label(showDiagnosticsLog ? "Hide diagnostics log" : "Show diagnostics log", systemImage: "doc.text.magnifyingglass")
+                        .font(.callout.weight(.medium))
+                }
+
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://agent-browser.dev")!)
+                } label: {
+                    Label("Open agent-browser Docs", systemImage: "safari")
                 }
             }
+        }
+    }
 
-            Section("Chrome Remote Debugging") {
-                Text("Start Chrome or Chromium with remote debugging enabled, then use the CDP URL above if you do not use the backend default.")
+    private var installCard: some View {
+        settingsCard(title: status.isReady ? "2. agent-browser Ready" : "2. Install agent-browser CLI", systemImage: status.isReady ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
+            VStack(alignment: .leading, spacing: 12) {
+                if status.isReady {
+                    Label("agent-browser is installed and diagnostics passed.", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+
+                    Text("The required local CLI is available. You can use its managed browser runtime, or optionally attach it to an existing Chrome instance below.")
+                        .foregroundStyle(.secondary)
+
+                } else if status.isInstalled {
+                    Text("The required local CLI is installed. If you want the recommended managed browser runtime, install it in the next section.")
+                        .foregroundStyle(.secondary)
+
+                } else {
+                    Text("GrokBuild needs the local `agent-browser` CLI to expose browser tools. The browser runtime itself is optional and chosen in the next section.")
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        installCommandRow(title: "Homebrew", command: "brew install agent-browser")
+                        installCommandRow(title: "npm", command: "npm install -g agent-browser")
+                    }
+                }
+
+                if let installOutput, !installOutput.isEmpty {
+                    Text(installOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("GrokBuild never installs this silently. Use these buttons only when you want to set up browser automation on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var browserRuntimeCard: some View {
+        settingsCard(title: "3. Choose Browser Runtime", systemImage: "globe") {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Choose where browser automation runs. Most users should use the managed browser runtime.")
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    Button("Copy Launch Command") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(
-                            """
-                            /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/grokbuild-chrome
-                            """,
-                            forType: .string
-                        )
-                    }
+                browserRuntimeOption(
+                    title: "Managed browser runtime",
+                    subtitle: "Recommended. `agent-browser install` sets up a separate automation Chrome/Chromium runtime, so your normal daily Chrome profile is not used.",
+                    systemImage: "shippingbox.circle",
+                    color: .green,
+                    isSelected: selectedRuntimeMode == .managed
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label(managedRuntimeStatusText, systemImage: status.isReady ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(status.isReady ? .green : .secondary)
 
-                    Button("Open Setup Docs") {
-                        NSWorkspace.shared.open(URL(string: "https://developer.chrome.com/docs/devtools/remote-debugging/")!)
+                        Toggle(isOn: $showBrowserWindow) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show browser window while agents work")
+                                    .font(.callout.weight(.medium))
+                                Text("Opens the managed automation browser visibly instead of keeping it headless. Apply and restart Grok after changing this.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        HStack {
+                            Button("Use Managed Runtime") {
+                                runtimeMode = BrowserRuntimeMode.managed.rawValue
+                            }
+                            .disabled(selectedRuntimeMode == .managed)
+
+                            if status.isReady {
+                                Button(isInstallingRuntime ? "Repairing..." : "Reinstall / Repair Runtime") {
+                                    Task { await installBrowserRuntime() }
+                                }
+                                .disabled(!status.isInstalled || isInstallingRuntime)
+
+                                Button("Uninstall Runtime...", role: .destructive) {
+                                    showRuntimeUninstallConfirmation = true
+                                }
+                                .disabled(!AgentBrowserService.hasManagedRuntimeDirectory())
+                            } else {
+                                Button(isInstallingRuntime ? "Installing..." : "Install Managed Runtime") {
+                                    Task { await installBrowserRuntime() }
+                                }
+                                .disabled(!status.isInstalled || isInstallingRuntime)
+                            }
+
+                            Button("Copy Install Command") {
+                                copyToPasteboard("agent-browser install")
+                            }
+                        }
+
+                        if !status.isInstalled {
+                            Text("Install the agent-browser CLI first before installing the managed browser runtime.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-            }
 
-            Section {
-                Button("Apply and Restart Grok") {
-                    onConfigurationChanged()
+                browserRuntimeOption(
+                    title: "Existing Chromium browser",
+                    subtitle: "Optional. Use any Chromium-based browser you start yourself with remote debugging enabled, such as Chrome, Chromium, Brave, Edge, or Arc.",
+                    systemImage: "macwindow.badge.plus",
+                    color: .orange,
+                    isSelected: selectedRuntimeMode == .external
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("GrokBuild can start a separate automation profile for the selected Chromium browser, then point agent-browser at its CDP URL.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Label(externalBrowserStatusText, systemImage: externalStatus.isReachable ? "checkmark.circle.fill" : "circle.dashed")
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(externalStatus.isReachable ? .green : .secondary)
+
+                        settingRow("Browser app") {
+                            Picker("", selection: $externalBrowserAppID) {
+                                ForEach(externalBrowserChoices) { app in
+                                    Text(app.displayName).tag(app.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 220)
+                        }
+
+                        if installedKnownExternalBrowsers.isEmpty {
+                            Text("No supported Chromium apps were found in `/Applications`. Choose a custom Chromium app if you have one elsewhere.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if selectedExternalBrowserApp == .custom {
+                            settingRow("Custom app") {
+                                HStack {
+                                    TextField("Path to Chromium .app", text: $externalBrowserAppPath)
+                                        .textFieldStyle(.roundedBorder)
+                                    Button("Choose...") {
+                                        chooseExternalBrowserApp()
+                                    }
+                                }
+                            }
+                        }
+
+                        Toggle(isOn: $autoStartExternalBrowser) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Start this browser automatically when Grok starts")
+                                    .font(.callout.weight(.medium))
+                                Text("Uses a separate GrokBuild profile, not your normal logged-in browser profile.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        settingRow("CDP URL") {
+                            TextField("For the command below: http://127.0.0.1:9222", text: $cdpURL)
+                                .textFieldStyle(.roundedBorder)
+                        }
+
+                        Text(externalBrowserLaunchCommand)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+
+                        if let externalBrowserOutput, !externalBrowserOutput.isEmpty {
+                            Text(externalBrowserOutput)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
+                            Button("Use Existing Browser") {
+                                runtimeMode = BrowserRuntimeMode.external.rawValue
+                                cdpURL = defaultCDPURL
+                                autoStartExternalBrowser = true
+                            }
+
+                            Button(isStartingExternalBrowser ? "Starting..." : "Start Browser Now") {
+                                Task { await startExternalBrowser() }
+                            }
+                            .disabled(isStartingExternalBrowser)
+
+                            Button("Check Status") {
+                                Task { await refreshExternalBrowserStatus() }
+                            }
+                            .disabled(isChecking)
+
+                            Button {
+                                copyToPasteboard(externalBrowserLaunchCommand)
+                            } label: {
+                                Label("Copy Launch Command", systemImage: "doc.on.doc")
+                            }
+
+                            Button {
+                                NSWorkspace.shared.open(URL(string: "https://developer.chrome.com/docs/devtools/remote-debugging/")!)
+                            } label: {
+                                Label("Open Setup Docs", systemImage: "questionmark.circle")
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
+
+                DisclosureGroup(isExpanded: $showBrowserSessionOptions) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Optional for both managed runtime and existing Chromium browser. Use this only when you want agent-browser to keep a named browser session/state instead of using the default session.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        settingRow("Session name") {
+                            TextField("Optional named browser session", text: $profileName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("Advanced: Browser session state", systemImage: "slider.horizontal.3")
+                        .font(.callout.weight(.medium))
+                }
             }
         }
-        .task {
-            await refreshStatus()
+    }
+
+    private var applyCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Apply changes")
+                    .font(.headline)
+                Text(hasPendingBrowserChanges ? "Restart the Grok connection so browser MCP tools are injected into the active session." : "Browser launch settings are already applied to the active configuration.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Apply and Restart Grok") {
+                appliedSettings = currentSettings
+                BrowserSettingsStore.saveApplied(currentSettings)
+                onConfigurationChanged()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasPendingBrowserChanges)
         }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(applyTint.opacity(hasPendingBrowserChanges ? 0.08 : 0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(applyTint.opacity(hasPendingBrowserChanges ? 0.18 : 0.10)))
     }
 
     @MainActor
@@ -178,6 +527,290 @@ private struct BrowserSettingsPane: View {
         isChecking = true
         defer { isChecking = false }
         status = await AgentBrowserService.status()
+        externalStatus = await AgentBrowserService.externalBrowserStatus(settings: currentSettings)
+    }
+
+    @MainActor
+    private func installBrowserRuntime() async {
+        isInstallingRuntime = true
+        installOutput = "Running `agent-browser install`..."
+        defer { isInstallingRuntime = false }
+
+        do {
+            let output = try await AgentBrowserService.installBrowserRuntime()
+            installOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            await refreshStatus()
+        } catch {
+            installOutput = error.localizedDescription
+        }
+    }
+
+    private func uninstallManagedRuntime() {
+        do {
+            installOutput = try AgentBrowserService.uninstallManagedRuntime()
+            Task { await refreshStatus() }
+        } catch {
+            installOutput = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func startExternalBrowser() async {
+        runtimeMode = BrowserRuntimeMode.external.rawValue
+        if cdpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            cdpURL = defaultCDPURL
+        }
+        isStartingExternalBrowser = true
+        externalBrowserOutput = "Starting \(selectedExternalBrowserApp.displayName) with a separate GrokBuild automation profile..."
+        defer { isStartingExternalBrowser = false }
+
+        do {
+            externalStatus = try await AgentBrowserService.launchExternalBrowser(settings: currentSettings)
+            externalBrowserOutput = externalStatus.diagnostic
+        } catch {
+            externalBrowserOutput = error.localizedDescription
+            externalStatus = await AgentBrowserService.externalBrowserStatus(settings: currentSettings)
+        }
+    }
+
+    @MainActor
+    private func refreshExternalBrowserStatus() async {
+        isChecking = true
+        defer { isChecking = false }
+        externalStatus = await AgentBrowserService.externalBrowserStatus(settings: currentSettings)
+    }
+
+    private func chooseExternalBrowserApp() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Chromium Browser"
+        panel.message = "Choose a Chromium-based browser app that supports Chrome DevTools Protocol."
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        if panel.runModal() == .OK, let url = panel.url {
+            externalBrowserAppID = ExternalBrowserAppID.custom.rawValue
+            externalBrowserAppPath = url.path
+        }
+    }
+
+    private var statusBadge: some View {
+        let color: Color = enabled ? browserStatusColor : .secondary
+        let text = enabled ? (status.isReady ? "Ready" : "Setup needed") : "Disabled"
+
+        return Text(text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(0.14)))
+            .foregroundStyle(color)
+    }
+
+    private var selectedExternalBrowserApp: ExternalBrowserAppID {
+        ExternalBrowserAppID(rawValue: externalBrowserAppID) ?? BrowserSettings.defaults.externalBrowserAppID
+    }
+
+    private var selectedRuntimeMode: BrowserRuntimeMode {
+        BrowserRuntimeMode(rawValue: runtimeMode) ?? BrowserSettings.defaults.runtimeMode
+    }
+
+    private var installedKnownExternalBrowsers: [ExternalBrowserAppID] {
+        ExternalBrowserAppID.allCases.filter { app in
+            app != .custom && app.defaultAppURL != nil
+        }
+    }
+
+    private var externalBrowserChoices: [ExternalBrowserAppID] {
+        installedKnownExternalBrowsers + [.custom]
+    }
+
+    private func normalizeExternalBrowserSelection() {
+        guard !externalBrowserChoices.contains(selectedExternalBrowserApp) else { return }
+        externalBrowserAppID = installedKnownExternalBrowsers.first?.rawValue ?? ExternalBrowserAppID.custom.rawValue
+    }
+
+    private var externalBrowserLaunchCommand: String {
+        AgentBrowserService.externalBrowserLaunchCommand(settings: currentSettings)
+    }
+
+    private var externalBrowserStatusText: String {
+        if externalStatus.isReachable {
+            return externalStatus.browserName.map { "External browser running: \($0)" }
+                ?? "External browser running at \(externalStatus.endpoint)"
+        }
+        if selectedExternalBrowserApp == .custom && externalBrowserAppPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Choose a Chromium app to start automatically"
+        }
+        return "External browser not running yet"
+    }
+
+    private var defaultCDPURL: String {
+        "http://127.0.0.1:9222"
+    }
+
+    private var managedRuntimeStatusText: String {
+        if status.isReady {
+            return "Managed runtime installed and ready"
+        }
+        if status.isInstalled {
+            return "Managed runtime not ready or not installed"
+        }
+        return "Install agent-browser CLI first"
+    }
+
+    private var currentSettings: BrowserSettings {
+        BrowserSettings(
+            enabled: enabled,
+            backend: BrowserBackendID(rawValue: backend) ?? BrowserSettings.defaults.backend,
+            runtimeMode: selectedRuntimeMode,
+            cdpURL: cdpURL,
+            profileName: profileName,
+            showBrowserWindow: showBrowserWindow,
+            externalBrowserAppID: ExternalBrowserAppID(rawValue: externalBrowserAppID)
+                ?? BrowserSettings.defaults.externalBrowserAppID,
+            externalBrowserAppPath: externalBrowserAppPath,
+            autoStartExternalBrowser: autoStartExternalBrowser
+        )
+    }
+
+    private var hasPendingBrowserChanges: Bool {
+        currentSettings != appliedSettings
+    }
+
+    private var applyTint: Color {
+        hasPendingBrowserChanges ? .accentColor : .secondary
+    }
+
+    private var browserStatusTitle: String {
+        if status.isReady { return "agent-browser ready" }
+        if status.isInstalled { return "agent-browser setup needed" }
+        return "agent-browser not installed"
+    }
+
+    private var browserStatusIcon: String {
+        if status.isReady { return "checkmark.circle.fill" }
+        if status.isInstalled { return "exclamationmark.triangle.fill" }
+        return "xmark.circle.fill"
+    }
+
+    private var browserStatusColor: Color {
+        if status.isReady { return .green }
+        if status.isInstalled { return .orange }
+        return .red
+    }
+
+    private var installCardTint: Color {
+        status.isReady ? .green : (status.isInstalled ? .orange : .secondary)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        tint: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(tint ?? .primary)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(tint.map { $0.opacity(0.07) } ?? Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(tint.map { $0.opacity(0.22) } ?? Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+
+    private func browserRuntimeOption<Content: View>(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        color: Color,
+        isSelected: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : systemImage)
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? color : .secondary)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.headline)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(isSelected ? "Selected" : "Optional")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill((isSelected ? color : Color.secondary).opacity(0.14)))
+                    .foregroundStyle(isSelected ? color : .secondary)
+            }
+
+            content()
+                .padding(.leading, 36)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill((isSelected ? color : Color.secondary).opacity(isSelected ? 0.08 : 0.05)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke((isSelected ? color : Color.secondary).opacity(isSelected ? 0.24 : 0.12)))
+    }
+
+    private func settingRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 120, alignment: .leading)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func infoLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+            Spacer()
+        }
+        .font(.caption)
+    }
+
+    private func installCommandRow(title: String, command: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(command)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                copyToPasteboard(command)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
     }
 }
 
@@ -194,7 +827,19 @@ private struct PluginsSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            header("Installed Plugins", systemImage: "shippingbox")
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Plugins",
+                    subtitle: "Manage installed Grok plugins and manually add trusted plugin sources.",
+                    systemImage: "shippingbox",
+                    color: .indigo
+                )
+                Button {
+                    Task { await refresh() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+            }
 
             HStack {
                 TextField("GitHub repo, Git URL, or local path", text: $installSource)
@@ -395,10 +1040,13 @@ private struct HooksSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Hooks", systemImage: "curlybraces")
-                    .font(.headline)
-                Spacer()
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Hooks",
+                    subtitle: "Inspect automation hooks discovered from Grok, Cursor, Claude, projects, and plugins.",
+                    systemImage: "curlybraces",
+                    color: .mint
+                )
                 Button("Refresh") {
                     Task { await refresh() }
                 }
@@ -513,10 +1161,13 @@ private struct MarketplaceSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Marketplace", systemImage: "storefront")
-                    .font(.headline)
-                Spacer()
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Marketplace",
+                    subtitle: "Browse available plugins and manage marketplace sources.",
+                    systemImage: "storefront",
+                    color: .orange
+                )
                 Button("Refresh") {
                     Task { await refresh() }
                 }
@@ -681,10 +1332,13 @@ private struct SkillsSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Skills", systemImage: "wand.and.stars")
-                    .font(.headline)
-                Spacer()
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Skills",
+                    subtitle: "View user, project, compatibility, and plugin skills available to Grok.",
+                    systemImage: "wand.and.stars",
+                    color: .pink
+                )
                 Button("Refresh") {
                     Task { await refresh() }
                 }
@@ -788,9 +1442,13 @@ private struct MCPSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                header("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
-                Spacer()
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "MCP Servers",
+                    subtitle: "Configure external Model Context Protocol servers and run health checks.",
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    color: .teal
+                )
                 Button("Run Doctor") {
                     Task { await runDoctor() }
                 }
@@ -976,65 +1634,215 @@ private struct PermissionsSettingsPane: View {
     @AppStorage(GrokSettingsKeys.denyRules) private var denyRules = GrokPermissionSettings.defaults.denyRules
 
     var body: some View {
-        Form {
-            Section("Launch Flags") {
-                Picker("Permission mode", selection: $permissionMode) {
-                    Text("Default").tag("default")
-                    Text("Accept edits").tag("acceptEdits")
-                    Text("Auto").tag("auto")
-                    Text("Don't ask").tag("dontAsk")
-                    Text("Bypass permissions").tag("bypassPermissions")
-                    Text("Plan").tag("plan")
-                }
-
-                Picker("Sandbox", selection: $sandboxProfile) {
-                    Text("Default").tag("")
-                    Text("Workspace").tag("workspace")
-                    Text("Read-only").tag("read-only")
-                    Text("Strict").tag("strict")
-                    Text("Devbox").tag("devbox")
-                }
-
-                Picker("Reasoning effort", selection: $reasoningEffort) {
-                    Text("Default").tag("")
-                    Text("Low").tag("low")
-                    Text("Medium").tag("medium")
-                    Text("High").tag("high")
-                    Text("XHigh").tag("xhigh")
-                    Text("Max").tag("max")
-                }
-
-                Toggle("Disable memory for new sessions", isOn: $noMemory)
-                Toggle("Disable web search tools", isOn: $disableWebSearch)
-                Toggle("Disable subagents", isOn: $noSubagents)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                launchFlagsCard
+                safetyTogglesCard
+                permissionRulesCard
+                applyCard
             }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
 
-            Section("Permission Rules") {
-                VStack(alignment: .leading) {
-                    Text("Allow rules")
-                    TextEditor(text: $allowRules)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 80)
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.purple)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Permissions")
+                    .font(.title3.weight(.semibold))
+                Text("Tune Grok launch flags, sandbox behavior, and explicit allow/deny rules for tool use.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(permissionModeLabel)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.purple.opacity(0.14)))
+                .foregroundStyle(.purple)
+        }
+    }
+
+    private var launchFlagsCard: some View {
+        settingsCard(title: "Launch Behavior", systemImage: "slider.horizontal.3") {
+            VStack(alignment: .leading, spacing: 14) {
+                settingRow("Permission mode", description: "Controls how often Grok asks before running tools.") {
+                    Picker("", selection: $permissionMode) {
+                        Text("Default").tag("default")
+                        Text("Accept edits").tag("acceptEdits")
+                        Text("Auto").tag("auto")
+                        Text("Don't ask").tag("dontAsk")
+                        Text("Bypass permissions").tag("bypassPermissions")
+                        Text("Plan").tag("plan")
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
                 }
 
-                VStack(alignment: .leading) {
-                    Text("Deny rules")
-                    TextEditor(text: $denyRules)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 80)
+                settingRow("Sandbox", description: "Limits file system and command access for Grok.") {
+                    Picker("", selection: $sandboxProfile) {
+                        Text("Default").tag("")
+                        Text("Workspace").tag("workspace")
+                        Text("Read-only").tag("read-only")
+                        Text("Strict").tag("strict")
+                        Text("Devbox").tag("devbox")
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
                 }
 
+                settingRow("Reasoning effort", description: "Chooses the reasoning budget passed to `grok agent`.") {
+                    Picker("", selection: $reasoningEffort) {
+                        Text("Default").tag("")
+                        Text("Low").tag("low")
+                        Text("Medium").tag("medium")
+                        Text("High").tag("high")
+                        Text("XHigh").tag("xhigh")
+                        Text("Max").tag("max")
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+            }
+        }
+    }
+
+    private var safetyTogglesCard: some View {
+        settingsCard(title: "Session Capabilities", systemImage: "switch.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                permissionToggle("Disable memory for new sessions", subtitle: "Start new sessions without using saved Grok memory.", isOn: $noMemory)
+                Divider()
+                permissionToggle("Disable web search tools", subtitle: "Prevent Grok from using web search in new sessions.", isOn: $disableWebSearch)
+                Divider()
+                permissionToggle("Disable subagents", subtitle: "Keep work inside the main Grok agent only.", isOn: $noSubagents)
+            }
+        }
+    }
+
+    private var permissionRulesCard: some View {
+        settingsCard(title: "Permission Rules", systemImage: "list.bullet.rectangle") {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("Enter one `--allow` or `--deny` rule per line, for example `Bash(npm*)` or `Edit(/etc/**)`.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
 
-            Section {
-                Button("Apply and Restart Grok") {
-                    onConfigurationChanged()
+                HStack(alignment: .top, spacing: 14) {
+                    ruleEditor(title: "Allow Rules", text: $allowRules, tint: .green)
+                    ruleEditor(title: "Deny Rules", text: $denyRules, tint: .red)
                 }
-                .buttonStyle(.borderedProminent)
             }
         }
+    }
+
+    private var applyCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Apply changes")
+                    .font(.headline)
+                Text("Restart the Grok connection so permission flags and rules are used by the active session.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Apply and Restart Grok") {
+                onConfigurationChanged()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.purple.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.purple.opacity(0.18)))
+    }
+
+    private var permissionModeLabel: String {
+        switch permissionMode {
+        case "acceptEdits": return "Accept edits"
+        case "auto": return "Auto"
+        case "dontAsk": return "Don't ask"
+        case "bypassPermissions": return "Bypass"
+        case "plan": return "Plan"
+        default: return "Default"
+        }
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+
+    private func settingRow<Content: View>(
+        _ title: String,
+        description: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 330, alignment: .leading)
+
+            Spacer()
+            content()
+        }
+    }
+
+    private func permissionToggle(_ title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .toggleStyle(.switch)
+    }
+
+    private func ruleEditor(title: String, text: Binding<String>, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Circle()
+                    .fill(tint)
+                    .frame(width: 8, height: 8)
+                Text(title)
+                    .font(.callout.weight(.medium))
+            }
+            TextEditor(text: text)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 130)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.25)))
+        }
+        .frame(maxWidth: .infinity)
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     private struct LiveSession: Identifiable {
@@ -85,6 +86,9 @@ struct ContentView: View {
                         onSelectSession: { selectSession($0) },
                         onBrowseSessions: { showSessions = true },
                         onNewSession: { startNewSessionForCurrentProject() },
+                        onOpenProjectIn: { openCurrentProject(in: $0) },
+                        onToggleBrowserTools: { toggleBrowserToolsFromChat() },
+                        onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)
@@ -197,6 +201,39 @@ struct ContentView: View {
     private var currentWorkspace: Workspace? {
         activeSession?.workspace ?? selectedWorkspaceID.flatMap { id in
             workspaceStore.workspaces.first(where: { $0.id == id })
+        }
+    }
+
+    private func toggleBrowserToolsFromChat() {
+        var settings = BrowserSettingsStore.load()
+        guard AgentBrowserService.browserToolsConfigurationIssue(settings: settings) == nil else {
+            showSettings = true
+            return
+        }
+
+        settings.enabled.toggle()
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        Task {
+            await activeStore.reloadConfiguration()
+        }
+    }
+
+    private func selectBrowserRuntimeFromChat(_ runtimeMode: BrowserRuntimeMode) {
+        var settings = BrowserSettingsStore.load()
+        guard AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: runtimeMode) == nil else {
+            return
+        }
+        guard settings.runtimeMode != runtimeMode else { return }
+
+        settings.runtimeMode = runtimeMode
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        guard settings.enabled else { return }
+        Task {
+            await activeStore.reloadConfiguration()
         }
     }
 
@@ -527,6 +564,72 @@ struct ContentView: View {
         // Apply only one diff by temporarily synthesizing a message with just that diff
         let single = Message(role: .assistant, content: "```diff\n\(diff.raw)\n```")
         _ = activeStore.applyDiffs(from: single, workspace: ws)
+    }
+
+    private func openCurrentProject(in target: ProjectOpenTarget) {
+        guard let workspace = currentWorkspace else { return }
+        switch target {
+        case .finder:
+            NSWorkspace.shared.open(workspace.path)
+        case .cursor:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"],
+                appNames: ["Cursor"]
+            )
+        case .vsCode:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders"],
+                appNames: ["Visual Studio Code", "Visual Studio Code - Insiders"]
+            )
+        case .terminal:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.apple.Terminal"],
+                appNames: ["Terminal"]
+            )
+        case .iTerm:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.googlecode.iterm2"],
+                appNames: ["iTerm", "iTerm2"]
+            )
+        case .zed:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["dev.zed.Zed", "dev.zed.Zed-Preview", "com.zed.Zed"],
+                appNames: ["Zed", "Zed Preview"]
+            )
+        }
+    }
+
+    private func openProject(_ url: URL, bundleIdentifiers: [String], appNames: [String]) {
+        guard let appURL = installedApp(bundleIdentifiers: bundleIdentifiers, appNames: appNames) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: configuration)
+    }
+
+    private func installedApp(bundleIdentifiers: [String], appNames: [String]) -> URL? {
+        for bundleIdentifier in bundleIdentifiers {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+                return url
+            }
+        }
+
+        for appName in appNames {
+            for directory in ["/Applications", "\(NSHomeDirectory())/Applications"] {
+                let candidate = URL(fileURLWithPath: directory).appendingPathComponent("\(appName).app")
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
     }
 
     private func handleWorkspaceChange(_ newID: Workspace.ID?) {

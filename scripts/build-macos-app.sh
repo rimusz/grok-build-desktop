@@ -82,6 +82,11 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
         chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
         echo "==> Copied browser MCP bridge"
     fi
+    if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
+        mkdir -p "$APP_BUNDLE/Contents/Resources/Skills"
+        cp -R "$ROOT_DIR/GrokBuild/Resources/Skills/." "$APP_BUNDLE/Contents/Resources/Skills/"
+        echo "==> Copied browser skills"
+    fi
 
     # Copy menu bar icon
     # Looks in these locations (in order):

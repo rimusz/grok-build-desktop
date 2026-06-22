@@ -36,6 +36,9 @@ struct SidebarView: View {
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
     @State private var renameText = ""
+    @State private var expandedSessionWorkspaceIDs: Set<Workspace.ID> = []
+
+    private let collapsedSessionLimit = 5
 
     private var filtered: [Workspace] {
         let base = filter.isEmpty ? orderedWorkspaces : orderedWorkspaces.filter {
@@ -46,6 +49,32 @@ struct SidebarView: View {
 
     private func sessions(for workspaceID: Workspace.ID) -> [SidebarSession] {
         sessions.filter { $0.workspaceID == workspaceID }
+    }
+
+    private func isSessionsExpanded(for workspaceID: Workspace.ID) -> Bool {
+        expandedSessionWorkspaceIDs.contains(workspaceID)
+    }
+
+    private func collapsedSessions(from sessions: [SidebarSession]) -> [SidebarSession] {
+        var visible = Array(sessions.prefix(collapsedSessionLimit))
+        if let selectedSessionID,
+           let selected = sessions.first(where: { $0.id == selectedSessionID }),
+           !visible.contains(where: { $0.id == selectedSessionID }) {
+            if visible.count >= collapsedSessionLimit {
+                visible[collapsedSessionLimit - 1] = selected
+            } else {
+                visible.append(selected)
+            }
+        }
+        return visible
+    }
+
+    private func hiddenCount(for workspaceID: Workspace.ID, loadedSessions: [SidebarSession], isExpanded: Bool) -> Int {
+        let hiddenBeyondLoaded = hiddenSessionCounts[workspaceID] ?? 0
+        if isExpanded {
+            return hiddenBeyondLoaded
+        }
+        return max(0, loadedSessions.count - collapsedSessionLimit) + hiddenBeyondLoaded
     }
 
     var body: some View {
@@ -77,32 +106,45 @@ struct SidebarView: View {
 
                         let projectSessions = sessions(for: ws.id)
                         if selectedWorkspaceID == ws.id || !projectSessions.isEmpty {
-                            ForEach(projectSessions) { session in
-                                SessionSidebarRow(
-                                    session: session,
-                                    isSelected: selectedSessionID == session.id,
-                                    onSelect: { onSelectSession(session.id) }
-                                )
-                                .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 10))
-                                .contextMenu {
-                                    Button("Rename…") {
-                                        renamingSessionID = session.id
-                                        renameText = session.title
-                                    }
-                                    Button("Close Session", role: .destructive) {
-                                        onCloseSession(session.id)
-                                    }
+                            let isExpanded = isSessionsExpanded(for: ws.id)
+                            let shownSessions = isExpanded ? projectSessions : collapsedSessions(from: projectSessions)
+
+                            if isExpanded {
+                                ForEach(shownSessions) { session in
+                                    sessionRow(session)
+                                }
+                                .onMove { source, destination in
+                                    onMoveSession(ws.id, source, destination)
+                                }
+                            } else {
+                                ForEach(shownSessions) { session in
+                                    sessionRow(session)
                                 }
                             }
-                            .onMove { source, destination in
-                                onMoveSession(ws.id, source, destination)
-                            }
 
-                            if let hidden = hiddenSessionCounts[ws.id], hidden > 0 {
-                                Text("\(hidden) more in Browse Sessions…")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .listRowInsets(EdgeInsets(top: 0, leading: 28, bottom: 6, trailing: 10))
+                            let hidden = hiddenCount(for: ws.id, loadedSessions: projectSessions, isExpanded: isExpanded)
+                            if hidden > 0 || isExpanded {
+                                Button {
+                                    if isExpanded {
+                                        expandedSessionWorkspaceIDs.remove(ws.id)
+                                    } else {
+                                        expandedSessionWorkspaceIDs.insert(ws.id)
+                                    }
+                                } label: {
+                                    Text(isExpanded ? "Show less" : "Show more")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .buttonStyle(.plain)
+                                .listRowInsets(EdgeInsets(top: 2, leading: 48, bottom: 6, trailing: 10))
+
+                                if isExpanded, hidden > 0 {
+                                    Text("\(hidden) more in Browse Sessions…")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                        .listRowInsets(EdgeInsets(top: 0, leading: 48, bottom: 6, trailing: 10))
+                                }
                             }
                         }
                     }
@@ -173,41 +215,26 @@ struct SidebarView: View {
         )
     }
 
-    @ViewBuilder
-    private func projectContextMenu(for ws: Workspace) -> some View {
-        Menu("Open in") {
-            openProjectButton(
-                title: "Finder",
-                appURL: finderURL,
-                projectURL: ws.path,
-                fallbackSystemImage: "finder"
-            ) {
-                NSWorkspace.shared.open(ws.path)
+    private func sessionRow(_ session: SidebarSession) -> some View {
+        SessionSidebarRow(
+            session: session,
+            isSelected: selectedSessionID == session.id,
+            onSelect: { onSelectSession(session.id) }
+        )
+        .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 10))
+        .contextMenu {
+            Button("Rename…") {
+                renamingSessionID = session.id
+                renameText = session.title
             }
-
-            if let app = installedApp(bundleIdentifiers: ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders"], appNames: ["Visual Studio Code", "Visual Studio Code - Insiders"]) {
-                openProjectButton(title: "VS Code", appURL: app, projectURL: ws.path, fallbackSystemImage: "chevron.left.forwardslash.chevron.right")
-            }
-
-            if let app = installedApp(bundleIdentifiers: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"], appNames: ["Cursor"]) {
-                openProjectButton(title: "Cursor", appURL: app, projectURL: ws.path, fallbackSystemImage: "cursorarrow")
-            }
-
-            if let app = installedApp(bundleIdentifiers: ["com.apple.Terminal"], appNames: ["Terminal"]) {
-                openProjectButton(title: "Terminal", appURL: app, projectURL: ws.path, fallbackSystemImage: "terminal")
-            }
-
-            if let app = installedApp(bundleIdentifiers: ["com.googlecode.iterm2"], appNames: ["iTerm", "iTerm2"]) {
-                openProjectButton(title: "iTerm", appURL: app, projectURL: ws.path, fallbackSystemImage: "terminal.fill")
-            }
-
-            if let app = installedApp(bundleIdentifiers: ["dev.zed.Zed", "dev.zed.Zed-Preview", "com.zed.Zed"], appNames: ["Zed", "Zed Preview"]) {
-                openProjectButton(title: "Zed", appURL: app, projectURL: ws.path, fallbackSystemImage: "square.and.pencil")
+            Button("Close Session", role: .destructive) {
+                onCloseSession(session.id)
             }
         }
+    }
 
-        Divider()
-
+    @ViewBuilder
+    private func projectContextMenu(for ws: Workspace) -> some View {
         Button("New Session") {
             onNewSessionForWorkspace(ws)
         }

@@ -31,26 +31,22 @@ struct MCPServerConfig: Sendable, Equatable {
     }
 
     var jsonObject: [String: Any] {
-        var object: [String: Any] = [
-            "name": name,
-            "type": transport.rawValue,
-            "transport": transport.rawValue
-        ]
-        if let command, !command.isEmpty {
-            object["command"] = command
+        switch transport {
+        case .stdio:
+            return [
+                "name": name,
+                "command": command ?? "",
+                "args": args,
+                "env": env.map { key, value in ["name": key, "value": value] }
+            ]
+        case .http, .sse:
+            return [
+                "name": name,
+                "type": transport.rawValue,
+                "url": url ?? "",
+                "headers": []
+            ]
         }
-        if !args.isEmpty {
-            object["args"] = args
-        }
-        if let url, !url.isEmpty {
-            object["url"] = url
-        }
-        if !env.isEmpty {
-            object["env"] = env.map { key, value in ["name": key, "value": value] }
-        } else {
-            object["env"] = []
-        }
-        return object
     }
 }
 

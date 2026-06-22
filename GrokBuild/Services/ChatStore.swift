@@ -189,7 +189,20 @@ final class ChatStore {
         startConnectionWatchdog()
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
-        let browserMCPServers = AgentBrowserService.browserMCPConfig()
+        let browserSettings = BrowserSettingsStore.load()
+        if browserSettings.enabled {
+            do {
+                try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
+            } catch {
+                lastError = "Browser skill install failed: \(error.localizedDescription)"
+            }
+            do {
+                _ = try await AgentBrowserService.ensureExternalBrowserStarted(settings: browserSettings)
+            } catch {
+                lastError = "External browser auto-start failed: \(error.localizedDescription)"
+            }
+        }
+        let browserMCPServers = AgentBrowserService.browserMCPConfig(settings: browserSettings)
             .map { [$0] } ?? []
         let opts = GrokLaunchOptions(
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
@@ -252,9 +265,11 @@ final class ChatStore {
                 await restartProcess()
             }
             guard connectionState == .ready else {
-                lastError = connectionState == .starting
-                    ? "Grok is still starting…"
-                    : "Grok is not ready yet."
+                if lastError == nil {
+                    lastError = connectionState == .starting
+                        ? "Grok is still starting…"
+                        : connectionState.errorMessage ?? "Grok is not ready yet."
+                }
                 return false
             }
         }
@@ -605,7 +620,7 @@ final class ChatStore {
         case .toolCall(let tc):
             isGrokking = false
             if !liveToolCalls.contains(where: { $0.id == tc.id }) {
-                liveToolCalls.append(LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind))
+                liveToolCalls.append(liveToolCall(from: tc))
             }
             if QuestionRequest.isQuestionTool(tc),
                let items = QuestionRequest.questionsFromToolCall(tc),
@@ -620,9 +635,9 @@ final class ChatStore {
             }
         case .toolCallUpdate(let tc):
             if let idx = liveToolCalls.firstIndex(where: { $0.id == tc.id }) {
-                liveToolCalls[idx] = LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind)
+                liveToolCalls[idx] = mergedToolCall(existing: liveToolCalls[idx], update: tc)
             } else {
-                liveToolCalls.append(LiveToolCall(id: tc.id, title: tc.title, kind: tc.kind))
+                liveToolCalls.append(liveToolCall(from: tc))
             }
             if QuestionRequest.isQuestionTool(tc),
                let items = QuestionRequest.questionsFromToolCall(tc),
@@ -674,6 +689,56 @@ final class ChatStore {
         case .error(let msg):
             lastError = msg
         }
+    }
+
+    private func liveToolCall(from toolCall: ToolCall) -> LiveToolCall {
+        LiveToolCall(
+            id: toolCall.id,
+            title: displayTitle(for: toolCall),
+            kind: displayKind(for: toolCall)
+        )
+    }
+
+    private func mergedToolCall(existing: LiveToolCall, update: ToolCall) -> LiveToolCall {
+        let title = isPlaceholderTitle(update.title) ? existing.title : displayTitle(for: update)
+        let kind = isPlaceholderKind(update.kind) ? existing.kind : displayKind(for: update)
+        return LiveToolCall(id: existing.id, title: title, kind: kind)
+    }
+
+    private func displayTitle(for toolCall: ToolCall) -> String {
+        if !isPlaceholderTitle(toolCall.title) {
+            return toolCall.title
+        }
+        if let name = toolCall.rawInput?["toolName"] as? String
+            ?? toolCall.rawInput?["tool_name"] as? String
+            ?? toolCall.rawInput?["name"] as? String {
+            return name
+                .replacingOccurrences(of: "_", with: " ")
+                .capitalized
+        }
+        return "Tool call"
+    }
+
+    private func displayKind(for toolCall: ToolCall) -> String {
+        if !isPlaceholderKind(toolCall.kind) {
+            return toolCall.kind
+        }
+        if let name = toolCall.rawInput?["toolName"] as? String
+            ?? toolCall.rawInput?["tool_name"] as? String,
+           name.hasPrefix("browser_") {
+            return "browser"
+        }
+        return "tool"
+    }
+
+    private func isPlaceholderTitle(_ title: String) -> Bool {
+        let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "unknown" || normalized == "tool call"
+    }
+
+    private func isPlaceholderKind(_ kind: String) -> Bool {
+        let normalized = kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty || normalized == "unknown"
     }
 
     private func appendAssistantText(_ text: String) {

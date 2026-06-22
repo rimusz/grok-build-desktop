@@ -204,18 +204,34 @@ final class GrokProcess: @unchecked Sendable {
             ?? (tool["id"] as? String)
             ?? UUID().uuidString
 
+        var raw = tool["rawInput"] as? [String: Any]
+            ?? tool["raw_input"] as? [String: Any]
+            ?? tool["input"] as? [String: Any]
+            ?? tool["arguments"] as? [String: Any]
+            ?? tool["args"] as? [String: Any]
+            ?? [:]
+
+        if let toolName = tool["toolName"] as? String ?? tool["tool_name"] as? String {
+            raw["toolName"] = toolName
+        }
+        if let serverName = tool["serverName"] as? String ?? tool["server_name"] as? String {
+            raw["serverName"] = serverName
+        }
+
+        let rawToolName = raw["toolName"] as? String
+            ?? raw["tool_name"] as? String
+            ?? raw["name"] as? String
+            ?? raw["tool"] as? String
+
         let kind = (tool["kind"] as? String)
             ?? (tool["type"] as? String)
+            ?? rawToolName.map { toolKind(for: $0) }
             ?? "unknown"
 
         let title = (tool["title"] as? String)
             ?? (tool["name"] as? String)
-            ?? kind
-
-        var raw = tool["rawInput"] as? [String: Any]
-            ?? tool["raw_input"] as? [String: Any]
-            ?? tool["args"] as? [String: Any]
-            ?? [:]
+            ?? rawToolName.map { displayToolName($0) }
+            ?? (kind == "unknown" ? "Tool call" : kind)
 
         // More parsing for specific kinds (edit, execute, etc.)
         if let path = tool["path"] as? String { raw["path"] = path }
@@ -224,6 +240,26 @@ final class GrokProcess: @unchecked Sendable {
         if let newText = tool["newText"] as? String { raw["newText"] = newText }
 
         return ToolCall(id: tcid, kind: kind, title: title, rawInput: raw.isEmpty ? nil : raw)
+    }
+
+    private func toolKind(for toolName: String) -> String {
+        if toolName.hasPrefix("browser_") { return "browser" }
+        if toolName.localizedCaseInsensitiveContains("read") { return "read" }
+        if toolName.localizedCaseInsensitiveContains("write") || toolName.localizedCaseInsensitiveContains("edit") {
+            return "edit"
+        }
+        return "tool"
+    }
+
+    private func displayToolName(_ name: String) -> String {
+        name
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { word in
+                let lower = word.lowercased()
+                return lower.prefix(1).uppercased() + lower.dropFirst()
+            }
+            .joined(separator: " ")
     }
 
     private func parsePermissionRequest(id: Any?, params: [String: Any]) -> PermissionRequest? {

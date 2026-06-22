@@ -49,6 +49,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Normal app (shows in Dock, supports windows + menu bar icon)
         NSApp.setActivationPolicy(.regular)
+        setupMainMenu()
         if let appIcon = AppIconProvider.image() {
             NSApp.applicationIconImage = appIcon
         }
@@ -115,8 +116,101 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenu = NSMenu()
+        let appItem = NSMenuItem()
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+        let about = NSMenuItem(title: "About GrokBuild", action: #selector(showAbout), keyEquivalent: "")
+        about.target = self
+        appMenu.addItem(about)
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "Quit GrokBuild", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let editMenu = NSMenu(title: "Edit")
+        let editItem = NSMenuItem()
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(redo)
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+
+        let projectMenu = NSMenu(title: "Project")
+        let projectItem = NSMenuItem()
+        projectItem.submenu = projectMenu
+        mainMenu.addItem(projectItem)
+        let addProject = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "O")
+        addProject.keyEquivalentModifierMask = [.command, .shift]
+        addProject.target = self
+        projectMenu.addItem(addProject)
+
+        let sessionMenu = NSMenu(title: "Session")
+        let sessionItem = NSMenuItem()
+        sessionItem.submenu = sessionMenu
+        mainMenu.addItem(sessionItem)
+        let newSession = NSMenuItem(title: "New Session", action: #selector(newSession), keyEquivalent: "n")
+        newSession.target = self
+        sessionMenu.addItem(newSession)
+        let browseSessions = NSMenuItem(title: "Browse Sessions…", action: #selector(browseSessions), keyEquivalent: "r")
+        browseSessions.keyEquivalentModifierMask = [.command, .shift]
+        browseSessions.target = self
+        sessionMenu.addItem(browseSessions)
+        let stopGeneration = NSMenuItem(title: "Stop Generation", action: #selector(stopGeneration), keyEquivalent: ".")
+        stopGeneration.target = self
+        sessionMenu.addItem(stopGeneration)
+        let focusInput = NSMenuItem(title: "Focus Input", action: #selector(focusInput), keyEquivalent: "l")
+        focusInput.target = self
+        sessionMenu.addItem(focusInput)
+
+        let windowMenu = NSMenu(title: "Window")
+        let windowItem = NSMenuItem()
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+        windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.miniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: ""))
+        NSApp.windowsMenu = windowMenu
+
+        NSApp.mainMenu = mainMenu
+    }
+
     @objc private func openMainWindowRequested() {
         openMainWindow()
+    }
+
+    @objc private func showAbout() {
+        AboutPanel.show()
+    }
+
+    @objc private func chooseWorkspace() {
+        openMainWindow()
+        NotificationCenter.default.post(name: .chooseWorkspaceRequested, object: nil)
+    }
+
+    @objc private func newSession() {
+        openMainWindow()
+        NotificationCenter.default.post(name: .newSessionRequested, object: nil)
+    }
+
+    @objc private func browseSessions() {
+        openMainWindow()
+        NotificationCenter.default.post(name: .sessionsRequested, object: nil)
+    }
+
+    @objc private func stopGeneration() {
+        NotificationCenter.default.post(name: .stopGenerationRequested, object: nil)
+    }
+
+    @objc private func focusInput() {
+        openMainWindow()
+        NotificationCenter.default.post(name: .focusInputRequested, object: nil)
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
