@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+AGENT_BROWSER = os.environ.get("AGENT_BROWSER_PATH") or "agent-browser"
+
+
+TOOLS = [
+    {
+        "name": "browser_open_url",
+        "description": "Open a URL in the controlled Chrome/Chromium browser.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "browser_snapshot",
+        "description": "Return a compact accessibility snapshot with stable refs.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "browser_click_ref",
+        "description": "Click an element by snapshot ref, for example @e2.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"ref": {"type": "string"}},
+            "required": ["ref"],
+        },
+    },
+    {
+        "name": "browser_type_ref",
+        "description": "Type text into an element by snapshot ref.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ref": {"type": "string"},
+                "text": {"type": "string"},
+            },
+            "required": ["ref", "text"],
+        },
+    },
+    {
+        "name": "browser_screenshot",
+        "description": "Capture a screenshot and return the saved file path.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "browser_eval_js",
+        "description": "Evaluate JavaScript in the active page.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"script": {"type": "string"}},
+            "required": ["script"],
+        },
+    },
+    {
+        "name": "browser_wait_for_load",
+        "description": "Wait for the active page to finish loading.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+
+
+def respond(request_id, result=None, error=None):
+    message = {"jsonrpc": "2.0", "id": request_id}
+    if error is not None:
+        message["error"] = {"code": -32000, "message": str(error)}
+    else:
+        message["result"] = result if result is not None else {}
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+
+def notify(method, params=None):
+    message = {"jsonrpc": "2.0", "method": method}
+    if params is not None:
+        message["params"] = params
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+
+
+def run_agent_browser(args, stdin_text=None):
+    env = os.environ.copy()
+    if env.get("GROKBUILD_BROWSER_CDP_URL"):
+        env["BU_CDP_URL"] = env["GROKBUILD_BROWSER_CDP_URL"]
+    if env.get("GROKBUILD_BROWSER_PROFILE"):
+        env["BU_NAME"] = env["GROKBUILD_BROWSER_PROFILE"]
+
+    proc = subprocess.run(
+        [AGENT_BROWSER] + args,
+        input=stdin_text,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        timeout=60,
+    )
+    output = proc.stdout.strip() or proc.stderr.strip()
+    if proc.returncode != 0:
+        raise RuntimeError(output or f"agent-browser exited with {proc.returncode}")
+    return output
+
+
+def text_result(text):
+    return {"content": [{"type": "text", "text": text or "(no output)"}]}
+
+
+def call_tool(name, args):
+    args = args or {}
+    if name == "browser_open_url":
+        return text_result(run_agent_browser(["open", args["url"]]))
+    if name == "browser_snapshot":
+        return text_result(run_agent_browser(["snapshot", "-i"]))
+    if name == "browser_click_ref":
+        return text_result(run_agent_browser(["click", args["ref"]]))
+    if name == "browser_type_ref":
+        return text_result(run_agent_browser(["type", args["ref"], args["text"]]))
+    if name == "browser_screenshot":
+        path = Path(tempfile.gettempdir()) / f"grokbuild-browser-{os.getpid()}.png"
+        output = run_agent_browser(["screenshot", str(path)])
+        return text_result(f"{output}\nScreenshot: {path}")
+    if name == "browser_eval_js":
+        script = args["script"]
+        return text_result(run_agent_browser(["js", script]))
+    if name == "browser_wait_for_load":
+        return text_result(run_agent_browser(["wait"]))
+    raise ValueError(f"Unknown browser tool: {name}")
+
+
+def handle(request):
+    request_id = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+
+    try:
+        if method == "initialize":
+            respond(request_id, {
+                "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                "serverInfo": {"name": "grokbuild-browser", "version": "0.1.0"},
+                "capabilities": {"tools": {}},
+            })
+        elif method == "notifications/initialized":
+            return
+        elif method == "ping":
+            respond(request_id, {})
+        elif method == "tools/list":
+            respond(request_id, {"tools": TOOLS})
+        elif method == "tools/call":
+            respond(request_id, call_tool(params.get("name"), params.get("arguments") or {}))
+        else:
+            respond(request_id, error=f"Unsupported MCP method: {method}")
+    except Exception as exc:
+        respond(request_id, error=exc)
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            handle(json.loads(line))
+        except Exception as exc:
+            respond(None, error=exc)
+
+
+if __name__ == "__main__":
+    main()

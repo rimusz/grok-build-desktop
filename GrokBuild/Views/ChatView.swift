@@ -2,6 +2,15 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+enum ProjectOpenTarget {
+    case finder
+    case cursor
+    case vsCode
+    case terminal
+    case iTerm
+    case zed
+}
+
 struct ChatView: View {
     @Bindable var store: ChatStore
     var reviewFileCount: Int = 0
@@ -10,6 +19,9 @@ struct ChatView: View {
     var onSelectSession: (UUID) -> Void = { _ in }
     var onBrowseSessions: () -> Void = {}
     var onNewSession: () -> Void = {}
+    var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
+    var onToggleBrowserTools: () -> Void = {}
+    var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
     var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
@@ -17,8 +29,10 @@ struct ChatView: View {
     @State private var slashActiveIndex = 0
     @State private var slashSkillsExpanded = false
     @State private var slashCommandsExpanded = false
+    @State private var toolActivityExpanded = false
     @State private var voiceInput = VoiceInputService()
     @FocusState private var inputFocused: Bool
+    @AppStorage(BrowserSettingsKeys.enabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -99,8 +113,13 @@ struct ChatView: View {
                             }
                         }
 
-                        ForEach(store.liveToolCalls) { tool in
-                            ToolCallRow(title: tool.title, kind: tool.kind)
+                        if !store.liveToolCalls.isEmpty {
+                            ToolActivityGroup(
+                                tools: store.liveToolCalls,
+                                isExpanded: toolActivityExpanded
+                            ) {
+                                toolActivityExpanded.toggle()
+                            }
                         }
 
                         if let plan = store.pendingExitPlan {
@@ -164,17 +183,92 @@ struct ChatView: View {
             .disabled(store.currentWorkspace == nil)
             .help("New session")
 
-            Spacer()
-
             Button(action: onBrowseSessions) {
                 Image(systemName: "clock")
             }
             .buttonStyle(.plain)
             .help("Browse sessions")
+
+            Spacer()
+
+            Menu {
+                openInButton(title: "Finder", target: .finder, appURL: finderURL, fallbackSystemImage: "finder")
+                if let app = installedApp(bundleIdentifiers: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"], appNames: ["Cursor"]) {
+                    openInButton(title: "Cursor", target: .cursor, appURL: app, fallbackSystemImage: "cursorarrow")
+                }
+                if let app = installedApp(bundleIdentifiers: ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders"], appNames: ["Visual Studio Code", "Visual Studio Code - Insiders"]) {
+                    openInButton(title: "VS Code", target: .vsCode, appURL: app, fallbackSystemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                Divider()
+                if let app = installedApp(bundleIdentifiers: ["com.apple.Terminal"], appNames: ["Terminal"]) {
+                    openInButton(title: "Terminal", target: .terminal, appURL: app, fallbackSystemImage: "terminal")
+                }
+                if let app = installedApp(bundleIdentifiers: ["com.googlecode.iterm2"], appNames: ["iTerm", "iTerm2"]) {
+                    openInButton(title: "iTerm", target: .iTerm, appURL: app, fallbackSystemImage: "terminal.fill")
+                }
+                if let app = installedApp(bundleIdentifiers: ["dev.zed.Zed", "dev.zed.Zed-Preview", "com.zed.Zed"], appNames: ["Zed", "Zed Preview"]) {
+                    Divider()
+                    openInButton(title: "Zed", target: .zed, appURL: app, fallbackSystemImage: "square.and.pencil")
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(store.currentWorkspace == nil)
+            .help("Open project in")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    private var finderURL: URL {
+        URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app")
+    }
+
+    private func openInButton(
+        title: String,
+        target: ProjectOpenTarget,
+        appURL: URL,
+        fallbackSystemImage: String
+    ) -> some View {
+        Button {
+            onOpenProjectIn(target)
+        } label: {
+            Label {
+                Text(title)
+            } icon: {
+                appIcon(for: appURL, fallbackSystemImage: fallbackSystemImage)
+            }
+        }
+    }
+
+    private func appIcon(for appURL: URL, fallbackSystemImage: String) -> Image {
+        if FileManager.default.fileExists(atPath: appURL.path) {
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            icon.size = NSSize(width: 16, height: 16)
+            return Image(nsImage: icon)
+        }
+        return Image(systemName: fallbackSystemImage)
+    }
+
+    private func installedApp(bundleIdentifiers: [String], appNames: [String]) -> URL? {
+        for bundleIdentifier in bundleIdentifiers {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+                return url
+            }
+        }
+
+        for appName in appNames {
+            for directory in ["/Applications", "\(NSHomeDirectory())/Applications"] {
+                let candidate = URL(fileURLWithPath: directory).appendingPathComponent("\(appName).app")
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
     }
 
     private var welcomeState: some View {
@@ -252,7 +346,7 @@ struct ChatView: View {
                     TextField("Plan, Build, / for skills", text: $input, axis: .vertical)
                     .textFieldStyle(.plain)
                     .focused($inputFocused)
-                    .lineLimit(1...8)
+                    .lineLimit(2, reservesSpace: true)
                     .submitLabel(.send)
                     .onSubmit {
                         if showSlashPopover {
@@ -333,6 +427,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(maxWidth: 780, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
@@ -341,6 +436,7 @@ struct ChatView: View {
             .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isFileDropTargeted) { providers in
                 handleFileDrop(providers)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             projectStatusRow
         }
@@ -357,6 +453,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Branches & worktrees")
+                browserStatusPill
             } else {
                 Label("No project selected", systemImage: "folder")
             }
@@ -365,6 +462,70 @@ struct ChatView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+    }
+
+    private var browserStatusPill: some View {
+        let settings = BrowserSettingsStore.load()
+        let configurationIssue = AgentBrowserService.browserToolsConfigurationIssue(settings: settings)
+        let browserBaseReady = settings.backend == .agentBrowser
+            && AgentBrowserService.bridgeScriptURL() != nil
+            && AgentBrowserService.executableURL() != nil
+        let managedRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .managed) == nil
+        let externalRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .external) == nil
+        let canChooseRuntime = browserBaseReady && (managedRuntimeReady || externalRuntimeReady)
+        let isConfigured = configurationIssue == nil
+        let title = browserToolsEnabled
+            ? (isConfigured ? "Browser Tools On" : "Browser Setup Needed")
+            : "Browser Tools Off"
+        let icon = browserToolsEnabled && isConfigured ? "globe.badge.chevron.backward" : "globe"
+        let tint: Color = browserToolsEnabled ? (isConfigured ? .accentColor : .orange) : .secondary
+
+        return Menu {
+            if browserToolsEnabled || isConfigured {
+                Button(browserToolsEnabled ? "Turn Browser Tools Off" : "Turn Browser Tools On") {
+                    onToggleBrowserTools()
+                }
+            }
+
+            if canChooseRuntime {
+                Divider()
+
+                Button {
+                    onSelectBrowserRuntime(.managed)
+                } label: {
+                    Label("Managed Browser Runtime", systemImage: settings.runtimeMode == .managed ? "checkmark" : "shippingbox")
+                }
+
+                Button {
+                    onSelectBrowserRuntime(.external)
+                } label: {
+                    Label("Existing Chromium Browser", systemImage: settings.runtimeMode == .external ? "checkmark" : "globe")
+                }
+            }
+
+            if let configurationIssue {
+                Button(configurationIssue) {}
+                    .disabled(true)
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(browserToolsEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .help(browserStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
+    }
+
+    private func browserStatusHelp(isConfigured: Bool, issue: String?) -> String {
+        if !isConfigured {
+            return issue ?? "Finish browser setup in Settings before using the quick toggle."
+        }
+        return browserToolsEnabled
+            ? "Disable browser MCP tools and restart the Grok connection."
+            : "Enable browser MCP tools and restart the Grok connection."
     }
 
     @ViewBuilder
@@ -402,22 +563,19 @@ struct ChatView: View {
     @ViewBuilder
     private var reviewControls: some View {
         if reviewFileCount > 0 {
-            HStack(spacing: 8) {
-                Text("\(reviewFileCount) \(reviewFileCount == 1 ? "File" : "Files")")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    onToggleReview()
-                } label: {
-                    Text("Review")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(isReviewVisible ? .accentColor : .secondary)
-                .help(isReviewVisible ? "Hide review pane" : "Show review pane")
+            Button {
+                onToggleReview()
+            } label: {
+                Label(
+                    "\(reviewFileCount) Changed \(reviewFileCount == 1 ? "File" : "Files")",
+                    systemImage: "doc.on.doc"
+                )
+                .font(.caption.weight(.semibold))
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(isReviewVisible ? .accentColor : .secondary)
+            .help(isReviewVisible ? "Hide changed files" : "Show changed files")
         }
     }
 

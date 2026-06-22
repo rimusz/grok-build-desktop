@@ -156,9 +156,78 @@ struct ToolCallRow: View {
 
     private var iconName: String {
         let k = kind.lowercased()
+        if k.contains("browser") { return "globe" }
         if k.contains("read") { return "doc.text" }
         if k.contains("edit") || k.contains("write") { return "pencil" }
         if k.contains("exec") || k.contains("run") || k.contains("terminal") { return "terminal" }
         return "wrench"
+    }
+}
+
+struct ToolActivityGroup: View {
+    let tools: [ChatStore.LiveToolCall]
+    let isExpanded: Bool
+    var onToggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button(action: onToggle) {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+
+                    Image(systemName: summaryIconName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+
+                    Text(summaryTitle)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text("\(tools.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(tools) { tool in
+                        ToolCallRow(title: tool.title, kind: tool.kind)
+                    }
+                }
+                .padding(.leading, 20)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var summaryTitle: String {
+        if tools.count == 1, let tool = tools.first {
+            return tool.title
+        }
+        if browserToolCount == tools.count {
+            return "Browser activity"
+        }
+        if browserToolCount > 0 {
+            return "Tool activity · \(browserToolCount) browser"
+        }
+        return "Tool activity"
+    }
+
+    private var summaryIconName: String {
+        browserToolCount > 0 ? "globe" : "wrench"
+    }
+
+    private var browserToolCount: Int {
+        tools.filter { $0.kind.localizedCaseInsensitiveContains("browser") }.count
     }
 }

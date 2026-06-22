@@ -61,6 +61,8 @@ final class SessionPersistenceTests: XCTestCase {
         let workspaceID = UUID()
         let sessionID = UUID()
         let selectedID = UUID()
+        let otherWorkspaceID = UUID()
+        let otherSelectedID = UUID()
         let date = Date(timeIntervalSince1970: 1_719_000_000)
         let snapshot = SessionLayoutSnapshot(
             records: [
@@ -74,7 +76,11 @@ final class SessionPersistenceTests: XCTestCase {
             ],
             sessionOrderByWorkspace: [workspaceID: [sessionID]],
             selectedSessionID: selectedID,
-            selectedWorkspaceID: workspaceID
+            selectedWorkspaceID: workspaceID,
+            selectedSessionIDByWorkspace: [
+                workspaceID: selectedID,
+                otherWorkspaceID: otherSelectedID
+            ]
         )
 
         let data = try JSONEncoder().encode(snapshot)
@@ -88,6 +94,8 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.sessionOrderByWorkspace[workspaceID], [sessionID])
         XCTAssertEqual(decoded.selectedSessionID, selectedID)
         XCTAssertEqual(decoded.selectedWorkspaceID, workspaceID)
+        XCTAssertEqual(decoded.selectedSessionIDByWorkspace[workspaceID], selectedID)
+        XCTAssertEqual(decoded.selectedSessionIDByWorkspace[otherWorkspaceID], otherSelectedID)
     }
 
     func testSessionLayoutStoreRoundTripsSnapshot() {
@@ -105,7 +113,8 @@ final class SessionPersistenceTests: XCTestCase {
             ],
             sessionOrderByWorkspace: [workspaceID: [sessionID]],
             selectedSessionID: sessionID,
-            selectedWorkspaceID: workspaceID
+            selectedWorkspaceID: workspaceID,
+            selectedSessionIDByWorkspace: [workspaceID: sessionID]
         )
 
         SessionLayoutStore.saveSessions(snapshot)
@@ -115,6 +124,26 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.sessionOrderByWorkspace, snapshot.sessionOrderByWorkspace)
         XCTAssertEqual(loaded.selectedSessionID, snapshot.selectedSessionID)
         XCTAssertEqual(loaded.selectedWorkspaceID, snapshot.selectedWorkspaceID)
+        XCTAssertEqual(loaded.selectedSessionIDByWorkspace, snapshot.selectedSessionIDByWorkspace)
+    }
+
+    func testSessionLayoutSnapshotDecodesWithoutPerWorkspaceSelection() throws {
+        let workspaceID = UUID()
+        let sessionID = UUID()
+        let json = """
+        {
+          "records": [],
+          "sessionOrderByWorkspace": [],
+          "selectedSessionID": "\(sessionID.uuidString)",
+          "selectedWorkspaceID": "\(workspaceID.uuidString)"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(SessionLayoutSnapshot.self, from: json)
+
+        XCTAssertEqual(decoded.selectedSessionID, sessionID)
+        XCTAssertEqual(decoded.selectedWorkspaceID, workspaceID)
+        XCTAssertEqual(decoded.selectedSessionIDByWorkspace, [:])
     }
 
     func testWorkspaceLayoutStoreRoundTripsPinnedAndManualOrder() {

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     private struct LiveSession: Identifiable {
@@ -22,12 +23,18 @@ struct ContentView: View {
     @State private var gitError: String?
     @State private var previewMessageID: UUID?
     @State private var previewDiffs: [ChatStore.DetectedDiff] = []
+    @State private var projectChangedDiffs: [ChatStore.DetectedDiff] = []
     @State private var didBootstrap = false
+    @State private var isRestoringSessions = false
+    @State private var restoredSessionCount = 0
+    @State private var totalSessionsToRestore = 0
+    @State private var restoreStatusText = "Restoring sessions..."
     @State private var sessionListRevision = 0
     @State private var sessionLayout = SessionLayoutStore.loadSessions()
 
     var body: some View {
-        HSplitView {
+        ZStack {
+            HSplitView {
             SidebarView(
                 workspaces: $workspaceStore.workspaces,
                 orderedWorkspaces: workspaceStore.orderedWorkspaces,
@@ -75,16 +82,19 @@ struct ContentView: View {
                 HSplitView {
                     ChatView(
                         store: activeStore,
-                        reviewFileCount: previewDiffs.count,
+                        reviewFileCount: activeReviewDiffs.count,
                         isReviewVisible: showPreview,
                         onToggleReview: {
-                            if !previewDiffs.isEmpty {
+                            if !activeReviewDiffs.isEmpty {
                                 showPreview.toggle()
                             }
                         },
                         onSelectSession: { selectSession($0) },
                         onBrowseSessions: { showSessions = true },
                         onNewSession: { startNewSessionForCurrentProject() },
+                        onOpenProjectIn: { openCurrentProject(in: $0) },
+                        onToggleBrowserTools: { toggleBrowserToolsFromChat() },
+                        onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)
@@ -95,8 +105,8 @@ struct ContentView: View {
 
                     if showPreview {
                         PreviewPane(
-                            message: previewMessage,
-                            diffs: previewDiffs,
+                            message: activeReviewMessage,
+                            diffs: activeReviewDiffs,
                             workspace: currentWorkspace,
                             onApply: applyDiffs,
                             onApplySingle: applySingle
@@ -105,6 +115,12 @@ struct ContentView: View {
                     }
                 }
                 .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
+            }
+            }
+            .disabled(isRestoringSessions)
+
+            if isRestoringSessions {
+                sessionRestoreOverlay
             }
         }
         .onAppear(perform: bootstrap)
@@ -185,6 +201,39 @@ struct ContentView: View {
 
     // MARK: - Subviews
 
+    private var sessionRestoreOverlay: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.regular)
+
+            VStack(spacing: 5) {
+                Text("Restoring Sessions")
+                    .font(.headline)
+                Text(restoreStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if totalSessionsToRestore > 0 {
+                ProgressView(value: Double(restoredSessionCount), total: Double(totalSessionsToRestore))
+                    .frame(width: 220)
+                Text("\(restoredSessionCount) of \(totalSessionsToRestore)")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(24)
+        .frame(width: 300)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.primary.opacity(0.08))
+        }
+        .shadow(color: .black.opacity(0.18), radius: 24, y: 12)
+    }
+
     private var activeSession: LiveSession? {
         guard let selectedSessionID else { return nil }
         return liveSessions.first { $0.id == selectedSessionID }
@@ -197,6 +246,47 @@ struct ContentView: View {
     private var currentWorkspace: Workspace? {
         activeSession?.workspace ?? selectedWorkspaceID.flatMap { id in
             workspaceStore.workspaces.first(where: { $0.id == id })
+        }
+    }
+
+    private var activeReviewDiffs: [ChatStore.DetectedDiff] {
+        previewDiffs.isEmpty ? projectChangedDiffs : previewDiffs
+    }
+
+    private var activeReviewMessage: Message? {
+        previewDiffs.isEmpty ? nil : previewMessage
+    }
+
+    private func toggleBrowserToolsFromChat() {
+        var settings = BrowserSettingsStore.load()
+        guard AgentBrowserService.browserToolsConfigurationIssue(settings: settings) == nil else {
+            showSettings = true
+            return
+        }
+
+        settings.enabled.toggle()
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        Task {
+            await activeStore.reloadConfiguration()
+        }
+    }
+
+    private func selectBrowserRuntimeFromChat(_ runtimeMode: BrowserRuntimeMode) {
+        var settings = BrowserSettingsStore.load()
+        guard AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: runtimeMode) == nil else {
+            return
+        }
+        guard settings.runtimeMode != runtimeMode else { return }
+
+        settings.runtimeMode = runtimeMode
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        guard settings.enabled else { return }
+        Task {
+            await activeStore.reloadConfiguration()
         }
     }
 
@@ -381,6 +471,8 @@ struct ContentView: View {
         }
 
         var order = sessionLayout.sessionOrderByWorkspace
+        var selectedByWorkspace = sessionLayout.selectedSessionIDByWorkspace
+        let recordIDs = Set(records.map(\.id))
         for workspace in workspaceStore.workspaces {
             let ids = liveSessions
                 .filter { $0.workspace.id == workspace.id && ($0.id == selectedSessionID || !isSessionEmpty($0)) }
@@ -391,13 +483,24 @@ struct ContentView: View {
                 workspaceOrder.append(id)
             }
             order[workspace.id] = workspaceOrder
+            if let selectedByWorkspaceID = selectedByWorkspace[workspace.id],
+               !ids.contains(selectedByWorkspaceID) {
+                selectedByWorkspace[workspace.id] = nil
+            }
+        }
+
+        if let selectedSessionID,
+           let selectedSession = liveSessions.first(where: { $0.id == selectedSessionID }),
+           recordIDs.contains(selectedSessionID) {
+            selectedByWorkspace[selectedSession.workspace.id] = selectedSessionID
         }
 
         sessionLayout = SessionLayoutSnapshot(
             records: records,
             sessionOrderByWorkspace: order,
             selectedSessionID: selectedSessionID,
-            selectedWorkspaceID: selectedWorkspaceID
+            selectedWorkspaceID: selectedWorkspaceID,
+            selectedSessionIDByWorkspace: selectedByWorkspace
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }
@@ -420,14 +523,28 @@ struct ContentView: View {
             return
         }
 
+        let restorableRecords = saved.records.filter { record in
+            workspaceStore.workspaces.contains { $0.id == record.workspaceID }
+        }
+        guard !restorableRecords.isEmpty else { return }
+
+        totalSessionsToRestore = restorableRecords.count
+        restoredSessionCount = 0
+        restoreStatusText = "Preparing saved sessions..."
+        isRestoringSessions = true
+        defer {
+            isRestoringSessions = false
+            restoreStatusText = "Restoring sessions..."
+        }
+
         var titleCacheByWorkspace: [Workspace.ID: [String: String]] = [:]
         let cli = GrokCLIService()
+        var shouldStartGrokProcesses = true
 
-        for record in saved.records {
-            guard let workspace = workspaceStore.workspaces.first(where: { $0.id == record.workspaceID }) else {
-                continue
-            }
+        for record in restorableRecords {
+            guard let workspace = workspaceStore.workspaces.first(where: { $0.id == record.workspaceID }) else { continue }
             guard liveSessions.first(where: { $0.id == record.id }) == nil else { continue }
+            restoreStatusText = "Restoring \(workspace.displayName)"
 
             let store = ChatStore()
             let title = await restoredTitle(
@@ -440,7 +557,7 @@ struct ContentView: View {
                 LiveSession(id: record.id, store: store, workspace: workspace, title: title)
             )
 
-            if let grokID = record.grokSessionID {
+            if let grokID = record.grokSessionID, shouldStartGrokProcesses {
                 let info = GrokSessionInfo(
                     id: grokID,
                     created: "",
@@ -450,9 +567,13 @@ struct ContentView: View {
                 )
                 await store.start(workspace: workspace, resumeSession: info)
                 persistSessionLayout()
+                if store.authRequiredMessage != nil || isAuthenticationFailure(store.connectionState) {
+                    shouldStartGrokProcesses = false
+                }
             } else {
                 store.prepare(workspace: workspace)
             }
+            restoredSessionCount += 1
         }
 
         sessionListRevision &+= 1
@@ -461,11 +582,21 @@ struct ContentView: View {
            liveSessions.contains(where: { $0.id == selected }) {
             selectSession(selected)
         } else if let wsID = saved.selectedWorkspaceID,
+                  let selected = saved.selectedSessionIDByWorkspace[wsID],
+                  liveSessions.contains(where: { $0.id == selected }) {
+            selectSession(selected)
+        } else if let wsID = saved.selectedWorkspaceID,
                   let session = liveSessions.last(where: { $0.workspace.id == wsID }) {
             selectSession(session.id)
         } else if let first = liveSessions.first {
             selectSession(first.id)
         }
+    }
+
+    private func isAuthenticationFailure(_ state: GrokProcessState) -> Bool {
+        guard case .failed(let message) = state else { return false }
+        let lowercased = message.lowercased()
+        return lowercased.contains("login") || lowercased.contains("auth")
     }
 
     private func restoredTitle(
@@ -516,9 +647,35 @@ struct ContentView: View {
         }
     }
 
+    @MainActor
+    private func refreshProjectChangedFiles() async {
+        guard let workspace = currentWorkspace else {
+            projectChangedDiffs = []
+            return
+        }
+
+        do {
+            let files = try await GitService.changedFiles(in: workspace.path)
+            var diffs: [ChatStore.DetectedDiff] = []
+            for file in files {
+                let diff = try await GitService.diffForChangedFile(file, in: workspace.path)
+                diffs.append(ChatStore.DetectedDiff(raw: diff, filePath: file.path))
+            }
+            guard currentWorkspace?.id == workspace.id else { return }
+            projectChangedDiffs = diffs
+            if diffs.isEmpty, previewDiffs.isEmpty {
+                showPreview = false
+            }
+        } catch {
+            guard currentWorkspace?.id == workspace.id else { return }
+            projectChangedDiffs = []
+        }
+    }
+
     private func applyDiffs(from message: Message) {
         guard let ws = activeStore.currentWorkspace else { return }
         _ = activeStore.applyDiffs(from: message, workspace: ws)
+        Task { await refreshProjectChangedFiles() }
     }
 
     private func applySingle(_ diff: ChatStore.DetectedDiff) {
@@ -527,6 +684,73 @@ struct ContentView: View {
         // Apply only one diff by temporarily synthesizing a message with just that diff
         let single = Message(role: .assistant, content: "```diff\n\(diff.raw)\n```")
         _ = activeStore.applyDiffs(from: single, workspace: ws)
+        Task { await refreshProjectChangedFiles() }
+    }
+
+    private func openCurrentProject(in target: ProjectOpenTarget) {
+        guard let workspace = currentWorkspace else { return }
+        switch target {
+        case .finder:
+            NSWorkspace.shared.open(workspace.path)
+        case .cursor:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"],
+                appNames: ["Cursor"]
+            )
+        case .vsCode:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.microsoft.VSCode", "com.microsoft.VSCodeInsiders"],
+                appNames: ["Visual Studio Code", "Visual Studio Code - Insiders"]
+            )
+        case .terminal:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.apple.Terminal"],
+                appNames: ["Terminal"]
+            )
+        case .iTerm:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["com.googlecode.iterm2"],
+                appNames: ["iTerm", "iTerm2"]
+            )
+        case .zed:
+            openProject(
+                workspace.path,
+                bundleIdentifiers: ["dev.zed.Zed", "dev.zed.Zed-Preview", "com.zed.Zed"],
+                appNames: ["Zed", "Zed Preview"]
+            )
+        }
+    }
+
+    private func openProject(_ url: URL, bundleIdentifiers: [String], appNames: [String]) {
+        guard let appURL = installedApp(bundleIdentifiers: bundleIdentifiers, appNames: appNames) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: configuration)
+    }
+
+    private func installedApp(bundleIdentifiers: [String], appNames: [String]) -> URL? {
+        for bundleIdentifier in bundleIdentifiers {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+                return url
+            }
+        }
+
+        for appName in appNames {
+            for directory in ["/Applications", "\(NSHomeDirectory())/Applications"] {
+                let candidate = URL(fileURLWithPath: directory).appendingPathComponent("\(appName).app")
+                if FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
     }
 
     private func handleWorkspaceChange(_ newID: Workspace.ID?) {
@@ -540,11 +764,21 @@ struct ContentView: View {
 
     private func selectProject(_ workspace: Workspace) {
         selectedWorkspaceID = workspace.id
-        if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
+        if let remembered = rememberedSessionID(for: workspace.id) {
+            selectSession(remembered)
+        } else if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
             selectSession(session.id)
         } else {
             Task { await createLiveSession(for: workspace) }
         }
+    }
+
+    private func rememberedSessionID(for workspaceID: Workspace.ID) -> UUID? {
+        guard let sessionID = sessionLayout.selectedSessionIDByWorkspace[workspaceID],
+              liveSessions.contains(where: { $0.id == sessionID }) else {
+            return nil
+        }
+        return sessionID
     }
 
     private func selectSession(_ id: UUID) {
@@ -555,6 +789,7 @@ struct ContentView: View {
         previewMessageID = nil
         previewDiffs = []
         autoSelectLatestDiffMessage()
+        Task { await refreshProjectChangedFiles() }
         persistSessionLayout()
     }
 
@@ -577,6 +812,7 @@ struct ContentView: View {
         selectedWorkspaceID = workspace.id
         previewMessageID = nil
         previewDiffs = []
+        Task { await refreshProjectChangedFiles() }
         sessionListRevision &+= 1
         persistSessionLayout()
         if let resumeSession {

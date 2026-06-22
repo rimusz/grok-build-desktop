@@ -20,6 +20,13 @@ struct GitWorktreeInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+struct GitChangedFile: Identifiable, Hashable, Sendable {
+    let path: String
+    let status: String
+
+    var id: String { path }
+}
+
 enum GitService {
     enum GitError: LocalizedError {
         case notARepository
@@ -132,6 +139,58 @@ enum GitService {
         }
         flush()
         return worktrees
+    }
+
+    static func changedFiles(in directory: URL) async throws -> [GitChangedFile] {
+        guard isRepository(directory) else { throw GitError.notARepository }
+        let output = try await run(["status", "--porcelain=v1", "-z"], in: directory)
+        let fields = output.split(separator: "\0", omittingEmptySubsequences: true)
+
+        var result: [GitChangedFile] = []
+        var index = 0
+        while index < fields.count {
+            let field = fields[index]
+            guard field.count > 3 else {
+                index += 1
+                continue
+            }
+
+            let status = String(field.prefix(2))
+            var pathField = field.dropFirst(3)
+
+            // For rename/copy, porcelain emits: "R  old\0new\0" (same for "C ")
+            if status.hasPrefix("R") || status.hasPrefix("C") {
+                index += 1
+                if index < fields.count {
+                    pathField = fields[index]
+                }
+            }
+
+            let path = String(pathField).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !path.isEmpty {
+                result.append(GitChangedFile(path: path, status: status))
+            }
+            index += 1
+        }
+
+        return result
+    }
+
+    static func diffForChangedFile(_ file: GitChangedFile, in directory: URL) async throws -> String {
+        let output = try await run(["diff", "--no-ext-diff", "--no-color", "HEAD", "--", file.path], in: directory)
+        if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return output
+        }
+
+        if file.status.contains("?") {
+            return """
+            Untracked file: \(file.path)
+
+            This file is not tracked by git yet, so there is no unified diff against HEAD.
+            """
+        }
+
+        return "Changed file: \(file.path)"
     }
 
     static func gitDirectory(for projectURL: URL) -> URL? {

@@ -27,6 +27,7 @@ struct GrokLaunchOptions: Sendable {
     var allowRules: [String] = []
     var denyRules: [String] = []
     var resumeSessionID: String? = nil
+    var mcpServers: [MCPServerConfig] = []
 }
 
 // MARK: - Typed ACP Models
@@ -203,18 +204,34 @@ final class GrokProcess: @unchecked Sendable {
             ?? (tool["id"] as? String)
             ?? UUID().uuidString
 
+        var raw = tool["rawInput"] as? [String: Any]
+            ?? tool["raw_input"] as? [String: Any]
+            ?? tool["input"] as? [String: Any]
+            ?? tool["arguments"] as? [String: Any]
+            ?? tool["args"] as? [String: Any]
+            ?? [:]
+
+        if let toolName = tool["toolName"] as? String ?? tool["tool_name"] as? String {
+            raw["toolName"] = toolName
+        }
+        if let serverName = tool["serverName"] as? String ?? tool["server_name"] as? String {
+            raw["serverName"] = serverName
+        }
+
+        let rawToolName = raw["toolName"] as? String
+            ?? raw["tool_name"] as? String
+            ?? raw["name"] as? String
+            ?? raw["tool"] as? String
+
         let kind = (tool["kind"] as? String)
             ?? (tool["type"] as? String)
+            ?? rawToolName.map { toolKind(for: $0) }
             ?? "unknown"
 
         let title = (tool["title"] as? String)
             ?? (tool["name"] as? String)
-            ?? kind
-
-        var raw = tool["rawInput"] as? [String: Any]
-            ?? tool["raw_input"] as? [String: Any]
-            ?? tool["args"] as? [String: Any]
-            ?? [:]
+            ?? rawToolName.map { displayToolName($0) }
+            ?? (kind == "unknown" ? "Tool call" : kind)
 
         // More parsing for specific kinds (edit, execute, etc.)
         if let path = tool["path"] as? String { raw["path"] = path }
@@ -223,6 +240,26 @@ final class GrokProcess: @unchecked Sendable {
         if let newText = tool["newText"] as? String { raw["newText"] = newText }
 
         return ToolCall(id: tcid, kind: kind, title: title, rawInput: raw.isEmpty ? nil : raw)
+    }
+
+    private func toolKind(for toolName: String) -> String {
+        if toolName.hasPrefix("browser_") { return "browser" }
+        if toolName.localizedCaseInsensitiveContains("read") { return "read" }
+        if toolName.localizedCaseInsensitiveContains("write") || toolName.localizedCaseInsensitiveContains("edit") {
+            return "edit"
+        }
+        return "tool"
+    }
+
+    private func displayToolName(_ name: String) -> String {
+        name
+            .replacingOccurrences(of: "_", with: " ")
+            .split(separator: " ")
+            .map { word in
+                let lower = word.lowercased()
+                return lower.prefix(1).uppercased() + lower.dropFirst()
+            }
+            .joined(separator: " ")
     }
 
     private func parsePermissionRequest(id: Any?, params: [String: Any]) -> PermissionRequest? {
@@ -327,9 +364,9 @@ final class GrokProcess: @unchecked Sendable {
         do {
             try await initializeACP()
             if let resumeSessionID = options.resumeSessionID, !resumeSessionID.isEmpty {
-                try await loadSession(id: resumeSessionID, workspace: workspace)
+                try await loadSession(id: resumeSessionID, workspace: workspace, mcpServers: options.mcpServers)
             } else {
-                try await createSession(workspace: workspace)
+                try await createSession(workspace: workspace, mcpServers: options.mcpServers)
             }
             state = .ready
             notifyStatus()
@@ -605,10 +642,10 @@ final class GrokProcess: @unchecked Sendable {
         }
     }
 
-    private func createSession(workspace: Workspace) async throws {
+    private func createSession(workspace: Workspace, mcpServers: [MCPServerConfig]) async throws {
         let res = try await sendRequestWithTimeout(method: "session/new", params: [
             "cwd": workspace.path.path,
-            "mcpServers": []
+            "mcpServers": mcpServers.map(\.jsonObject)
         ]) as? [String: Any]
         sessionId = res?["sessionId"] as? String
         updateModels(from: res?["models"] as? [String: Any])
@@ -625,11 +662,11 @@ final class GrokProcess: @unchecked Sendable {
         }
     }
 
-    private func loadSession(id: String, workspace: Workspace) async throws {
+    private func loadSession(id: String, workspace: Workspace, mcpServers: [MCPServerConfig]) async throws {
         let res = try await sendRequestWithTimeout(method: "session/load", params: [
             "sessionId": id,
             "cwd": workspace.path.path,
-            "mcpServers": []
+            "mcpServers": mcpServers.map(\.jsonObject)
         ]) as? [String: Any]
         sessionId = id
         updateModels(from: res?["models"] as? [String: Any])
