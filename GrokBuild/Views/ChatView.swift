@@ -472,7 +472,7 @@ struct ChatView: View {
             && AgentBrowserService.executableURL() != nil
         let managedRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .managed) == nil
         let externalRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .external) == nil
-        let canChooseRuntime = browserBaseReady && managedRuntimeReady && externalRuntimeReady
+        let canChooseRuntime = browserBaseReady && (managedRuntimeReady || externalRuntimeReady)
         let isConfigured = configurationIssue == nil
         let title = browserToolsEnabled
             ? (isConfigured ? "Browser Tools On" : "Browser Setup Needed")
