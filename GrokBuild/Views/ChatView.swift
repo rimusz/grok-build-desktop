@@ -475,8 +475,8 @@ struct ChatView: View {
         let canChooseRuntime = browserBaseReady && managedRuntimeReady && externalRuntimeReady
         let isConfigured = configurationIssue == nil
         let title = browserToolsEnabled
-            ? (isConfigured ? "Browser tools on" : "Browser setup needed")
-            : "Browser tools off"
+            ? (isConfigured ? "Browser Tools On" : "Browser Setup Needed")
+            : "Browser Tools Off"
         let icon = browserToolsEnabled && isConfigured ? "globe.badge.chevron.backward" : "globe"
         let tint: Color = browserToolsEnabled ? (isConfigured ? .accentColor : .orange) : .secondary
 
@@ -563,22 +563,19 @@ struct ChatView: View {
     @ViewBuilder
     private var reviewControls: some View {
         if reviewFileCount > 0 {
-            HStack(spacing: 8) {
-                Text("\(reviewFileCount) \(reviewFileCount == 1 ? "File" : "Files")")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Button {
-                    onToggleReview()
-                } label: {
-                    Text("Review")
-                        .font(.caption.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(isReviewVisible ? .accentColor : .secondary)
-                .help(isReviewVisible ? "Hide review pane" : "Show review pane")
+            Button {
+                onToggleReview()
+            } label: {
+                Label(
+                    "\(reviewFileCount) Changed \(reviewFileCount == 1 ? "File" : "Files")",
+                    systemImage: "doc.on.doc"
+                )
+                .font(.caption.weight(.semibold))
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(isReviewVisible ? .accentColor : .secondary)
+            .help(isReviewVisible ? "Hide changed files" : "Show changed files")
         }
     }
 

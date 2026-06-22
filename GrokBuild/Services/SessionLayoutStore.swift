@@ -13,6 +13,39 @@ struct SessionLayoutSnapshot: Codable {
     var sessionOrderByWorkspace: [UUID: [UUID]]
     var selectedSessionID: UUID?
     var selectedWorkspaceID: UUID?
+
+    var selectedSessionIDByWorkspace: [UUID: UUID]
+
+    init(
+        records: [SavedSessionRecord],
+        sessionOrderByWorkspace: [UUID: [UUID]],
+        selectedSessionID: UUID?,
+        selectedWorkspaceID: UUID?,
+        selectedSessionIDByWorkspace: [UUID: UUID] = [:]
+    ) {
+        self.records = records
+        self.sessionOrderByWorkspace = sessionOrderByWorkspace
+        self.selectedSessionID = selectedSessionID
+        self.selectedWorkspaceID = selectedWorkspaceID
+        self.selectedSessionIDByWorkspace = selectedSessionIDByWorkspace
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case records
+        case sessionOrderByWorkspace
+        case selectedSessionID
+        case selectedWorkspaceID
+        case selectedSessionIDByWorkspace
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        records = try container.decode([SavedSessionRecord].self, forKey: .records)
+        sessionOrderByWorkspace = try container.decode([UUID: [UUID]].self, forKey: .sessionOrderByWorkspace)
+        selectedSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedSessionID)
+        selectedWorkspaceID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkspaceID)
+        selectedSessionIDByWorkspace = try container.decodeIfPresent([UUID: UUID].self, forKey: .selectedSessionIDByWorkspace) ?? [:]
+    }
 }
 
 struct WorkspaceLayoutSnapshot: Codable {

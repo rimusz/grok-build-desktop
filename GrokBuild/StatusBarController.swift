@@ -83,6 +83,7 @@ class StatusBarController: NSObject {
 
     private var grokBuildTitleItem: NSMenuItem!
     private var grokVersionItem: NSMenuItem!
+    private var updateCheckItem: NSMenuItem!
     private func setupMenu() {
         // Status with auth dot
         grokBuildTitleItem = NSMenuItem(title: "GrokBuild", action: nil, keyEquivalent: "")
@@ -99,6 +100,10 @@ class StatusBarController: NSObject {
         let aboutItem = NSMenuItem(title: "About GrokBuild", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
+
+        updateCheckItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
+        updateCheckItem.target = self
+        menu.addItem(updateCheckItem)
 
         menu.addItem(.separator())
 
@@ -214,6 +219,20 @@ class StatusBarController: NSObject {
         AboutPanel.show()
     }
 
+    @objc private func checkForUpdates() {
+        updateCheckItem.isEnabled = false
+        updateCheckItem.title = "Checking for Updates…"
+
+        Task { [weak self] in
+            do {
+                let release = try await Self.fetchLatestRelease()
+                await self?.presentUpdateResult(release)
+            } catch {
+                await self?.presentUpdateError(error)
+            }
+        }
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -222,6 +241,107 @@ class StatusBarController: NSObject {
         if let url = URL(string: "https://grok.com/?_s=usage") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private struct GitHubRelease: Decodable {
+        let tagName: String
+        let name: String?
+        let htmlURL: URL
+
+        private enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case name
+            case htmlURL = "html_url"
+        }
+    }
+
+    private static func fetchLatestRelease() async throws -> GitHubRelease {
+        let url = URL(string: "https://api.github.com/repos/rimusz/grok-build-desktop/releases/latest")!
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(
+                domain: "GrokBuildUpdates",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not fetch the latest release from GitHub."]
+            )
+        }
+        return try JSONDecoder().decode(GitHubRelease.self, from: data)
+    }
+
+    @MainActor
+    private func presentUpdateResult(_ release: GitHubRelease) {
+        resetUpdateMenuItem()
+
+        let current = AppVersion.short
+        let latest = normalizedVersion(release.tagName)
+        let hasUpdate = compareVersions(latest, current) == .orderedDescending
+
+        let alert = NSAlert()
+        alert.messageText = hasUpdate ? "A New GrokBuild Version Is Available" : "GrokBuild Is Up to Date"
+        alert.informativeText = hasUpdate
+            ? "Installed: \(current)\nLatest: \(latest)\n\nDownload the latest release from GitHub."
+            : "Installed: \(current)\nLatest: \(latest)"
+        alert.alertStyle = hasUpdate ? .informational : .informational
+        alert.addButton(withTitle: hasUpdate ? "Open Releases" : "OK")
+        if hasUpdate {
+            alert.addButton(withTitle: "Cancel")
+        }
+
+        let response = alert.runModal()
+        if hasUpdate, response == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(release.htmlURL)
+        }
+    }
+
+    @MainActor
+    private func presentUpdateError(_ error: Error) {
+        resetUpdateMenuItem()
+
+        let alert = NSAlert()
+        alert.messageText = "Could Not Check for Updates"
+        alert.informativeText = error.localizedDescription
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    @MainActor
+    private func resetUpdateMenuItem() {
+        updateCheckItem.title = "Check for Updates…"
+        updateCheckItem.isEnabled = true
+    }
+
+    private func normalizedVersion(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^[vV]"#, with: "", options: .regularExpression)
+    }
+
+    private func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        let left = versionComponents(lhs)
+        let right = versionComponents(rhs)
+        let count = max(left.count, right.count)
+
+        for index in 0..<count {
+            let l = index < left.count ? left[index] : 0
+            let r = index < right.count ? right[index] : 0
+            if l < r { return .orderedAscending }
+            if l > r { return .orderedDescending }
+        }
+
+        return .orderedSame
+    }
+
+    private func versionComponents(_ value: String) -> [Int] {
+        normalizedVersion(value)
+            .split(separator: ".")
+            .map { component in
+                let numericPrefix = component.prefix { $0.isNumber }
+                return Int(numericPrefix) ?? 0
+            }
     }
 
     // MARK: - Status dot indicator (reused from referenced repo)

@@ -56,17 +56,7 @@ struct SidebarView: View {
     }
 
     private func collapsedSessions(from sessions: [SidebarSession]) -> [SidebarSession] {
-        var visible = Array(sessions.prefix(collapsedSessionLimit))
-        if let selectedSessionID,
-           let selected = sessions.first(where: { $0.id == selectedSessionID }),
-           !visible.contains(where: { $0.id == selectedSessionID }) {
-            if visible.count >= collapsedSessionLimit {
-                visible[collapsedSessionLimit - 1] = selected
-            } else {
-                visible.append(selected)
-            }
-        }
-        return visible
+        Array(sessions.prefix(collapsedSessionLimit))
     }
 
     private func hiddenCount(for workspaceID: Workspace.ID, loadedSessions: [SidebarSession], isExpanded: Bool) -> Int {
@@ -92,14 +82,21 @@ struct SidebarView: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
 
-            List(selection: $selectedWorkspaceID) {
+            List {
                 Section {
                     ForEach(filtered) { ws in
-                        WorkspaceRow(
-                            workspace: ws,
-                            isPinned: pinnedWorkspaceIDs.contains(ws.id)
-                        )
-                        .tag(ws.id)
+                        Button {
+                            onSelectWorkspace(ws)
+                        } label: {
+                            WorkspaceRow(
+                                workspace: ws,
+                                isPinned: pinnedWorkspaceIDs.contains(ws.id),
+                                isSelected: selectedWorkspaceID == ws.id
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                        .listRowBackground(Color.clear)
                         .contextMenu {
                             projectContextMenu(for: ws)
                         }
@@ -124,20 +121,25 @@ struct SidebarView: View {
 
                             let hidden = hiddenCount(for: ws.id, loadedSessions: projectSessions, isExpanded: isExpanded)
                             if hidden > 0 || isExpanded {
-                                Button {
+                                HStack(spacing: 6) {
+                                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                        .font(.caption2.weight(.semibold))
+                                    Text(isExpanded ? "Show less" : "Show more")
+                                        .font(.caption.weight(.medium))
+                                }
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
                                     if isExpanded {
                                         expandedSessionWorkspaceIDs.remove(ws.id)
                                     } else {
                                         expandedSessionWorkspaceIDs.insert(ws.id)
                                     }
-                                } label: {
-                                    Text(isExpanded ? "Show less" : "Show more")
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
-                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(.isButton)
                                 .listRowInsets(EdgeInsets(top: 2, leading: 48, bottom: 6, trailing: 10))
+                                .listRowBackground(Color.clear)
 
                                 if isExpanded, hidden > 0 {
                                     Text("\(hidden) more in Browse Sessions…")
@@ -360,6 +362,7 @@ private struct SessionSidebarRow: View {
 private struct WorkspaceRow: View {
     let workspace: Workspace
     var isPinned: Bool = false
+    var isSelected: Bool = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -368,6 +371,7 @@ private struct WorkspaceRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(workspace.displayName)
                     .font(.body)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
                 Text(workspace.path.path)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
@@ -375,6 +379,17 @@ private struct WorkspaceRow: View {
                     .truncationMode(.middle)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            if isSelected {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.16))
+                    .frame(height: 1)
+                    .padding(.leading, 24)
+            }
+        }
     }
 }

@@ -20,6 +20,13 @@ struct GitWorktreeInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+struct GitChangedFile: Identifiable, Hashable, Sendable {
+    let path: String
+    let status: String
+
+    var id: String { path }
+}
+
 enum GitService {
     enum GitError: LocalizedError {
         case notARepository
@@ -132,6 +139,40 @@ enum GitService {
         }
         flush()
         return worktrees
+    }
+
+    static func changedFiles(in directory: URL) async throws -> [GitChangedFile] {
+        guard isRepository(directory) else { throw GitError.notARepository }
+        let output = try await run(["status", "--porcelain=v1"], in: directory)
+        return output
+            .components(separatedBy: .newlines)
+            .compactMap { line -> GitChangedFile? in
+                guard line.count > 3 else { return nil }
+                let status = String(line.prefix(2))
+                var path = String(line.dropFirst(3))
+                if let range = path.range(of: " -> ") {
+                    path = String(path[range.upperBound...])
+                }
+                path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+                return path.isEmpty ? nil : GitChangedFile(path: path, status: status)
+            }
+    }
+
+    static func diffForChangedFile(_ file: GitChangedFile, in directory: URL) async throws -> String {
+        let output = try await run(["diff", "--no-ext-diff", "--no-color", "HEAD", "--", file.path], in: directory)
+        if !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return output
+        }
+
+        if file.status.contains("?") {
+            return """
+            Untracked file: \(file.path)
+
+            This file is not tracked by git yet, so there is no unified diff against HEAD.
+            """
+        }
+
+        return "Changed file: \(file.path)"
     }
 
     static func gitDirectory(for projectURL: URL) -> URL? {
