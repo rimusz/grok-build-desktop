@@ -545,7 +545,7 @@ private struct BrowserSettingsPane: View {
         }
     }
 
-    private func uninstallManagedRuntime() {
+    @MainActor private func uninstallManagedRuntime() {
         do {
             installOutput = try AgentBrowserService.uninstallManagedRuntime()
             Task { await refreshStatus() }
