@@ -1,5 +1,4 @@
 import SwiftUI
-import Foundation  // for FileManager, URL in AGENTS.md check
 import AppKit
 
 struct SidebarSession: Identifiable, Hashable {
@@ -97,7 +96,11 @@ struct SidebarView: View {
                         }
                         .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
-                        .listRowBackground(Color.clear)
+                        .listRowBackground(
+                            selectedWorkspaceID == ws.id
+                                ? RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.18))
+                                : nil
+                        )
                         .contextMenu {
                             projectContextMenu(for: ws)
                         }
@@ -159,24 +162,6 @@ struct SidebarView: View {
                 } header: {
                     Label("Projects", systemImage: "folder")
                 }
-
-                if let ws = workspaces.first(where: { $0.id == selectedWorkspaceID }) {
-                    let agentsMd = ws.path.appendingPathComponent("AGENTS.md")
-                    let claudeMd = ws.path.appendingPathComponent("CLAUDE.md")
-                    let file = FileManager.default.fileExists(atPath: agentsMd.path) ? agentsMd
-                             : FileManager.default.fileExists(atPath: claudeMd.path) ? claudeMd : nil
-                    if let file = file {
-                        Section {
-                            Button(action: { NSWorkspace.shared.open(file) }) {
-                                Label("Open \(file.lastPathComponent)", systemImage: "doc.text")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        } header: {
-                            Label("Project Instructions", systemImage: "book")
-                        }
-                    }
-                }
             }
             .listStyle(.sidebar)
             .searchable(text: $filter, prompt: "Filter projects")
@@ -225,6 +210,11 @@ struct SidebarView: View {
             onSelect: { onSelectSession(session.id) }
         )
         .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 10))
+        .listRowBackground(
+            selectedSessionID == session.id
+                ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.16))
+                : nil
+        )
         .contextMenu {
             Button("Rename…") {
                 renamingSessionID = session.id
@@ -339,22 +329,26 @@ private struct SessionSidebarRow: View {
             HStack(spacing: 8) {
                 Image(systemName: session.isRunning ? "circle.fill" : "bubble.left")
                     .font(.system(size: session.isRunning ? 7 : 11))
-                    .foregroundStyle(session.isRunning ? .blue : .secondary)
+                    .foregroundStyle(session.isRunning ? .blue : (isSelected ? .primary : .secondary))
                     .frame(width: 14)
                 Text(session.title)
-                    .font(.callout)
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                 Spacer()
                 if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
                 }
             }
-            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
             .contentShape(Rectangle())
-            .background(isSelected ? Color.primary.opacity(0.08) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .background(
+                isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -368,14 +362,14 @@ private struct WorkspaceRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: isPinned ? "pin.fill" : "folder")
-                .foregroundStyle(isPinned ? .orange : .secondary)
+                .foregroundStyle(isSelected ? Color.accentColor : (isPinned ? .orange : .secondary))
             VStack(alignment: .leading, spacing: 1) {
                 Text(workspace.displayName)
-                    .font(.body)
+                    .font(isSelected ? .body.weight(.semibold) : .body)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                 Text(workspace.path.path)
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(isSelected ? .secondary : .tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -384,13 +378,9 @@ private struct WorkspaceRow: View {
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .overlay(alignment: .bottom) {
-            if isSelected {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.16))
-                    .frame(height: 1)
-                    .padding(.leading, 24)
-            }
-        }
+        .background(
+            isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 }
