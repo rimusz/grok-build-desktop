@@ -1,0 +1,24 @@
+---
+description: Swift and SwiftUI conventions for GrokBuild views and models
+globs: GrokBuild/**/*.swift
+alwaysApply: false
+---
+
+# Swift / SwiftUI
+
+## Conventions
+
+- Match existing naming, `@Observable` / `@MainActor` usage, and file placement (`Views/`, `Services/`, `Models/`).
+- Cross-feature coordination via `NotificationCenter` names defined in `ContentView.swift`.
+- Prefer extending existing types over new abstractions for one-off logic.
+
+## Views
+
+- Dark-mode-first; use existing chrome in `GrokChatChrome.swift`.
+- Window close affordances: `WindowTrafficLights` pattern where applicable.
+- Settings live in `SettingsView.swift`; avoid duplicating grok CLI flags outside `GrokSettingsKeys`.
+
+## Avoid
+
+- Large refactors unrelated to the task.
+- Blocking the main thread for CLI calls — use `Task` + `GrokCLIService` async APIs.

@@ -1,0 +1,27 @@
+---
+description: grok CLI integration — process lifecycle, commands, updates, auth
+globs: GrokBuild/Services/{GrokProcess,GrokCLIService,ChatStore,UpdateChecker}.swift
+alwaysApply: false
+---
+
+# grok CLI integration
+
+## Services
+
+- `GrokProcess` — spawns `grok agent … stdio`, parses ACP, posts `.grokStatusChanged`.
+- `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
+- `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings.
+- `UpdateChecker` — GitHub `/releases/latest` for app; `grok update --check --json` for CLI.
+
+## CLI location
+
+`GrokCLIService.locateGrokCLI()` and `GrokProcess` share the same search paths (`~/.grok/bin/grok`, Homebrew, `PATH`, `GROK_CLI_PATH`).
+
+## Version display
+
+Strip `grok ` prefix and `(hash)` from `grok --version` via `GrokCLIService.formatVersionOutput`.
+
+## Do not
+
+- Shell out with raw `Process` elsewhere — use `GrokCLIService` or `GrokProcess`.
+- Cache CLI version indefinitely in UI; refresh when About opens or on explicit update checks.

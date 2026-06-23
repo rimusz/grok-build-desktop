@@ -16,6 +16,8 @@ struct SessionsBrowserPanel: View {
     var onResumeSession: (GrokSessionInfo, Workspace) -> Void
     var onSelectLive: (UUID) -> Void
 
+    @Environment(\.dismiss) private var dismiss
+
     private let service = GrokCLIService()
 
     @State private var groups: [ProjectSessionsGroup] = []
@@ -27,7 +29,10 @@ struct SessionsBrowserPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsHeader {
-                HStack {
+                HStack(alignment: .center, spacing: 12) {
+                    WindowTrafficLights(onClose: { dismiss() })
+                        .keyboardShortcut(.cancelAction)
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Sessions")
                             .font(.title2.weight(.semibold))
@@ -37,7 +42,8 @@ struct SessionsBrowserPanel: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    Spacer()
+
+                    Spacer(minLength: 0)
                 }
                 .padding()
 

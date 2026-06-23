@@ -19,6 +19,20 @@ It is primarily meant for creating distributable builds.
 ./scripts/build-macos-app.sh --sign "Developer ID Application: Your Name (TEAMID)"
 ```
 
+## Release script: `release.sh`
+
+Builds and publishes a GitHub release locally. Mirrors `.github/workflows/release.yml`.
+
+```bash
+# Unsigned (default) — same as CI tag push
+make release
+
+# Signed + notarized
+make release RELEASE_TYPE=notarized SIGN_IDENTITY="Developer ID Application: ..." NOTARY_PROFILE=AC_PASSWORD
+```
+
+Requires `gh` CLI (`brew install gh && gh auth login`). See [BUILDING.md](../BUILDING.md#github-releases) for full details.
+
 ## Makefile
 
 The recommended way to drive builds:
@@ -28,6 +42,7 @@ make help
 make app
 make dmg
 make signed SIGN_IDENTITY="..."
+make release          # local GitHub publish (unsigned by default)
 ```
 
 See [BUILDING.md](../BUILDING.md) for full instructions.

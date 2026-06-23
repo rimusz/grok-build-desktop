@@ -3,6 +3,9 @@
 # Uses SwiftPM (no Xcode project required).
 # See BUILDING.md for full packaging & signing instructions.
 #
+# Optional: copy .env.example to .env for local SIGN_IDENTITY / NOTARY_PROFILE
+-include .env
+
 # Usage:
 #   make build          # Build Release binary with SwiftPM
 #   make test           # Run unit tests
@@ -11,6 +14,7 @@
 #   make dmg            # Package .app + DMG (auto-notarizes if NOTARY_PROFILE set)
 #   make signed         # Codesigned build
 #   make notarize       # Notarize (NOTARY_PROFILE=...)
+#   make release        # Local only: build + publish GitHub release (gh auth); or push a v* tag for CI
 #   make clean
 
 APP_NAME       ?= GrokBuild
@@ -29,7 +33,9 @@ GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 NC     := \033[0m
 
-.PHONY: help build test run app dmg signed clean open notarize
+RELEASE_TYPE   ?= unsigned
+
+.PHONY: help build test run app dmg signed clean open notarize release
 
 help: ## Show this help
 	@echo "GrokBuild macOS Build Commands"
@@ -41,12 +47,15 @@ help: ## Show this help
 	@echo "  $(YELLOW)make dmg$(NC)              Build .app + DMG (auto-notarizes + re-DMG if NOTARY_PROFILE set)"
 	@echo "  $(YELLOW)make signed$(NC)           Codesigned release"
 	@echo "  $(YELLOW)make notarize$(NC)         Notarize (NOTARY_PROFILE=...)"
+	@echo "  $(YELLOW)make release$(NC)          Local only: build + publish GitHub release (or push v* tag for CI)"
 	@echo "  $(YELLOW)make clean$(NC)            Remove build artifacts"
 	@echo ""
 	@echo "See BUILDING.md for full packaging & signing instructions."
 	@echo ""
 	@echo "Quick start: make run"
 	@echo "Notarize example: make dmg NOTARY_PROFILE=AC_PASSWORD SIGN_IDENTITY=..."
+	@echo "Release example: make release"
+	@echo "Notarized release: make release RELEASE_TYPE=notarized SIGN_IDENTITY=... NOTARY_PROFILE=..."
 
 build: ## Build using SwiftPM (Release) - recommended
 	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (release)...$(NC)"
@@ -129,4 +138,12 @@ NOTARY_PROFILE ?= AC_PASSWORD
 notarize: signed ## Notarize (builds + signs + notarizes). Set NOTARY_PROFILE=...
 	@./scripts/notarize.sh
 	@echo "$(GREEN)==> Notarization complete.$(NC)"
+
+release: ## Build and publish GitHub release (unsigned by default). Set RELEASE_TYPE=notarized for signed builds
+	@RELEASE_TYPE="$(RELEASE_TYPE)" \
+	 RELEASE_VERSION="$(RELEASE_VERSION)" \
+	 SIGN_IDENTITY="$(SIGN_IDENTITY)" \
+	 NOTARY_PROFILE="$(NOTARY_PROFILE)" \
+	 APP_NAME="$(APP_NAME)" \
+	 ./scripts/release.sh
 
