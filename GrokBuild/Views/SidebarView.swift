@@ -27,6 +27,7 @@ struct SidebarView: View {
     var onMoveWorkspace: (IndexSet, Int) -> Void = { _, _ in }
     var onPinWorkspace: (Workspace) -> Void = { _ in }
     var onUnpinWorkspace: (Workspace) -> Void = { _ in }
+    var onRemoveWorkspace: (Workspace) -> Void = { _ in }
     var onMoveSession: (Workspace.ID, IndexSet, Int) -> Void = { _, _, _ in }
     var onSwitchBranch: (Workspace) -> Void = { _ in }
     var onCreateWorktree: (Workspace) -> Void = { _ in }
@@ -262,8 +263,8 @@ struct SidebarView: View {
 
         Divider()
 
-        Button("Remove", role: .destructive) {
-            workspaces.removeAll { $0.id == ws.id }
+        Button("Remove Project", role: .destructive) {
+            onRemoveWorkspace(ws)
         }
     }
 

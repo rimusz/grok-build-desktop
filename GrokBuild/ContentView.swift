@@ -63,6 +63,7 @@ struct ContentView: View {
                 },
                 onPinWorkspace: { workspaceStore.pin($0) },
                 onUnpinWorkspace: { workspaceStore.unpin($0) },
+                onRemoveWorkspace: { removeWorkspace($0) },
                 onMoveSession: { workspaceID, source, destination in
                     moveSessions(for: workspaceID, from: source, to: destination)
                 },
@@ -126,7 +127,7 @@ struct ContentView: View {
         }
         .onAppear(perform: bootstrap)
         .sheet(isPresented: $showPicker) {
-            WorkspacePicker { url in
+            WorkspacePicker(initialDirectory: currentWorkspace?.path) { url in
                 addWorkspace(url: url)
             }
         }
@@ -518,8 +519,13 @@ struct ContentView: View {
     private func restorePersistedSessions() async {
         let saved = sessionLayout
         guard !saved.records.isEmpty else {
-            if let first = workspaceStore.orderedWorkspaces.first {
-                await createLiveSession(for: first)
+            if workspaceStore.workspaces.isEmpty {
+                selectedWorkspaceID = nil
+                selectedSessionID = nil
+                placeholderStore.clearProject()
+            } else if let wsID = saved.selectedWorkspaceID,
+                      let workspace = workspaceStore.workspaces.first(where: { $0.id == wsID }) {
+                selectProject(workspace)
             }
             return
         }
@@ -636,6 +642,26 @@ struct ContentView: View {
         Task {
             await createLiveSession(for: ws)
         }
+    }
+
+    private func removeWorkspace(_ workspace: Workspace) {
+        for sessionID in liveSessions.filter({ $0.workspace.id == workspace.id }).map(\.id) {
+            closeSession(id: sessionID)
+        }
+
+        if selectedWorkspaceID == workspace.id {
+            selectedWorkspaceID = workspaceStore.orderedWorkspaces
+                .first(where: { $0.id != workspace.id })?
+                .id
+        }
+
+        workspaceStore.remove(workspace)
+        if workspaceStore.workspaces.isEmpty {
+            selectedWorkspaceID = nil
+            selectedSessionID = nil
+            placeholderStore.clearProject()
+        }
+        persistSessionLayout()
     }
 
     private func autoSelectLatestDiffMessage() {
@@ -770,7 +796,9 @@ struct ContentView: View {
         } else if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
             selectSession(session.id)
         } else {
-            Task { await createLiveSession(for: workspace) }
+            selectedSessionID = nil
+            placeholderStore.prepare(workspace: workspace)
+            persistSessionLayout()
         }
     }
 

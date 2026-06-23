@@ -102,8 +102,18 @@ final class WorkspaceStore {
     private func load() {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return }
         if let decoded = try? JSONDecoder().decode([Workspace].self, from: data) {
-            workspaces = decoded
+            let valid = decoded.filter { Self.isExistingDirectory($0.path) }
+            workspaces = valid
+            if valid.count != decoded.count {
+                normalizeLayout()
+                save()
+            }
         }
+    }
+
+    private static func isExistingDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     private func save() {

@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct WorkspacePicker: View {
+    var initialDirectory: URL? = nil
     var onSelect: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -77,6 +78,18 @@ struct WorkspacePicker: View {
         p.allowsMultipleSelection = false
         p.prompt = "Choose"
         p.message = "Select the project folder Grok should use as its working directory."
+        if let initialDirectory {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: initialDirectory.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                p.directoryURL = initialDirectory
+            } else if FileManager.default.fileExists(
+                atPath: initialDirectory.deletingLastPathComponent().path,
+                isDirectory: &isDirectory
+            ), isDirectory.boolValue {
+                p.directoryURL = initialDirectory.deletingLastPathComponent()
+            }
+        }
 
         if p.runModal() == .OK, let u = p.url {
             selectedURL = u

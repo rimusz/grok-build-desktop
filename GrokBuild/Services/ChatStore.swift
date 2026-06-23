@@ -109,7 +109,16 @@ final class ChatStore {
     }
 
     func prepare(workspace: Workspace) {
+        resetSessionUI()
         currentWorkspace = workspace
+    }
+
+    func clearProject() {
+        resetSessionUI()
+        currentWorkspace = nil
+    }
+
+    private func resetSessionUI() {
         messages.removeAll()
         streamingMessageID = nil
         authRequiredMessage = nil
