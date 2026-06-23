@@ -5,7 +5,7 @@ enum UpdatePanel {
     private static let appName = "GrokBuild"
     private static var panel: NSPanel?
     private static var panelDelegate: PanelDelegate?
-    private static var retainedActions: [OpenReleaseAction] = []
+    private static var retainedAction: OpenReleaseAction?
 
     static func show(
         app: Result<UpdateChecker.AppRelease, Error>,
@@ -201,7 +201,7 @@ enum UpdatePanel {
 
         if content.appUpdateAvailable, let releaseURL = content.appReleaseURL {
             let action = OpenReleaseAction(url: releaseURL)
-            retainedActions.append(action)
+            retainedAction = action
 
             let openButton = NSButton(title: "Open Release", target: action, action: #selector(OpenReleaseAction.open(_:)))
             openButton.bezelStyle = .push

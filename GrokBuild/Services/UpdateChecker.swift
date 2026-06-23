@@ -58,38 +58,41 @@ enum UpdateChecker {
         do {
             let result = try await GrokCLIService()
                 .run(["update", "--check", "--json"], allowFailure: true)
-
-            let payload = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let data = payload.data(using: .utf8),
-                  let response = try? JSONDecoder().decode(GrokUpdateCheckResponse.self, from: data) else {
-                let detail = [result.stdout, result.stderr]
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n")
-                let message = detail.isEmpty ? "Could not parse grok update check output." : detail
-                return GrokCLIStatus(state: .checkFailed(message))
-            }
-
-            if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
-                return GrokCLIStatus(state: .checkFailed(error))
-            }
-
-            let current = response.currentVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let latest = response.latestVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !current.isEmpty, !latest.isEmpty else {
-                return GrokCLIStatus(state: .checkFailed("grok update --check did not return version information."))
-            }
-
-            let channel = response.channel?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if response.updateAvailable == true {
-                return GrokCLIStatus(state: .updateAvailable(current: current, latest: latest, channel: channel))
-            }
-            return GrokCLIStatus(state: .upToDate(current: current, latest: latest, channel: channel))
+            return grokCLIStatus(fromCheckOutput: result.stdout, stderr: result.stderr)
         } catch GrokCLIService.CLIError.notFound {
             return GrokCLIStatus(state: .notInstalled)
         } catch {
             return GrokCLIStatus(state: .checkFailed(error.localizedDescription))
         }
+    }
+
+    static func grokCLIStatus(fromCheckOutput stdout: String, stderr: String) -> GrokCLIStatus {
+        let payload = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = payload.data(using: .utf8),
+              let response = try? JSONDecoder().decode(GrokUpdateCheckResponse.self, from: data) else {
+            let detail = [stdout, stderr]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            let message = detail.isEmpty ? "Could not parse grok update check output." : detail
+            return GrokCLIStatus(state: .checkFailed(message))
+        }
+
+        if let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+            return GrokCLIStatus(state: .checkFailed(error))
+        }
+
+        let current = response.currentVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let latest = response.latestVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !current.isEmpty, !latest.isEmpty else {
+            return GrokCLIStatus(state: .checkFailed("grok update --check did not return version information."))
+        }
+
+        let channel = response.channel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if response.updateAvailable == true {
+            return GrokCLIStatus(state: .updateAvailable(current: current, latest: latest, channel: channel))
+        }
+        return GrokCLIStatus(state: .upToDate(current: current, latest: latest, channel: channel))
     }
 
     private static func fetchLatestAppRelease() async throws -> GitHubRelease {

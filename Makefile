@@ -76,7 +76,7 @@ run: build ## Build + launch the menu bar app
 	@echo "$(GREEN)==> Starting GrokBuild...$(NC)"
 	@pkill -x GrokBuild 2>/dev/null || true
 	@sleep 0.2
-	@open ./.build/release/GrokBuild
+	@./.build/release/GrokBuild > /dev/null 2>&1 & disown
 	@echo "$(GREEN)==> GrokBuild launched.$(NC)"
 
 dmg: ## Build the .app and package it into a DMG.

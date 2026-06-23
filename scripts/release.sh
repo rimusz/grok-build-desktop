@@ -136,10 +136,22 @@ if gh release view "$tag_name" >/dev/null 2>&1; then
 else
   gh release create "$tag_name" \
     --title "$release_name" \
-    --notes-file "$release_body_file" \
+    --draft \
     --generate-notes \
     "$zip_path" \
     "$dmg_path"
+
+  generated_notes="$(gh release view "$tag_name" --json body -q .body)"
+  {
+    cat "$release_body_file"
+    echo ""
+    echo "---"
+    echo ""
+    printf '%s\n' "$generated_notes"
+  } > "${release_body_file}.combined"
+  mv "${release_body_file}.combined" "$release_body_file"
+
+  gh release edit "$tag_name" --notes-file "$release_body_file" --draft=false
 fi
 
 release_url="$(gh release view "$tag_name" --json url -q .url)"
