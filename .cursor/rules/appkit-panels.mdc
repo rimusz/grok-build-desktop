@@ -1,0 +1,29 @@
+---
+description: AppKit panels, menu bar, and About-style UI metrics
+globs: GrokBuild/{AboutPanel,AboutStyle,UpdatePanel,StatusBarController,AppDelegate}.swift
+alwaysApply: false
+---
+
+# AppKit panels & menu bar
+
+## Shared styling
+
+Use `AboutStyle` for About and Update panels:
+
+- Width: 396pt; icon: 64pt; name: bold system; body: small system font.
+- Version lines: `AboutStyle.versionFont` + `AboutStyle.versionColor` (secondary).
+- Windows: `NSPanel`, `.titled` + `.closable`, hidden title, `underPageBackground`.
+
+## About panel
+
+Custom panel (not `orderFrontStandardAboutPanel`). Order: icon → name → Version → grok CLI line → description → centered link. Fetch CLI version async before presenting.
+
+## Status bar menu
+
+- Header reflects auth: "GrokBuild connected to grok cli" / "not connected".
+- Green/red dot via `updateAuthIndicator(authenticated:)`.
+- Check for Updates → `UpdatePanel.show`; do not block menu on CLI version checks.
+
+## Window restore
+
+`AppDelegate` — validate saved frames before applying; use `open` for `make run` launches.

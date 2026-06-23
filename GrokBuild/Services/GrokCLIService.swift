@@ -512,4 +512,33 @@ final class GrokCLIService {
         }
         return nil
     }
+
+    /// Short display string from `grok --version` (e.g. `0.2.60 [stable]`).
+    static func formatVersionOutput(_ output: String) -> String {
+        let withoutName = output.replacingOccurrences(
+            of: #"^grok\s+"#,
+            with: "",
+            options: .regularExpression
+        )
+        return withoutName.replacingOccurrences(
+            of: #"\s+\([^)]+\)"#,
+            with: "",
+            options: .regularExpression
+        )
+    }
+
+    static func versionDisplayLine() async -> String {
+        do {
+            let output = try await GrokCLIService()
+                .run(["--version"])
+                .stdout
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if output.isEmpty {
+                return "grok CLI: version unavailable"
+            }
+            return "grok CLI: \(formatVersionOutput(output))"
+        } catch {
+            return "grok CLI: not found"
+        }
+    }
 }

@@ -89,11 +89,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openMainWindow()
+        return true
+    }
+
+    private static let mainWindowDefaultSize = NSSize(width: 1024, height: 720)
+    private static let mainWindowMinimumSize = NSSize(width: 800, height: 560)
+
     private func openMainWindow() {
         // If a window is already open, just bring it forward
         if let existing = NSApp.windows.first(where: { $0.contentViewController is NSHostingController<ContentView> }) {
-            existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            presentMainWindow(existing)
             return
         }
 
@@ -101,19 +108,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hosting = NSHostingController(rootView: contentView)
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1024, height: 720),
+            contentRect: NSRect(origin: .zero, size: Self.mainWindowDefaultSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.center()
         window.title = "GrokBuild"
         window.delegate = self
         window.contentViewController = hosting
         window.setFrameAutosaveName("MainWindow")
-        window.makeKeyAndOrderFront(nil)
+        presentMainWindow(window)
+    }
 
+    private func presentMainWindow(_ window: NSWindow) {
+        normalizeMainWindowFrame(window)
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func normalizeMainWindowFrame(_ window: NSWindow) {
+        let minSize = Self.mainWindowMinimumSize
+        var frame = window.frame
+
+        if frame.width < minSize.width || frame.height < minSize.height {
+            frame.size = Self.mainWindowDefaultSize
+            window.setFrame(frame, display: false)
+            window.center()
+            window.saveFrame(usingName: window.frameAutosaveName)
+            return
+        }
+
+        if let screen = window.screen ?? NSScreen.main {
+            let visible = screen.visibleFrame
+            let intersection = frame.intersection(visible)
+            if intersection.width < minSize.width || intersection.height < minSize.height {
+                window.center()
+            }
+        }
     }
 
     private func setupMainMenu() {
@@ -214,7 +246,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.miniaturize(nil)
+        // Hide instead of miniaturize so frame autosave does not persist a dock-icon-sized frame.
+        sender.orderOut(nil)
         return false
     }
 }

@@ -82,18 +82,12 @@ class StatusBarController: NSObject {
     }
 
     private var grokBuildTitleItem: NSMenuItem!
-    private var grokVersionItem: NSMenuItem!
     private var updateCheckItem: NSMenuItem!
     private func setupMenu() {
         // Status with auth dot
-        grokBuildTitleItem = NSMenuItem(title: "GrokBuild", action: nil, keyEquivalent: "")
+        grokBuildTitleItem = NSMenuItem(title: menuTitle(authenticated: true), action: nil, keyEquivalent: "")
         grokBuildTitleItem.isEnabled = false
         menu.addItem(grokBuildTitleItem)
-
-        grokVersionItem = NSMenuItem(title: "grok CLI: checking…", action: nil, keyEquivalent: "")
-        grokVersionItem.isEnabled = false
-        menu.addItem(grokVersionItem)
-        loadGrokVersion()
 
         menu.addItem(.separator())
 
@@ -144,42 +138,6 @@ class StatusBarController: NSObject {
         menu.addItem(quitItem)
     }
 
-    private func loadGrokVersion() {
-        Task { [weak self] in
-            let title: String
-            do {
-                let output = try await GrokCLIService()
-                    .run(["--version"])
-                    .stdout
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                title = output.isEmpty ? "grok CLI: version unavailable" : "grok CLI: \(self?.formatGrokVersion(output) ?? output)"
-            } catch {
-                title = "grok CLI: not found"
-            }
-
-            await self?.setGrokVersionTitle(title)
-        }
-    }
-
-    @MainActor
-    private func setGrokVersionTitle(_ title: String) {
-        grokVersionItem.title = title
-    }
-
-    private func formatGrokVersion(_ output: String) -> String {
-        // `grok --version` returns: "grok 0.2.56 (hash) [stable]".
-        let withoutName = output.replacingOccurrences(
-            of: #"^grok\s+"#,
-            with: "",
-            options: .regularExpression
-        )
-        return withoutName.replacingOccurrences(
-            of: #"\s+\([^)]+\)"#,
-            with: "",
-            options: .regularExpression
-        )
-    }
-
     @objc private func statusItemClicked() {
         showMainWindow()
     }
@@ -224,12 +182,18 @@ class StatusBarController: NSObject {
         updateCheckItem.title = "Checking for Updates…"
 
         Task { [weak self] in
-            do {
-                let release = try await Self.fetchLatestRelease()
-                await self?.presentUpdateResult(release)
-            } catch {
-                await self?.presentUpdateError(error)
-            }
+            async let appResult = Self.fetchAppUpdateResult()
+            async let cliStatus = UpdateChecker.checkGrokCLI()
+            let (app, cli) = await (appResult, cliStatus)
+            await self?.presentUpdateResults(app: app, cli: cli)
+        }
+    }
+
+    private static func fetchAppUpdateResult() async -> Result<UpdateChecker.AppRelease, Error> {
+        do {
+            return .success(try await UpdateChecker.checkAppRelease())
+        } catch {
+            return .failure(error)
         }
     }
 
@@ -243,107 +207,21 @@ class StatusBarController: NSObject {
         }
     }
 
-    private struct GitHubRelease: Decodable {
-        let tagName: String
-        let name: String?
-        let htmlURL: URL
-
-        private enum CodingKeys: String, CodingKey {
-            case tagName = "tag_name"
-            case name
-            case htmlURL = "html_url"
-        }
-    }
-
-    private static func fetchLatestRelease() async throws -> GitHubRelease {
-        let url = URL(string: "https://api.github.com/repos/rimusz/grok-build-desktop/releases/latest")!
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 12
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw NSError(
-                domain: "GrokBuildUpdates",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Could not fetch the latest release from GitHub."]
-            )
-        }
-        return try JSONDecoder().decode(GitHubRelease.self, from: data)
-    }
-
     @MainActor
-    private func presentUpdateResult(_ release: GitHubRelease) {
-        resetUpdateMenuItem()
-
-        let current = AppVersion.short
-        let latest = normalizedVersion(release.tagName)
-        let hasUpdate = compareVersions(latest, current) == .orderedDescending
-
-        let alert = NSAlert()
-        alert.icon = AppIconProvider.image()
-        alert.messageText = hasUpdate ? "A New GrokBuild Version Is Available" : "GrokBuild Is Up to Date"
-        alert.informativeText = hasUpdate
-            ? "Installed: \(current)\nLatest: \(latest)\n\nDownload the latest release from GitHub."
-            : "Installed: \(current)\nLatest: \(latest)"
-        alert.alertStyle = hasUpdate ? .informational : .informational
-        alert.addButton(withTitle: hasUpdate ? "Open Releases" : "OK")
-        if hasUpdate {
-            alert.addButton(withTitle: "Cancel")
+    private func presentUpdateResults(
+        app: Result<UpdateChecker.AppRelease, Error>,
+        cli: UpdateChecker.GrokCLIStatus
+    ) {
+        statusItem.menu?.cancelTracking()
+        UpdatePanel.show(app: app, cli: cli) { [weak self] in
+            self?.resetUpdateMenuItem()
         }
-
-        let response = alert.runModal()
-        if hasUpdate, response == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(release.htmlURL)
-        }
-    }
-
-    @MainActor
-    private func presentUpdateError(_ error: Error) {
-        resetUpdateMenuItem()
-
-        let alert = NSAlert()
-        alert.icon = AppIconProvider.image()
-        alert.messageText = "Could Not Check for Updates"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
     }
 
     @MainActor
     private func resetUpdateMenuItem() {
         updateCheckItem.title = "Check for Updates…"
         updateCheckItem.isEnabled = true
-    }
-
-    private func normalizedVersion(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: #"^[vV]"#, with: "", options: .regularExpression)
-    }
-
-    private func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
-        let left = versionComponents(lhs)
-        let right = versionComponents(rhs)
-        let count = max(left.count, right.count)
-
-        for index in 0..<count {
-            let l = index < left.count ? left[index] : 0
-            let r = index < right.count ? right[index] : 0
-            if l < r { return .orderedAscending }
-            if l > r { return .orderedDescending }
-        }
-
-        return .orderedSame
-    }
-
-    private func versionComponents(_ value: String) -> [Int] {
-        normalizedVersion(value)
-            .split(separator: ".")
-            .map { component in
-                let numericPrefix = component.prefix { $0.isNumber }
-                return Int(numericPrefix) ?? 0
-            }
     }
 
     // MARK: - Status dot indicator (reused from referenced repo)
@@ -400,6 +278,13 @@ class StatusBarController: NSObject {
     private func updateAuthIndicator(authenticated: Bool) {
         let color = authenticated ? NSColor.systemGreen : NSColor.systemRed
         grokBuildTitleItem.image = dotImage(color: color)
+        grokBuildTitleItem.title = menuTitle(authenticated: authenticated)
+    }
+
+    private func menuTitle(authenticated: Bool) -> String {
+        authenticated
+            ? "GrokBuild connected to grok cli"
+            : "GrokBuild not connected to grok cli"
     }
 
     private func dotImage(color: NSColor) -> NSImage {

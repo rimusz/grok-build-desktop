@@ -4,6 +4,7 @@ struct PreviewPane: View {
     let message: Message?
     let diffs: [ChatStore.DetectedDiff]
     let workspace: Workspace?
+    var onClose: () -> Void = {}
     let onApply: (Message) -> Void
     let onApplySingle: ((ChatStore.DetectedDiff) -> Void)?
 
@@ -34,9 +35,18 @@ struct PreviewPane: View {
     }
 
     private var header: some View {
-        HStack {
-            Label("Preview", systemImage: "sidebar.right")
+        HStack(spacing: 8) {
+            Button(action: onClose) {
+                Image(systemName: "sidebar.right")
+                    .font(.headline)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Close Preview")
+
+            Text("Preview")
                 .font(.headline)
+
             Spacer()
             if let ws = workspace {
                 Text(ws.displayName)

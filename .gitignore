@@ -55,3 +55,4 @@ playground.xcworkspace
 # *.xcworkspace
 
 .vscode/
+.env

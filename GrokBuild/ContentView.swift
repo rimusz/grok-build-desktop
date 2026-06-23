@@ -108,6 +108,7 @@ struct ContentView: View {
                             message: activeReviewMessage,
                             diffs: activeReviewDiffs,
                             workspace: currentWorkspace,
+                            onClose: { showPreview = false },
                             onApply: applyDiffs,
                             onApplySingle: applySingle
                         )

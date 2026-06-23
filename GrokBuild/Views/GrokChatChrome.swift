@@ -231,3 +231,45 @@ struct ToolActivityGroup: View {
         tools.filter { $0.kind.localizedCaseInsensitiveContains("browser") }.count
     }
 }
+
+struct WindowTrafficLights: View {
+    var onClose: () -> Void
+
+    @State private var isCloseHovered = false
+
+    private let closeColor = Color(red: 1.0, green: 0.37, blue: 0.34)
+    private let inactiveColor = Color(white: 0.38)
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onClose) {
+                ZStack {
+                    Circle()
+                        .fill(closeColor)
+                        .frame(width: 12, height: 12)
+                    if isCloseHovered {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7, weight: .heavy))
+                            .foregroundStyle(Color(red: 0.24, green: 0.16, blue: 0.14))
+                    }
+                }
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { isCloseHovered = $0 }
+            .help("Close")
+
+            inactiveTrafficLight
+            inactiveTrafficLight
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var inactiveTrafficLight: some View {
+        Circle()
+            .fill(inactiveColor)
+            .frame(width: 12, height: 12)
+            .frame(width: 16, height: 16)
+    }
+}

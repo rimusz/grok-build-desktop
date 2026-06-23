@@ -17,36 +17,28 @@ struct WorkspacePicker: View {
                 .foregroundStyle(.secondary)
                 .font(.callout)
 
-            HStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 Button {
                     presentPanel()
                 } label: {
                     Label("Choose Folder…", systemImage: "folder.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
 
-                if let url = selectedURL {
-                    Text(url.path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text("No project folder selected")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+                selectionStatusText
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.vertical, 4)
 
             if let error {
                 Text(error).foregroundStyle(.red).font(.caption)
             }
 
-            HStack {
-                Spacer()
+            HStack(alignment: .center, spacing: 12) {
+                Spacer(minLength: 0)
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .controlSize(.large)
                 Button("Use Project") {
                     if let url = selectedURL {
                         onSelect(url)
@@ -54,11 +46,28 @@ struct WorkspacePicker: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(selectedURL == nil)
             }
         }
         .padding(28)
         .frame(width: 540)
+    }
+
+    @ViewBuilder
+    private var selectionStatusText: some View {
+        if let url = selectedURL {
+            Text(url.path)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        } else {
+            Text("No project folder selected")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+        }
     }
 
     private func presentPanel() {

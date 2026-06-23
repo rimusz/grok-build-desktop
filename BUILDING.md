@@ -59,6 +59,28 @@ The build script automatically copies the menu bar icon (from the asset catalog 
 
 ## Codesigning / Distribution
 
+### Local config (`.env`)
+
+Store signing credentials locally so you don't pass them on every command:
+
+```bash
+cp .env.example .env
+# edit .env with your SIGN_IDENTITY and NOTARY_PROFILE
+```
+
+`.env` is gitignored. The Makefile loads it automatically (`-include .env`).
+
+Then you can run:
+
+```bash
+make signed
+make notarize
+make dmg                    # notarizes when NOTARY_PROFILE is set in .env
+make release RELEASE_TYPE=notarized
+```
+
+Command-line values still override `.env` (e.g. `make signed SIGN_IDENTITY="..."`).
+
 To produce a properly signed build:
 
 ```bash
@@ -125,12 +147,107 @@ xcrun notarytool store-credentials "APPLE_CONNECT_PASSWORD" \
 
 ## GitHub Releases
 
+There are two ways to publish a release. Use one path per version — not both.
+
+### CI (recommended)
+
 See `.github/workflows/release.yml`:
 
-- **On every `v*` tag push**: automatically publishes an **unsigned** release with `GrokBuild.app.zip` and the DMG.
-- **Manual dispatch** ("notarized" checked): builds the signed + notarized version and publishes it.
+1. Bump `VERSION` (and `BUILD_NUMBER` if needed), commit, and push.
+2. Create and push a matching tag:
 
-**Gatekeeper bypass note** (for unsigned releases) is automatically included in the release body.
+```bash
+git tag v0.1.4
+git push origin v0.1.4
+```
+
+- **Tag push** (`v*`): publishes an **unsigned** release with `GrokBuild.app.zip` and `GrokBuild-macOS.dmg`.
+- **Manual workflow dispatch** (choose `notarized`): builds a signed + notarized release using repo secrets.
+
+#### CI: unsigned (tag push)
+
+```mermaid
+flowchart LR
+  A[git push v0.1.4] --> B[GitHub Actions]
+  B --> C[make app + make dmg]
+  C --> D[Zip .app]
+  D --> E[Create GitHub Release]
+```
+
+No signing. Same output as `make release` locally (unsigned default).
+
+#### CI: signed + notarized (manual dispatch only)
+
+Triggered from **Actions → Release → Run workflow** with `release_type: notarized`. **Not** triggered by tag push.
+
+```mermaid
+flowchart LR
+  A[Manual dispatch] --> B[Import p12 cert from secrets]
+  B --> C[make signed]
+  C --> D[notarize.sh]
+  D --> E[make dmg]
+  E --> F[Zip + GitHub Release]
+```
+
+**Repo secrets used:**
+
+| Secret | Purpose |
+|--------|---------|
+| `MACOS_CERTIFICATE` | Base64-encoded `.p12` Developer ID cert |
+| `MACOS_CERTIFICATE_PWD` | Password for the `.p12` |
+| `SIGN_IDENTITY` | Codesign identity (defaults to `Developer ID Application`) |
+
+**Notarization on CI:** `notarize.sh` supports Apple API keys (`APPLE_API_KEY_PATH`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`) for headless runners. Keychain profiles (`NOTARY_PROFILE`) work locally but not on ephemeral CI machines — wire API key secrets into the workflow if you use notarized CI releases.
+
+**Local vs CI credentials:**
+
+| | Local (`.env` / keychain) | CI (GitHub secrets) |
+|--|---------------------------|---------------------|
+| Signing | `SIGN_IDENTITY` in Keychain | `MACOS_CERTIFICATE` p12 imported per job |
+| Notarization | `NOTARY_PROFILE` (keychain) | Apple API key env vars (recommended) |
+
+Release title format: `v{VERSION} ({BUILD_NUMBER}) (Unsigned)` or `(Notarized)`.
+
+The release body includes download links, Gatekeeper notes for unsigned builds, and auto-generated changelog notes from merged PRs/commits.
+
+### Local (`make release`)
+
+For publishing entirely from your Mac (requires [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login`):
+
+```bash
+# 1. Bump VERSION, commit
+# 2. Publish unsigned release (default)
+make release
+```
+
+`make release` is **local only**. It mirrors the CI release workflow: same naming, notes, and assets. By default it produces an **unsigned** build — same as pushing a `v*` tag.
+
+**Notarized local release** (with `.env` configured):
+
+```bash
+make release RELEASE_TYPE=notarized
+```
+
+Or inline:
+
+```bash
+make release RELEASE_TYPE=notarized \
+  SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  NOTARY_PROFILE=AC_PASSWORD
+```
+
+**Options:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELEASE_TYPE` | `unsigned` | `unsigned` or `notarized` |
+| `RELEASE_VERSION` | from `VERSION` | Tag override (must match `VERSION`, e.g. `v0.1.4`) |
+| `SIGN_IDENTITY` | — | Required for `RELEASE_TYPE=notarized` (or set in `.env`) |
+| `NOTARY_PROFILE` | `AC_PASSWORD` | Keychain profile for notarization (or set in `.env`) |
+
+The tag is derived from `VERSION` (e.g. `0.1.4` → `v0.1.4`). If a release for that tag already exists, assets and notes are updated in place.
+
+Implementation: `scripts/release.sh` (invoked by the Makefile `release` target).
 
 ## Icon
 

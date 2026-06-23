@@ -17,15 +17,6 @@ final class WorkspaceStore {
         pinnedWorkspaceIDs = layout.pinnedWorkspaceIDs
         workspaceOrder = layout.workspaceOrder
         normalizeLayout()
-
-        if workspaces.isEmpty {
-            let dev = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Developer", isDirectory: true)
-            try? FileManager.default.createDirectory(at: dev, withIntermediateDirectories: true)
-            workspaces = [Workspace(name: "Developer", path: dev)]
-            workspaceOrder = workspaces.map(\.id)
-            saveLayout()
-        }
     }
 
     var orderedWorkspaces: [Workspace] {
