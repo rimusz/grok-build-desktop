@@ -16,6 +16,8 @@ struct SidebarView: View {
     var sessions: [SidebarSession] = []
     var hiddenSessionCounts: [Workspace.ID: Int] = [:]
     var selectedSessionID: UUID?
+    @Binding var expandedSessionWorkspaceIDs: Set<Workspace.ID>
+    @Binding var hiddenSessionWorkspaceIDs: Set<Workspace.ID>
 
     var onAddWorkspace: () -> Void
     var onSelectWorkspace: (Workspace) -> Void
@@ -30,13 +32,13 @@ struct SidebarView: View {
     var onMoveSession: (Workspace.ID, IndexSet, Int) -> Void = { _, _, _ in }
     var onSwitchBranch: (Workspace) -> Void = { _ in }
     var onCreateWorktree: (Workspace) -> Void = { _ in }
+    var onSessionDisclosureChanged: () -> Void = {}
     var onOpenSettings: () -> Void
     var isSettingsSelected: Bool = false
 
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
     @State private var renameText = ""
-    @State private var expandedSessionWorkspaceIDs: Set<Workspace.ID> = []
 
     private let collapsedSessionLimit = 5
 
@@ -88,25 +90,28 @@ struct SidebarView: View {
                         Button {
                             onSelectWorkspace(ws)
                         } label: {
+                            let projectSessions = sessions(for: ws.id)
                             WorkspaceRow(
                                 workspace: ws,
                                 isPinned: pinnedWorkspaceIDs.contains(ws.id),
-                                isSelected: selectedWorkspaceID == ws.id
+                                isSelected: selectedWorkspaceID == ws.id,
+                                hasSessions: !projectSessions.isEmpty,
+                                areSessionsHidden: hiddenSessionWorkspaceIDs.contains(ws.id),
+                                onToggleSessions: {
+                                    toggleSessionVisibility(for: ws.id)
+                                }
                             )
                         }
                         .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
-                        .listRowBackground(
-                            selectedWorkspaceID == ws.id
-                                ? RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.18))
-                                : nil
-                        )
+                        .listRowBackground(Color.clear)
                         .contextMenu {
                             projectContextMenu(for: ws)
                         }
 
                         let projectSessions = sessions(for: ws.id)
-                        if selectedWorkspaceID == ws.id || !projectSessions.isEmpty {
+                        if (selectedWorkspaceID == ws.id || !projectSessions.isEmpty),
+                           !hiddenSessionWorkspaceIDs.contains(ws.id) {
                             let isExpanded = isSessionsExpanded(for: ws.id)
                             let shownSessions = isExpanded ? projectSessions : collapsedSessions(from: projectSessions)
 
@@ -126,10 +131,11 @@ struct SidebarView: View {
                             let hidden = hiddenCount(for: ws.id, loadedSessions: projectSessions, isExpanded: isExpanded)
                             if hidden > 0 || isExpanded {
                                 HStack(spacing: 6) {
-                                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                        .font(.caption2.weight(.semibold))
                                     Text(isExpanded ? "Show less" : "Show more")
                                         .font(.caption.weight(.medium))
+                                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                        .font(.caption2.weight(.semibold))
+                                    Spacer()
                                 }
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -140,16 +146,17 @@ struct SidebarView: View {
                                     } else {
                                         expandedSessionWorkspaceIDs.insert(ws.id)
                                     }
+                                    onSessionDisclosureChanged()
                                 }
                                 .accessibilityAddTraits(.isButton)
-                                .listRowInsets(EdgeInsets(top: 2, leading: 48, bottom: 6, trailing: 10))
+                                .listRowInsets(EdgeInsets(top: 2, leading: 34, bottom: 6, trailing: 10))
                                 .listRowBackground(Color.clear)
 
                                 if isExpanded, hidden > 0 {
                                     Text("\(hidden) more in Browse Sessions…")
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
-                                        .listRowInsets(EdgeInsets(top: 0, leading: 48, bottom: 6, trailing: 10))
+                                        .listRowInsets(EdgeInsets(top: 0, leading: 34, bottom: 6, trailing: 10))
                                 }
                             }
                         }
@@ -203,18 +210,23 @@ struct SidebarView: View {
         )
     }
 
+    private func toggleSessionVisibility(for workspaceID: Workspace.ID) {
+        if hiddenSessionWorkspaceIDs.contains(workspaceID) {
+            hiddenSessionWorkspaceIDs.remove(workspaceID)
+        } else {
+            hiddenSessionWorkspaceIDs.insert(workspaceID)
+        }
+        onSessionDisclosureChanged()
+    }
+
     private func sessionRow(_ session: SidebarSession) -> some View {
         SessionSidebarRow(
             session: session,
             isSelected: selectedSessionID == session.id,
             onSelect: { onSelectSession(session.id) }
         )
-        .listRowInsets(EdgeInsets(top: 2, leading: 28, bottom: 2, trailing: 10))
-        .listRowBackground(
-            selectedSessionID == session.id
-                ? RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.16))
-                : nil
-        )
+        .listRowInsets(EdgeInsets(top: 2, leading: 18, bottom: 2, trailing: 10))
+        .listRowBackground(Color.clear)
         .contextMenu {
             Button("Rename…") {
                 renamingSessionID = session.id
@@ -327,27 +339,26 @@ private struct SessionSidebarRow: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 8) {
-                Image(systemName: session.isRunning ? "circle.fill" : "bubble.left")
-                    .font(.system(size: session.isRunning ? 7 : 11))
-                    .foregroundStyle(session.isRunning ? .blue : (isSelected ? .primary : .secondary))
-                    .frame(width: 14)
+                ZStack {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 6, height: 6)
+                        .opacity(isSelected ? 1 : 0)
+                }
+                .frame(width: 10)
+
                 Text(session.title)
                     .font(.callout.weight(isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                 Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .contentShape(Rectangle())
             .background(
-                isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
-                in: RoundedRectangle(cornerRadius: 6)
+                isSelected ? Color.primary.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
             )
         }
         .buttonStyle(.plain)
@@ -358,15 +369,33 @@ private struct WorkspaceRow: View {
     let workspace: Workspace
     var isPinned: Bool = false
     var isSelected: Bool = false
+    var hasSessions: Bool = false
+    var areSessionsHidden: Bool = false
+    var onToggleSessions: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: isPinned ? "pin.fill" : "folder")
-                .foregroundStyle(isSelected ? Color.accentColor : (isPinned ? .orange : .secondary))
+                .foregroundStyle(isPinned ? .orange : .secondary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(workspace.displayName)
-                    .font(isSelected ? .body.weight(.semibold) : .body)
-                    .foregroundStyle(isSelected ? .primary : .secondary)
+                HStack(spacing: 6) {
+                    Text(workspace.displayName)
+                        .font(isSelected ? .body.weight(.semibold) : .body)
+                        .foregroundStyle(isSelected ? .primary : .secondary)
+                    if hasSessions {
+                        Image(systemName: areSessionsHidden ? "chevron.right" : "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 3)
+                            .contentShape(Rectangle())
+                            .highPriorityGesture(
+                                TapGesture().onEnded {
+                                    onToggleSessions()
+                                }
+                            )
+                            .help(areSessionsHidden ? "Show sessions" : "Hide sessions")
+                    }
+                }
                 Text(workspace.path.path)
                     .font(.caption2.monospaced())
                     .foregroundStyle(isSelected ? .secondary : .tertiary)
@@ -379,7 +408,7 @@ private struct WorkspaceRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .background(
-            isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+            isSelected ? Color.primary.opacity(0.10) : Color.clear,
             in: RoundedRectangle(cornerRadius: 8)
         )
     }

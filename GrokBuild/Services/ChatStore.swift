@@ -199,6 +199,7 @@ final class ChatStore {
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
         let browserSettings = BrowserSettingsStore.load()
+        let computerUseSettings = ComputerUseSettingsStore.load()
         if browserSettings.enabled {
             do {
                 try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
@@ -211,8 +212,17 @@ final class ChatStore {
                 lastError = "External browser auto-start failed: \(error.localizedDescription)"
             }
         }
-        let browserMCPServers = AgentBrowserService.browserMCPConfig(settings: browserSettings)
-            .map { [$0] } ?? []
+        if computerUseSettings.enabled {
+            do {
+                try ComputerUseSkillInstaller.installIfNeeded(settings: computerUseSettings)
+            } catch {
+                lastError = "Computer Use skill install failed: \(error.localizedDescription)"
+            }
+        }
+        let mcpServers = [
+            AgentBrowserService.browserMCPConfig(settings: browserSettings),
+            ComputerUseService.computerUseMCPConfig(settings: computerUseSettings)
+        ].compactMap { $0 }
         let opts = GrokLaunchOptions(
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
             noMemory: settings.noMemory,
@@ -225,7 +235,7 @@ final class ChatStore {
             allowRules: lineList(settings.allowRules),
             denyRules: lineList(settings.denyRules),
             resumeSessionID: resumeSessionID,
-            mcpServers: browserMCPServers
+            mcpServers: mcpServers
         )
         await process.start(workspace: ws, options: opts)
         connectionWatchdogTask?.cancel()

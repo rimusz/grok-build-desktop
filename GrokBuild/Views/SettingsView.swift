@@ -2,8 +2,20 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+enum SettingsTab: Hashable {
+    case hooks
+    case plugins
+    case marketplace
+    case skills
+    case mcpServers
+    case browser
+    case computerUse
+    case permissions
+}
+
 struct SettingsView: View {
     @Bindable var store: ChatStore
+    @Binding var selectedTab: SettingsTab
     var onBackToChat: () -> Void = {}
 
     var body: some View {
@@ -24,11 +36,12 @@ struct SettingsView: View {
 
             Divider()
 
-            TabView {
+            TabView(selection: $selectedTab) {
                 HooksSettingsPane(workspace: store.currentWorkspace)
                     .tabItem {
                         Label("Hooks", systemImage: "curlybraces")
                     }
+                    .tag(SettingsTab.hooks)
 
                 PluginsSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -36,6 +49,7 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Plugins", systemImage: "shippingbox")
                 }
+                .tag(SettingsTab.plugins)
 
                 MarketplaceSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -43,11 +57,13 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Marketplace", systemImage: "storefront")
                 }
+                .tag(SettingsTab.marketplace)
 
                 SkillsSettingsPane(workspace: store.currentWorkspace)
                     .tabItem {
                         Label("Skills", systemImage: "wand.and.stars")
                     }
+                    .tag(SettingsTab.skills)
 
                 MCPSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -55,6 +71,7 @@ struct SettingsView: View {
                 .tabItem {
                     Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
                 }
+                .tag(SettingsTab.mcpServers)
 
                 BrowserSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -62,6 +79,15 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Browser", systemImage: "globe")
                 }
+                .tag(SettingsTab.browser)
+
+                ComputerUseSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Computer Use", systemImage: "display")
+                }
+                .tag(SettingsTab.computerUse)
 
                 PermissionsSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -69,6 +95,7 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Permissions", systemImage: "lock.shield")
                 }
+                .tag(SettingsTab.permissions)
             }
             .padding()
         }
@@ -1424,6 +1451,562 @@ private struct SkillsSettingsPane: View {
     private func sourceLabel(for skill: GrokSkillInfo) -> String {
         if !skill.pluginName.isEmpty { return "plugin: \(skill.pluginName)" }
         return skill.sourceType.isEmpty ? "unknown" : skill.sourceType
+    }
+}
+
+private struct ComputerUseSettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    @AppStorage(ComputerUseSettingsKeys.enabled) private var enabled = ComputerUseSettings.defaults.enabled
+    @AppStorage(ComputerUseSettingsKeys.backend) private var backend = ComputerUseSettings.defaults.backend.rawValue
+    @AppStorage(ComputerUseSettingsKeys.agentDesktopPath) private var agentDesktopPath = ComputerUseSettings.defaults.agentDesktopPath
+    @AppStorage(ComputerUseSettingsKeys.permissionPolicy) private var permissionPolicy = ComputerUseSettings.defaults.permissionPolicy.rawValue
+    @AppStorage(ComputerUseSettingsKeys.maxSteps) private var maxSteps = ComputerUseSettings.defaults.maxSteps
+    @AppStorage(ComputerUseSettingsKeys.commandTimeoutSeconds) private var commandTimeoutSeconds = ComputerUseSettings.defaults.commandTimeoutSeconds
+    @AppStorage(ComputerUseSettingsKeys.screenshotMode) private var screenshotMode = ComputerUseSettings.defaults.screenshotMode.rawValue
+    @AppStorage(ComputerUseSettingsKeys.includeScreenshots) private var includeScreenshots = ComputerUseSettings.defaults.includeScreenshots
+    @AppStorage(ComputerUseSettingsKeys.allowPhysicalMouse) private var allowPhysicalMouse = ComputerUseSettings.defaults.allowPhysicalMouse
+    @AppStorage(ComputerUseSettingsKeys.sessionName) private var sessionName = ComputerUseSettings.defaults.sessionName
+
+    @State private var backendStatus = ComputerUseBackendStatus.unavailable
+    @State private var permissionStatus = ComputerUsePermissionStatus.unavailable
+    @State private var appliedSettings = ComputerUseSettingsStore.loadApplied()
+    @State private var isChecking = false
+    @State private var isInstalling = false
+    @State private var isRequestingPermissions = false
+    @State private var installOutput: String?
+    @State private var permissionOutput: String?
+    @State private var showDiagnosticsLog = false
+    @State private var showPermissionDiagnostics = false
+    @State private var showAdvancedOptions = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                enableCard
+                statusCard
+                installCard
+                permissionsCard
+                safetyCard
+                applyCard
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            appliedSettings = ComputerUseSettingsStore.loadApplied()
+            await refreshStatus()
+        }
+        .onChange(of: agentDesktopPath) { _, _ in
+            Task { await refreshStatus() }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "display.badge.checkmark")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.purple)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Computer Use")
+                    .font(.title3.weight(.semibold))
+                Text("Expose local macOS desktop-control tools to Grok sessions through the app-managed MCP helper and agent-desktop.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            statusBadge
+        }
+    }
+
+    private var enableCard: some View {
+        computerSettingsCard(title: "1. Enable Computer Use", systemImage: "wrench.and.screwdriver") {
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle(isOn: $enabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable Computer Use tools for Grok sessions")
+                            .font(.headline)
+                        Text("When enabled, GrokBuild injects `computer_*` MCP tools into new and resumed Grok sessions.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Divider()
+
+                settingRow("Backend") {
+                    Picker("", selection: $backend) {
+                        ForEach(ComputerUseBackendID.allCases) { backend in
+                            Text(backend.displayName).tag(backend.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 190)
+                }
+
+                Text("For the normal setup, install agent-desktop, grant Accessibility permission, then click Apply after enabling tools. GrokBuild will also install a small Computer Use skill into your Grok skills folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var statusCard: some View {
+        computerSettingsCard(title: "Backend Status", systemImage: "checkmark.seal", tint: backendStatusColor) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Label(backendStatusTitle, systemImage: backendStatusIcon)
+                        .foregroundStyle(backendStatusColor)
+                        .font(.headline)
+                    Spacer()
+                    Button(isChecking ? "Checking..." : "Run Diagnostics") {
+                        Task { await refreshStatus() }
+                    }
+                    .disabled(isChecking)
+                }
+
+                if let path = backendStatus.executablePath {
+                    infoLine("Path", path)
+                }
+                if let version = backendStatus.version, !version.isEmpty {
+                    infoLine("Version", version)
+                }
+
+                DisclosureGroup(isExpanded: $showDiagnosticsLog) {
+                    Text(backendStatus.diagnostic.isEmpty ? "No diagnostics yet." : backendStatus.diagnostic)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                } label: {
+                    Label(showDiagnosticsLog ? "Hide diagnostics log" : "Show diagnostics log", systemImage: "doc.text.magnifyingglass")
+                        .font(.callout.weight(.medium))
+                }
+
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/lahfir/agent-desktop")!)
+                } label: {
+                    Label("Open agent-desktop Docs", systemImage: "safari")
+                }
+            }
+        }
+    }
+
+    private var installCard: some View {
+        computerSettingsCard(title: backendStatus.isInstalled ? "2. agent-desktop Ready" : "2. Install agent-desktop CLI", systemImage: backendStatus.isInstalled ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
+            VStack(alignment: .leading, spacing: 12) {
+                if backendStatus.isInstalled {
+                    Label("agent-desktop is installed and available.", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+
+                    Text("The required local CLI is available. Grant macOS permissions below, then enable and apply Computer Use.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("GrokBuild needs the local `agent-desktop` CLI to expose desktop-control tools. It is never installed silently.")
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        installCommandRow(title: "npm", command: "npm install -g agent-desktop")
+                    }
+                }
+
+                HStack {
+                    Button(isInstalling ? "Installing..." : (backendStatus.isInstalled ? "Reinstall / Repair CLI" : "Install agent-desktop")) {
+                        Task { await installAgentDesktop() }
+                    }
+                    .disabled(isInstalling)
+
+                    Button("Copy Install Command") {
+                        copyToPasteboard("npm install -g agent-desktop")
+                    }
+
+                    if !agentDesktopPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Button("Clear Custom Path") {
+                            agentDesktopPath = ""
+                        }
+                    }
+                }
+
+                if let installOutput, !installOutput.isEmpty {
+                    Text(installOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                }
+
+                settingRow("Custom path") {
+                    HStack {
+                        TextField("Optional path to agent-desktop", text: $agentDesktopPath)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Choose...") { chooseAgentDesktop() }
+                    }
+                }
+            }
+        }
+    }
+
+    private var permissionsCard: some View {
+        computerSettingsCard(title: "3. macOS Permissions", systemImage: permissionStatus.isReady ? "lock.open.fill" : "lock.shield.fill", tint: permissionsTint) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Computer Use cannot be enabled from the chat until required permissions are ready.")
+                    .foregroundStyle(.secondary)
+
+                permissionRow(
+                    title: "Accessibility",
+                    state: permissionStatus.accessibility,
+                    help: "Required for snapshots and UI actions."
+                )
+                permissionRow(
+                    title: "Screen Recording",
+                    state: permissionStatus.screenRecording,
+                    help: "Required only when screenshot tools are enabled."
+                )
+
+                HStack {
+                    Button(isRequestingPermissions ? "Requesting..." : "Request Permissions") {
+                        Task { await requestPermissions() }
+                    }
+                    .disabled(!backendStatus.isInstalled || isRequestingPermissions)
+
+                    Button("Refresh") {
+                        Task { await refreshStatus() }
+                    }
+                    .disabled(isChecking)
+
+                    Button(showPermissionDiagnostics ? "Hide Diagnostics" : "Show Diagnostics") {
+                        showPermissionDiagnostics.toggle()
+                    }
+                    Spacer()
+                }
+
+                if showPermissionDiagnostics {
+                    Text(permissionDiagnosticsText)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var safetyCard: some View {
+        computerSettingsCard(title: "4. Safety and Session Options", systemImage: "hand.raised.fill", tint: .blue) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Keep desktop automation conservative. Grok still asks for permission for high-risk actions through the normal permission flow.")
+                    .foregroundStyle(.secondary)
+
+                settingRow("Action policy") {
+                    Picker("", selection: $permissionPolicy) {
+                        ForEach(ComputerUsePermissionPolicy.allCases) { policy in
+                            Text(policy.displayName).tag(policy.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 240)
+                }
+
+                Toggle(isOn: $includeScreenshots) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Allow screenshot tool")
+                            .font(.callout.weight(.medium))
+                        Text("Use screenshots only when Accessibility snapshots are not enough.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Toggle(isOn: $allowPhysicalMouse) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Allow physical mouse actions")
+                            .font(.callout.weight(.medium))
+                        Text("Disabled by default. Prefer accessibility actions unless you explicitly need real pointer movement.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                DisclosureGroup(isExpanded: $showAdvancedOptions) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingRow("Screenshot mode") {
+                            Picker("", selection: $screenshotMode) {
+                                ForEach(ComputerUseScreenshotMode.allCases) { mode in
+                                    Text(mode.displayName).tag(mode.rawValue)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 220)
+                        }
+                        Stepper("Max steps per request: \(maxSteps)", value: $maxSteps, in: 1...100)
+                        Stepper("Command timeout: \(commandTimeoutSeconds)s", value: $commandTimeoutSeconds, in: 5...180, step: 5)
+                        settingRow("Session name") {
+                            TextField("Optional Computer Use session name", text: $sessionName)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("Advanced: Computer Use session state", systemImage: "slider.horizontal.3")
+                        .font(.callout.weight(.medium))
+                }
+            }
+        }
+    }
+
+    private var applyCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Apply changes")
+                    .font(.headline)
+                Text(hasPendingChanges ? "Restart the Grok connection so Computer Use MCP tools are injected into the active session." : "Computer Use settings are already applied to the active configuration.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Apply and Restart Grok") {
+                apply()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!hasPendingChanges)
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(applyTint.opacity(hasPendingChanges ? 0.08 : 0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(applyTint.opacity(hasPendingChanges ? 0.18 : 0.10)))
+    }
+
+    private var currentSettings: ComputerUseSettings {
+        ComputerUseSettings(
+            enabled: enabled,
+            backend: ComputerUseBackendID(rawValue: backend) ?? ComputerUseSettings.defaults.backend,
+            agentDesktopPath: agentDesktopPath,
+            permissionPolicy: ComputerUsePermissionPolicy(rawValue: permissionPolicy)
+                ?? ComputerUseSettings.defaults.permissionPolicy,
+            maxSteps: maxSteps,
+            commandTimeoutSeconds: commandTimeoutSeconds,
+            screenshotMode: ComputerUseScreenshotMode(rawValue: screenshotMode)
+                ?? ComputerUseSettings.defaults.screenshotMode,
+            includeScreenshots: includeScreenshots,
+            allowPhysicalMouse: allowPhysicalMouse,
+            sessionName: sessionName
+        )
+    }
+
+    private var hasPendingChanges: Bool {
+        currentSettings != appliedSettings
+    }
+
+    private var statusBadge: some View {
+        let text = enabled ? (permissionStatus.isReady ? "Ready" : "Setup needed") : "Disabled"
+        let color: Color = enabled ? (permissionStatus.isReady ? .green : .orange) : .secondary
+        return Text(text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(0.14)))
+            .foregroundStyle(color)
+    }
+
+    private var backendStatusTitle: String {
+        if backendStatus.isInstalled {
+            return backendStatus.version.map { "agent-desktop ready (\($0))" } ?? "agent-desktop ready"
+        }
+        return "agent-desktop not installed"
+    }
+
+    private var backendStatusIcon: String {
+        backendStatus.isInstalled ? "checkmark.circle.fill" : "xmark.circle.fill"
+    }
+
+    private var backendStatusColor: Color {
+        backendStatus.isInstalled ? .green : .red
+    }
+
+    private var installCardTint: Color {
+        backendStatus.isInstalled ? .green : .secondary
+    }
+
+    private var permissionsTint: Color {
+        permissionStatus.isReady ? .green : .orange
+    }
+
+    private var applyTint: Color {
+        hasPendingChanges ? .accentColor : .secondary
+    }
+
+    private var permissionDiagnosticsText: String {
+        let permissionText = permissionStatus.diagnostic.isEmpty
+            ? "No permission diagnostics yet."
+            : permissionStatus.diagnostic
+        if let permissionOutput, !permissionOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "\(permissionText)\n\nLast request:\n\(permissionOutput)"
+        }
+        return permissionText
+    }
+
+    private func apply() {
+        let settings = currentSettings
+        ComputerUseSettingsStore.save(settings)
+        ComputerUseSettingsStore.saveApplied(settings)
+        appliedSettings = settings
+        onConfigurationChanged()
+    }
+
+    private func refreshStatus() async {
+        isChecking = true
+        defer { isChecking = false }
+        let settings = currentSettings
+        async let status = ComputerUseService.status(settings: settings)
+        async let permissions = ComputerUseService.permissionStatus(settings: settings)
+        backendStatus = await status
+        permissionStatus = await permissions
+    }
+
+    private func installAgentDesktop() async {
+        isInstalling = true
+        installOutput = "Running `npm install -g agent-desktop`..."
+        defer { isInstalling = false }
+
+        do {
+            let output = try await ComputerUseService.installAgentDesktop()
+            installOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            await refreshStatus()
+        } catch {
+            installOutput = error.localizedDescription
+        }
+    }
+
+    private func requestPermissions() async {
+        isRequestingPermissions = true
+        permissionOutput = "Running `agent-desktop permissions --request`..."
+        defer { isRequestingPermissions = false }
+
+        do {
+            permissionOutput = try await ComputerUseService.requestPermissions(settings: currentSettings)
+            await refreshStatus()
+        } catch {
+            permissionOutput = error.localizedDescription
+        }
+    }
+
+    private func chooseAgentDesktop() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose agent-desktop"
+        panel.message = "Choose the agent-desktop executable."
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        if panel.runModal() == .OK, let url = panel.url {
+            agentDesktopPath = url.path
+        }
+    }
+
+    private func permissionRow(title: String, state: String, help: String) -> some View {
+        let normalized = state.lowercased()
+        let color: Color = normalized == "granted" ? .green : (normalized == "unknown" ? .secondary : .orange)
+        let icon = normalized == "granted" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+        return HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(help)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(state.capitalized)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func settingRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .frame(width: 120, alignment: .leading)
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func infoLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 70, alignment: .leading)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func installCommandRow(title: String, command: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(command)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            Button {
+                copyToPasteboard(command)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
+    }
+
+    private func computerSettingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        tint: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(tint ?? .primary)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(tint.map { $0.opacity(0.07) } ?? Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(tint.map { $0.opacity(0.22) } ?? Color(nsColor: .separatorColor).opacity(0.6)))
     }
 }
 

@@ -42,9 +42,14 @@ enum GitService {
 
     @discardableResult
     static func run(_ args: [String], in directory: URL) async throws -> String {
+        try await runExecutable("/usr/bin/git", args: args, in: directory)
+    }
+
+    @discardableResult
+    static func runExecutable(_ executable: String, args: [String], in directory: URL) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = args
             process.currentDirectoryURL = directory
 
@@ -70,6 +75,11 @@ enum GitService {
         }
     }
 
+    @discardableResult
+    static func runEnv(_ args: [String], in directory: URL) async throws -> String {
+        try await runExecutable("/usr/bin/env", args: args, in: directory)
+    }
+
     static func isRepository(_ directory: URL) -> Bool {
         gitDirectory(for: directory) != nil
     }
@@ -86,6 +96,90 @@ enum GitService {
             return URL(fileURLWithPath: String(head.dropFirst(5))).lastPathComponent
         }
         return String(head.prefix(7))
+    }
+
+    static func defaultBaseBranch(in directory: URL) async -> String {
+        if let output = try? await run(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], in: directory) {
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("origin/") {
+                return String(trimmed.dropFirst("origin/".count))
+            }
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return "main"
+    }
+
+    static func hasLocalChanges(in directory: URL) async -> Bool {
+        guard let output = try? await run(["status", "--porcelain=v1"], in: directory) else {
+            return false
+        }
+        return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func hasUnpushedCommits(in directory: URL, baseBranch: String? = nil) async -> Bool {
+        if let upstream = try? await run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], in: directory)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !upstream.isEmpty,
+           let count = try? await commitCount(range: "\(upstream)..HEAD", in: directory) {
+            return count > 0
+        }
+
+        guard let baseBranch, !baseBranch.isEmpty else { return false }
+        if let count = try? await commitCount(range: "origin/\(baseBranch)..HEAD", in: directory) {
+            return count > 0
+        }
+        if let count = try? await commitCount(range: "\(baseBranch)..HEAD", in: directory) {
+            return count > 0
+        }
+        return false
+    }
+
+    static func hasPullRequestSourceChanges(baseBranch: String, in directory: URL) async -> Bool {
+        if await hasLocalChanges(in: directory) {
+            return true
+        }
+        return await hasUnpushedCommits(in: directory, baseBranch: baseBranch)
+    }
+
+    private static func commitCount(range: String, in directory: URL) async throws -> Int {
+        let output = try await run(["rev-list", "--count", range], in: directory)
+        return Int(output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    static func commitAll(message: String, in directory: URL) async throws -> String {
+        _ = try await run(["add", "-A"], in: directory)
+        return try await run(["commit", "-m", message], in: directory)
+    }
+
+    static func pushCurrentBranch(in directory: URL) async throws -> String {
+        try await run(["push", "-u", "origin", "HEAD"], in: directory)
+    }
+
+    static func createPullRequest(
+        base: String,
+        head: String,
+        title: String,
+        body: String,
+        draft: Bool,
+        in directory: URL
+    ) async throws -> String {
+        var args = [
+            "gh", "pr", "create",
+            "--base", base,
+            "--head", head,
+            "--title", title,
+            "--body", body
+        ]
+        if draft {
+            args.append("--draft")
+        }
+        return try await runEnv(args, in: directory)
+    }
+
+    static func openPullRequestInBrowser(in directory: URL) async throws -> String {
+        try await runEnv(["gh", "pr", "view", "--web"], in: directory)
     }
 
     static func listLocalBranches(in directory: URL) async throws -> [GitBranchInfo] {
