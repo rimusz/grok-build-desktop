@@ -150,6 +150,136 @@ final class ComputerUseIntegrationTests: XCTestCase {
         XCTAssertTrue(status.isReady)
     }
 
+    func testPermissionDiagnosticsParseAgentDesktopV1GrantedFlag() {
+        let status = ComputerUseService.parsePermissions("""
+        {"command":"permissions","data":{"granted":true},"ok":true,"version":"1.0"}
+        """)
+
+        XCTAssertEqual(status.accessibility, "granted")
+        XCTAssertEqual(status.screenRecording, "not reported")
+        XCTAssertTrue(status.isReady)
+    }
+
+    func testPermissionDiagnosticsParseAgentDesktopV1DeniedFlag() {
+        let status = ComputerUseService.parsePermissions("""
+        {"command":"permissions","data":{"granted":false,"suggestion":"Open System Settings > Privacy & Security > Accessibility and add your terminal application"},"ok":true,"version":"1.0"}
+        """)
+
+        XCTAssertEqual(status.accessibility, "denied")
+        XCTAssertEqual(status.screenRecording, "not reported")
+        XCTAssertFalse(status.isReady)
+        XCTAssertEqual(
+            status.guidance,
+            "Open System Settings → Privacy & Security → Accessibility and enable \(ComputerUseService.hostAppName)."
+        )
+        XCTAssertFalse(status.guidance?.localizedCaseInsensitiveContains("terminal") ?? true)
+    }
+
+    func testRewritePermissionSuggestionReplacesTerminalWording() {
+        let guidance = ComputerUseService.rewritePermissionSuggestion(
+            "Open System Settings > Privacy & Security > Accessibility and add your terminal application",
+            appName: "GrokBuild"
+        )
+
+        XCTAssertEqual(
+            guidance,
+            "Open System Settings → Privacy & Security → Accessibility and enable GrokBuild."
+        )
+    }
+
+    func testMergedPermissionStatusUsesLocalAccessibilityWhenGranted() {
+        let cliStatus = ComputerUsePermissionStatus(
+            accessibility: "denied",
+            screenRecording: "not reported",
+            diagnostic: #"{"granted":false}"#,
+            guidance: "Enable GrokBuild."
+        )
+
+        let merged = ComputerUseService.mergedPermissionStatus(cliStatus, localAccessibilityGranted: true)
+
+        XCTAssertEqual(merged.accessibility, "granted")
+        XCTAssertTrue(merged.isReady)
+        XCTAssertNil(merged.guidance)
+        XCTAssertTrue(merged.diagnostic.contains("GrokBuild Accessibility: granted"))
+    }
+
+    func testResolvePermissionStatusUsesHelperAccessibility() {
+        let cliStatus = ComputerUsePermissionStatus(
+            accessibility: "denied",
+            screenRecording: "not reported",
+            diagnostic: #"{"granted":false}"#,
+            guidance: "Enable GrokBuild."
+        )
+        let probe = AccessibilityTrustProbe(
+            helperGranted: true,
+            agentDesktopGranted: false,
+            helperExecutablePath: "/tmp/GrokBuildComputerUseMCP",
+            agentDesktopOutput: #"{"granted":false}"#,
+            probeError: nil
+        )
+
+        let resolved = ComputerUseService.resolvePermissionStatus(
+            cliStatus: cliStatus,
+            grokBuildGranted: false,
+            probe: probe
+        )
+
+        XCTAssertEqual(resolved.accessibility, "granted")
+        XCTAssertTrue(resolved.isReady)
+        XCTAssertTrue(resolved.diagnostic.contains("Helper Accessibility: granted"))
+    }
+
+    func testResolvePermissionStatusUsesAgentDesktopAccessibility() {
+        let cliStatus = ComputerUsePermissionStatus(
+            accessibility: "denied",
+            screenRecording: "not reported",
+            diagnostic: #"{"granted":false}"#,
+            guidance: nil
+        )
+        let probe = AccessibilityTrustProbe(
+            helperGranted: false,
+            agentDesktopGranted: true,
+            helperExecutablePath: "/tmp/GrokBuildComputerUseMCP",
+            agentDesktopOutput: #"{"granted":true}"#,
+            probeError: nil
+        )
+
+        let resolved = ComputerUseService.resolvePermissionStatus(
+            cliStatus: cliStatus,
+            grokBuildGranted: false,
+            probe: probe
+        )
+
+        XCTAssertEqual(resolved.accessibility, "granted")
+        XCTAssertTrue(resolved.isReady)
+    }
+
+    func testParseAccessibilityTrustProbeReadsHelperJSON() {
+        let probe = ComputerUseService.parseAccessibilityTrustProbe("""
+        {"ok":true,"helper_accessibility_granted":true,"helper_executable":"/tmp/helper","agent_desktop_granted":false,"agent_desktop_output":"{\\"granted\\":false}"}
+        """)
+
+        XCTAssertEqual(probe?.helperGranted, true)
+        XCTAssertEqual(probe?.agentDesktopGranted, false)
+        XCTAssertEqual(probe?.helperExecutablePath, "/tmp/helper")
+    }
+
+    func testMergedPermissionStatusKeepsCLIDenialWhenLocalAccessibilityMissing() {
+        let cliStatus = ComputerUsePermissionStatus(
+            accessibility: "denied",
+            screenRecording: "not reported",
+            diagnostic: #"{"granted":false}"#,
+            guidance: "Enable GrokBuild."
+        )
+
+        let merged = ComputerUseService.mergedPermissionStatus(cliStatus, localAccessibilityGranted: false)
+
+        XCTAssertEqual(merged.accessibility, "denied")
+        XCTAssertFalse(merged.isReady)
+        XCTAssertNotNil(merged.guidance)
+        XCTAssertTrue(merged.guidance?.localizedCaseInsensitiveContains("accessibility") ?? false)
+    }
+
     func testVersionParserUsesAgentDesktopDataVersion() {
         let version = ComputerUseService.parseVersion("""
         {"command":"version","data":{"os":"macos","target":"aarch64","version":"0.3.1"},"ok":true,"version":"2.0"}

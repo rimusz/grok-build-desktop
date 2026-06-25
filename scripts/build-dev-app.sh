@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build a lightweight GrokBuild.app bundle for local development.
+# Uses the same bundle identifier as the packaged app so Accessibility
+# entries from System Settings apply to `make run` launches.
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_NAME="GrokBuild"
+EXECUTABLE_NAME="GrokBuild"
+APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
+BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
+BUILD_DIR="$ROOT_DIR/.build"
+APP_BUNDLE="$BUILD_DIR/${APP_NAME}.app"
+
+if [ ! -x "$BUILD_DIR/release/$EXECUTABLE_NAME" ]; then
+    echo "Missing release binary. Run 'make build' first." >&2
+    exit 1
+fi
+
+rm -rf "$APP_BUNDLE"
+mkdir -p "$APP_BUNDLE/Contents/MacOS"
+mkdir -p "$APP_BUNDLE/Contents/Resources"
+
+cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+
+if [ -f "$BUILD_DIR/release/GrokBuildComputerUseMCP" ]; then
+    cp "$BUILD_DIR/release/GrokBuildComputerUseMCP" "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
+    chmod +x "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
+fi
+
+if [ -f "$ROOT_DIR/scripts/grokbuild-browser-mcp" ]; then
+    cp "$ROOT_DIR/scripts/grokbuild-browser-mcp" "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
+    chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
+fi
+
+if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
+    mkdir -p "$APP_BUNDLE/Contents/Resources/Skills"
+    cp -R "$ROOT_DIR/GrokBuild/Resources/Skills/." "$APP_BUNDLE/Contents/Resources/Skills/"
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+chmod +x "$SCRIPT_DIR/bundle-agent-desktop.sh" "$SCRIPT_DIR/codesign-app-bundle.sh"
+"$SCRIPT_DIR/bundle-agent-desktop.sh" "$APP_BUNDLE/Contents/MacOS" || true
+
+cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>$EXECUTABLE_NAME</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.grokbuild.app</string>
+    <key>CFBundleName</key>
+    <string>$APP_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$APP_VERSION</string>
+    <key>CFBundleVersion</key>
+    <string>$BUILD_NUMBER</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>GrokBuild transcribes your speech to text for chat messages.</string>
+</dict>
+</plist>
+EOF
+
+"$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
+echo "Dev app ready: $APP_BUNDLE"

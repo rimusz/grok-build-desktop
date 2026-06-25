@@ -71,6 +71,14 @@ jobs:
             echo "release_name=${{ steps.version.outputs.tag_name }} (${{ steps.version.outputs.build_number }}) (Unsigned)" >> $GITHUB_OUTPUT
           fi
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install agent-desktop for bundling
+        run: npm install -g agent-desktop
+
       # Only import cert and set identity for notarized builds
       - name: Import Apple Certificate (notarized only)
         if: steps.config.outputs.notarized == 'true'
@@ -84,6 +92,7 @@ jobs:
         run: |
           make app
           make dmg
+          test -x "dist/${{ env.APP_NAME }}.app/Contents/MacOS/agent-desktop"
 
       - name: Build signed + notarized
         if: steps.config.outputs.notarized == 'true'
@@ -91,6 +100,7 @@ jobs:
           SIGN_IDENTITY: ${{ secrets.SIGN_IDENTITY || 'Developer ID Application' }}
         run: |
           make signed SIGN_IDENTITY="$SIGN_IDENTITY"
+          test -x "dist/${{ env.APP_NAME }}.app/Contents/MacOS/agent-desktop"
           ./scripts/notarize.sh dist/${{ env.APP_NAME }}.app
           make dmg
 

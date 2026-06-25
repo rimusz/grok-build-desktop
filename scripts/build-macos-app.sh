@@ -96,6 +96,9 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
         echo "==> Copied bundled skills"
     fi
 
+    chmod +x "$SCRIPT_DIR/bundle-agent-desktop.sh" "$SCRIPT_DIR/codesign-app-bundle.sh"
+    "$SCRIPT_DIR/bundle-agent-desktop.sh" "$APP_BUNDLE/Contents/MacOS" || true
+
     # Copy menu bar icon
     # Looks in these locations (in order):
     #   1. Project root (MenuBarIcon.png / @2x.png) — legacy / docs
@@ -199,23 +202,10 @@ EOF
 
     chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
-    # Codesign if requested
     if [ -n "$SIGN_IDENTITY" ]; then
-        echo "==> Signing with identity: $SIGN_IDENTITY"
-        codesign --force --deep --sign "$SIGN_IDENTITY" \
-            --options runtime \
-            --entitlements /dev/stdin <<'ENTITLEMENTS' "$APP_BUNDLE" || true
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-</dict>
-</plist>
-ENTITLEMENTS
+        "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "$SIGN_IDENTITY"
     else
-        xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+        "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
     fi
 
 else

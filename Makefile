@@ -74,11 +74,14 @@ test: ## Run unit tests
 	@swift test
 
 run: build ## Build + launch the menu bar app
+	@echo "$(GREEN)==> Packaging dev app bundle...$(NC)"
+	@chmod +x scripts/build-dev-app.sh
+	@./scripts/build-dev-app.sh
 	@echo "$(GREEN)==> Starting GrokBuild...$(NC)"
 	@pkill -x GrokBuild 2>/dev/null || true
 	@sleep 0.2
-	@./.build/release/GrokBuild > /dev/null 2>&1 & disown
-	@echo "$(GREEN)==> GrokBuild launched.$(NC)"
+	@open "$(BUILD_DIR)/$(APP_NAME).app"
+	@echo "$(GREEN)==> GrokBuild launched from .build/$(APP_NAME).app$(NC)"
 
 dmg: ## Build the .app and package it into a DMG.
 	@if [ -n "$(NOTARY_PROFILE)" ]; then \

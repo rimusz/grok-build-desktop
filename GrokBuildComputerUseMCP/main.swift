@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 
 struct MCPTool {
@@ -425,7 +426,80 @@ func mappedError(from text: String, fallback: Int32) -> String {
     return [code, message, suggestion].compactMap { $0 }.joined(separator: ": ")
 }
 
+func printPermissionsProbe() {
+    var agentDesktopOutput = ""
+    var agentDesktopGranted = false
+    do {
+        agentDesktopOutput = try runAgentDesktop(["permissions"])
+        if let data = agentDesktopOutput.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let payload = (json["data"] as? [String: Any]) ?? json
+            if let granted = payload["granted"] as? Bool {
+                agentDesktopGranted = granted
+            } else if let accessibility = payload["accessibility"] as? [String: Any],
+                      let state = accessibility["state"] as? String {
+                agentDesktopGranted = state.lowercased() == "granted"
+            }
+        }
+    } catch {
+        agentDesktopOutput = error.localizedDescription
+    }
+
+    let payload: [String: Any] = [
+        "ok": true,
+        "helper_accessibility_granted": AXIsProcessTrusted(),
+        "helper_executable": ProcessInfo.processInfo.arguments[0],
+        "agent_desktop_granted": agentDesktopGranted,
+        "agent_desktop_output": agentDesktopOutput
+    ]
+
+    guard JSONSerialization.isValidJSONObject(payload),
+          let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+          let text = String(data: data, encoding: .utf8) else {
+        fputs("{\"ok\":false,\"error\":\"Failed to encode permissions probe.\"}\n", stderr)
+        exit(1)
+    }
+    print(text)
+}
+
+func requestPermissionsProbe() {
+    let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+    let options = [key: true] as CFDictionary
+    _ = AXIsProcessTrustedWithOptions(options)
+
+    var agentDesktopOutput = ""
+    do {
+        agentDesktopOutput = try runAgentDesktop(["permissions", "--request"])
+    } catch {
+        agentDesktopOutput = error.localizedDescription
+    }
+
+    let payload: [String: Any] = [
+        "ok": true,
+        "helper_accessibility_granted": AXIsProcessTrusted(),
+        "helper_executable": ProcessInfo.processInfo.arguments[0],
+        "agent_desktop_output": agentDesktopOutput
+    ]
+
+    guard JSONSerialization.isValidJSONObject(payload),
+          let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+          let text = String(data: data, encoding: .utf8) else {
+        fputs("{\"ok\":false,\"error\":\"Failed to encode permissions request.\"}\n", stderr)
+        exit(1)
+    }
+    print(text)
+}
+
 func main() {
+    if CommandLine.arguments.contains("--check-permissions") {
+        printPermissionsProbe()
+        return
+    }
+    if CommandLine.arguments.contains("--request-permissions") {
+        requestPermissionsProbe()
+        return
+    }
+
     while let line = readLine() {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { continue }

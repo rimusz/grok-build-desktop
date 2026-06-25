@@ -25,8 +25,18 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install agent-desktop for bundling
+        run: npm install -g agent-desktop
+
       - name: Build unsigned app bundle
         run: make app
 
       - name: Verify app bundle exists
-        run: test -d "dist/GrokBuild.app"
+        run: |
+          test -d "dist/GrokBuild.app"
+          test -x "dist/GrokBuild.app/Contents/MacOS/agent-desktop"

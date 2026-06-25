@@ -1677,6 +1677,35 @@ private struct ComputerUseSettingsPane: View {
                     help: "Required only when screenshot tools are enabled."
                 )
 
+                if ComputerUseService.usesBundledAgentDesktop(settings: currentSettings) {
+                    Text("agent-desktop is bundled inside this app and uses the same Accessibility permission as GrokBuild.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let agentDesktopPath = ComputerUseService.executableURL(settings: currentSettings)?.path {
+                    Text("Also enable agent-desktop in Accessibility: \(agentDesktopPath)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                if let guidance = permissionStatus.guidance {
+                    Text(guidance)
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack {
+                        Button("Open Accessibility Settings") {
+                            Task { @MainActor in
+                                ComputerUseService.openAccessibilitySettings()
+                            }
+                        }
+                        Button("Show App in Finder") {
+                            ComputerUseService.revealAppInFinder()
+                        }
+                    }
+                }
+
                 HStack {
                     Button(isRequestingPermissions ? "Requesting..." : "Request Permissions") {
                         Task { await requestPermissions() }
@@ -1854,13 +1883,19 @@ private struct ComputerUseSettingsPane: View {
     }
 
     private var permissionDiagnosticsText: String {
-        let permissionText = permissionStatus.diagnostic.isEmpty
-            ? "No permission diagnostics yet."
-            : permissionStatus.diagnostic
-        if let permissionOutput, !permissionOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return "\(permissionText)\n\nLast request:\n\(permissionOutput)"
+        var parts: [String] = []
+        if let guidance = permissionStatus.guidance {
+            parts.append(guidance)
         }
-        return permissionText
+        parts.append(
+            permissionStatus.diagnostic.isEmpty
+                ? "No permission diagnostics yet."
+                : permissionStatus.diagnostic
+        )
+        if let permissionOutput, !permissionOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("Last request:\n\(permissionOutput)")
+        }
+        return parts.joined(separator: "\n\n")
     }
 
     private func apply() {
@@ -1897,7 +1932,7 @@ private struct ComputerUseSettingsPane: View {
 
     private func requestPermissions() async {
         isRequestingPermissions = true
-        permissionOutput = "Running `agent-desktop permissions --request`..."
+        permissionOutput = "Requesting Accessibility permission for GrokBuild..."
         defer { isRequestingPermissions = false }
 
         do {
@@ -1923,8 +1958,13 @@ private struct ComputerUseSettingsPane: View {
 
     private func permissionRow(title: String, state: String, help: String) -> some View {
         let normalized = state.lowercased()
-        let color: Color = normalized == "granted" ? .green : (normalized == "unknown" ? .secondary : .orange)
-        let icon = normalized == "granted" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+        let isGranted = normalized == "granted"
+        let isNeutral = normalized == "unknown" || normalized == "not reported"
+        let color: Color = isGranted ? .green : (isNeutral ? .secondary : .orange)
+        let icon = isGranted
+            ? "checkmark.circle.fill"
+            : (isNeutral ? "minus.circle" : "exclamationmark.triangle.fill")
+        let label = normalized == "not reported" ? "Not reported" : state.capitalized
         return HStack(spacing: 10) {
             Image(systemName: icon)
                 .foregroundStyle(color)
@@ -1936,7 +1976,7 @@ private struct ComputerUseSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(state.capitalized)
+            Text(label)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(color)
         }
