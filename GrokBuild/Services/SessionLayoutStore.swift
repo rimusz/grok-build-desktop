@@ -15,19 +15,25 @@ struct SessionLayoutSnapshot: Codable {
     var selectedWorkspaceID: UUID?
 
     var selectedSessionIDByWorkspace: [UUID: UUID]
+    var expandedSessionWorkspaceIDs: Set<UUID>
+    var hiddenSessionWorkspaceIDs: Set<UUID>
 
     init(
         records: [SavedSessionRecord],
         sessionOrderByWorkspace: [UUID: [UUID]],
         selectedSessionID: UUID?,
         selectedWorkspaceID: UUID?,
-        selectedSessionIDByWorkspace: [UUID: UUID] = [:]
+        selectedSessionIDByWorkspace: [UUID: UUID] = [:],
+        expandedSessionWorkspaceIDs: Set<UUID> = [],
+        hiddenSessionWorkspaceIDs: Set<UUID> = []
     ) {
         self.records = records
         self.sessionOrderByWorkspace = sessionOrderByWorkspace
         self.selectedSessionID = selectedSessionID
         self.selectedWorkspaceID = selectedWorkspaceID
         self.selectedSessionIDByWorkspace = selectedSessionIDByWorkspace
+        self.expandedSessionWorkspaceIDs = expandedSessionWorkspaceIDs
+        self.hiddenSessionWorkspaceIDs = hiddenSessionWorkspaceIDs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -36,6 +42,8 @@ struct SessionLayoutSnapshot: Codable {
         case selectedSessionID
         case selectedWorkspaceID
         case selectedSessionIDByWorkspace
+        case expandedSessionWorkspaceIDs
+        case hiddenSessionWorkspaceIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -45,6 +53,8 @@ struct SessionLayoutSnapshot: Codable {
         selectedSessionID = try container.decodeIfPresent(UUID.self, forKey: .selectedSessionID)
         selectedWorkspaceID = try container.decodeIfPresent(UUID.self, forKey: .selectedWorkspaceID)
         selectedSessionIDByWorkspace = try container.decodeIfPresent([UUID: UUID].self, forKey: .selectedSessionIDByWorkspace) ?? [:]
+        expandedSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .expandedSessionWorkspaceIDs) ?? []
+        hiddenSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .hiddenSessionWorkspaceIDs) ?? []
     }
 }
 

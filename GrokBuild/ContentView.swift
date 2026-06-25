@@ -17,6 +17,7 @@ struct ContentView: View {
 
     @State private var showPicker = false
     @State private var showSettings = false
+    @State private var selectedSettingsTab: SettingsTab = .hooks
     @State private var showSessions = false
     @State private var showPreview = false
     @State private var gitCheckoutRequest: GitCheckoutRequest?
@@ -43,6 +44,8 @@ struct ContentView: View {
                 sessions: sidebarSessions,
                 hiddenSessionCounts: hiddenSessionCounts,
                 selectedSessionID: selectedSessionID,
+                expandedSessionWorkspaceIDs: $sessionLayout.expandedSessionWorkspaceIDs,
+                hiddenSessionWorkspaceIDs: $sessionLayout.hiddenSessionWorkspaceIDs,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
                     showSettings = false
@@ -69,13 +72,14 @@ struct ContentView: View {
                 },
                 onSwitchBranch: { gitCheckoutRequest = GitCheckoutRequest(project: $0) },
                 onCreateWorktree: { gitCheckoutRequest = GitCheckoutRequest(project: $0, focusCreateWorktree: true) },
-                onOpenSettings: { showSettings = true },
+                onSessionDisclosureChanged: { persistSessionLayout() },
+                onOpenSettings: { openSettings(tab: .hooks) },
                 isSettingsSelected: showSettings
             )
             .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
 
             if showSettings {
-                SettingsView(store: activeStore) {
+                SettingsView(store: activeStore, selectedTab: $selectedSettingsTab) {
                     showSettings = false
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,6 +100,9 @@ struct ContentView: View {
                         onOpenProjectIn: { openCurrentProject(in: $0) },
                         onToggleBrowserTools: { toggleBrowserToolsFromChat() },
                         onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
+                        onToggleComputerUse: { toggleComputerUseFromChat() },
+                        onOpenBrowserSettings: { openSettings(tab: .browser) },
+                        onOpenComputerUseSettings: { openSettings(tab: .computerUse) },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)
@@ -259,6 +266,11 @@ struct ContentView: View {
         previewDiffs.isEmpty ? nil : previewMessage
     }
 
+    private func openSettings(tab: SettingsTab) {
+        selectedSettingsTab = tab
+        showSettings = true
+    }
+
     private func toggleBrowserToolsFromChat() {
         var settings = BrowserSettingsStore.load()
         guard AgentBrowserService.browserToolsConfigurationIssue(settings: settings) == nil else {
@@ -288,6 +300,34 @@ struct ContentView: View {
 
         guard settings.enabled else { return }
         Task {
+            await activeStore.reloadConfiguration()
+        }
+    }
+
+    private func toggleComputerUseFromChat() {
+        var settings = ComputerUseSettingsStore.load()
+        if settings.enabled {
+            settings.enabled = false
+            ComputerUseSettingsStore.save(settings)
+            ComputerUseSettingsStore.saveApplied(settings)
+            Task { await activeStore.reloadConfiguration() }
+            return
+        }
+
+        guard ComputerUseService.configurationIssue(settings: settings) == nil else {
+            showSettings = true
+            return
+        }
+
+        Task {
+            let permissions = await ComputerUseService.permissionStatus(settings: settings)
+            guard permissions.isReady else {
+                await MainActor.run { showSettings = true }
+                return
+            }
+            settings.enabled = true
+            ComputerUseSettingsStore.save(settings)
+            ComputerUseSettingsStore.saveApplied(settings)
             await activeStore.reloadConfiguration()
         }
     }
@@ -474,6 +514,9 @@ struct ContentView: View {
 
         var order = sessionLayout.sessionOrderByWorkspace
         var selectedByWorkspace = sessionLayout.selectedSessionIDByWorkspace
+        let workspaceIDs = Set(workspaceStore.workspaces.map(\.id))
+        let expandedSessionWorkspaceIDs = sessionLayout.expandedSessionWorkspaceIDs.intersection(workspaceIDs)
+        let hiddenSessionWorkspaceIDs = sessionLayout.hiddenSessionWorkspaceIDs.intersection(workspaceIDs)
         let recordIDs = Set(records.map(\.id))
         for workspace in workspaceStore.workspaces {
             let ids = liveSessions
@@ -502,7 +545,9 @@ struct ContentView: View {
             sessionOrderByWorkspace: order,
             selectedSessionID: selectedSessionID,
             selectedWorkspaceID: selectedWorkspaceID,
-            selectedSessionIDByWorkspace: selectedByWorkspace
+            selectedSessionIDByWorkspace: selectedByWorkspace,
+            expandedSessionWorkspaceIDs: expandedSessionWorkspaceIDs,
+            hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }

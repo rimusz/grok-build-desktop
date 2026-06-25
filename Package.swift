@@ -8,6 +8,10 @@ let package = Package(
         .executable(
             name: "GrokBuild",
             targets: ["GrokBuild"]
+        ),
+        .executable(
+            name: "GrokBuildComputerUseMCP",
+            targets: ["GrokBuildComputerUseMCP"]
         )
     ],
     dependencies: [],
@@ -19,8 +23,13 @@ let package = Package(
             resources: [
                 .process("Resources/Assets.xcassets"),
                 .copy("Resources/Skills/grokbuild-browser-control"),
+                .copy("Resources/Skills/grokbuild-computer-use"),
                 .copy("Resources/Skills/grokbuild-desktop"),
             ]
+        ),
+        .executableTarget(
+            name: "GrokBuildComputerUseMCP",
+            path: "GrokBuildComputerUseMCP"
         ),
         .testTarget(
             name: "GrokBuildTests",

@@ -61,6 +61,7 @@ build: ## Build using SwiftPM (Release) - recommended
 	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (release)...$(NC)"
 	@swift build -c release
 	@chmod +x .build/release/GrokBuild 2>/dev/null || true
+	@chmod +x .build/release/GrokBuildComputerUseMCP 2>/dev/null || true
 	@mkdir -p .build/release
 	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png .build/release/ 2>/dev/null || true
 	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png .build/release/ 2>/dev/null || true

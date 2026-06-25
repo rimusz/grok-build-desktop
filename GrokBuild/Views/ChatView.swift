@@ -22,6 +22,9 @@ struct ChatView: View {
     var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
     var onToggleBrowserTools: () -> Void = {}
     var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
+    var onToggleComputerUse: () -> Void = {}
+    var onOpenBrowserSettings: () -> Void = {}
+    var onOpenComputerUseSettings: () -> Void = {}
     var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
@@ -33,6 +36,7 @@ struct ChatView: View {
     @State private var voiceInput = VoiceInputService()
     @FocusState private var inputFocused: Bool
     @AppStorage(BrowserSettingsKeys.enabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
+    @AppStorage(ComputerUseSettingsKeys.enabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -454,6 +458,7 @@ struct ChatView: View {
                 .buttonStyle(.plain)
                 .help("Branches & worktrees")
                 browserStatusPill
+                computerUseStatusPill
             } else {
                 Label("No project selected", systemImage: "folder")
             }
@@ -507,6 +512,14 @@ struct ChatView: View {
                 Button(configurationIssue) {}
                     .disabled(true)
             }
+
+            Divider()
+
+            Button {
+                onOpenBrowserSettings()
+            } label: {
+                Label("Open Browser Settings", systemImage: "gearshape")
+            }
         } label: {
             Label(title, systemImage: icon)
                 .font(.caption2.weight(.semibold))
@@ -526,6 +539,59 @@ struct ChatView: View {
         return browserToolsEnabled
             ? "Disable browser MCP tools and restart the Grok connection."
             : "Enable browser MCP tools and restart the Grok connection."
+    }
+
+    private var computerUseStatusPill: some View {
+        let settings = ComputerUseSettingsStore.load()
+        let configurationIssue = ComputerUseService.configurationIssue(settings: settings)
+        let isConfigured = configurationIssue == nil
+        let title = computerUseEnabled
+            ? (isConfigured ? "Computer Use On" : "Computer Use Setup Needed")
+            : "Computer Use Off"
+        let icon = computerUseEnabled && isConfigured ? "display.badge.checkmark" : "display"
+        let tint: Color = computerUseEnabled ? (isConfigured ? .purple : .orange) : .secondary
+
+        return Menu {
+            if computerUseEnabled || isConfigured {
+                Button(computerUseEnabled ? "Turn Computer Use Off" : "Turn Computer Use On") {
+                    onToggleComputerUse()
+                }
+            }
+
+            if let configurationIssue {
+                Button(configurationIssue) {}
+                    .disabled(true)
+            } else if !computerUseEnabled {
+                Button("Requires Accessibility permission") {}
+                    .disabled(true)
+            }
+
+            Divider()
+
+            Button {
+                onOpenComputerUseSettings()
+            } label: {
+                Label("Open Computer Use Settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(computerUseEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .help(computerUseStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
+    }
+
+    private func computerUseStatusHelp(isConfigured: Bool, issue: String?) -> String {
+        if !isConfigured {
+            return issue ?? "Finish Computer Use setup in Settings before using the quick toggle."
+        }
+        return computerUseEnabled
+            ? "Disable Computer Use MCP tools and restart the Grok connection."
+            : "Enable Computer Use MCP tools if Accessibility permission is ready."
     }
 
     @ViewBuilder

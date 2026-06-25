@@ -77,6 +77,14 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     mkdir -p "$APP_BUNDLE/Contents/Resources"
 
     cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+    if [ -f "$BUILD_DIR/release/GrokBuildComputerUseMCP" ]; then
+        cp "$BUILD_DIR/release/GrokBuildComputerUseMCP" "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
+        chmod +x "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
+        echo "==> Copied Computer Use MCP helper"
+    else
+        echo "ERROR: Missing GrokBuildComputerUseMCP helper binary"
+        exit 1
+    fi
     if [ -f "$ROOT_DIR/scripts/grokbuild-browser-mcp" ]; then
         cp "$ROOT_DIR/scripts/grokbuild-browser-mcp" "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
         chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
@@ -85,7 +93,7 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
         mkdir -p "$APP_BUNDLE/Contents/Resources/Skills"
         cp -R "$ROOT_DIR/GrokBuild/Resources/Skills/." "$APP_BUNDLE/Contents/Resources/Skills/"
-        echo "==> Copied browser skills"
+        echo "==> Copied bundled skills"
     fi
 
     # Copy menu bar icon
