@@ -511,7 +511,8 @@ final class ChatStore {
                     self.saveCurrentSessionSelection()
                     return
                 }
-                if self.process.currentModelId == model { return }  // confirmed
+                // Don't early-exit on `currentModelId == model` here: GrokProcess sets it optimistically.
+                // Keep polling until either an error is surfaced or the timeout elapses.
             }
         }
     }
