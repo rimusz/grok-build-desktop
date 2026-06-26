@@ -40,7 +40,7 @@ enum SlashMenuEntry: Identifiable, Hashable {
 
 enum SlashAutocompleteGroups {
     static let previewLimit = 3
-    private static let skillPriority = ["code-review", "check-work"]
+    private static let skillPriority = ["code-review", "review", "check-work"]
 
     static func split(_ commands: [SlashCommand]) -> (skills: [SlashCommand], commands: [SlashCommand]) {
         var skills: [SlashCommand] = []

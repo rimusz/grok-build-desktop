@@ -1,64 +1,81 @@
 # GrokBuild Desktop App
 
-GrokBuild Desktop is a native SwiftUI macOS app for using the `grok` CLI as a desktop AI development environment.
+GrokBuild Desktop is a native SwiftUI macOS app for using the [`grok`](https://grok.com) CLI as a desktop AI development environment.
 
-It gives Grok a project-focused chat UI with persistent workspaces, resumable sessions, rich message rendering, diff review, settings for Grok CLI features, and optional browser-control tools. The app stays close to the CLI: GrokBuild launches and talks to `grok agent stdio`, while the CLI remains responsible for core capabilities such as ACP, MCP, skills, subagents, AGENTS.md instructions, permissions, and plan mode.
+It gives Grok a project-focused chat UI with persistent workspaces, resumable sessions, rich message rendering, diff review, full settings for Grok CLI features, optional browser-control tools, and optional macOS desktop automation. The app stays close to the CLI: GrokBuild launches and talks to `grok agent stdio`, while the CLI remains responsible for core capabilities such as ACP, MCP, skills, subagents, `AGENTS.md` instructions, permissions, and plan mode.
 
 ![GrokBuild Desktop app showing the project sidebar, chat UI, composer, and status bar menu](docs/images/grokbuild-app.png)
 
 ## Features
 
+### Chat & sessions
 - Native macOS SwiftUI interface for `grok agent stdio`.
-- Persistent project sidebar with pinned projects, session lists, session rename/close, and recent-session collapsing.
-- Session browser for resuming existing Grok sessions from the current project.
 - Streaming chat with Markdown rendering, thinking blocks, live tool activity, permission prompts, and question cards.
-- Fixed two-line composer with command history, slash-command autocomplete, file attachments, and voice input.
-- Model, mode, and context-usage controls directly in the composer.
-- Git branch and worktree sheet from the chat status row.
+- Resumable sessions with a session browser for reopening existing Grok sessions in the current project.
+- Diff review of file changes proposed during a session.
+
+### Projects & workspaces
+- Persistent project sidebar with pinned projects, per-project session lists, session rename/close, and recent-session collapsing.
+- Git branch and worktree management from the chat status row.
 - `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
-- Settings panes for plugins, marketplace plugins, MCP servers, browser tools, and permissions.
-- Browser tools integration through `agent-browser`, with support for a managed browser runtime or an existing Chromium browser.
-- Browser-control skill installation into the user's Grok skills folder when browser tools are enabled.
+
+### Composer
+- Fixed two-line composer with command history and slash-command autocomplete.
+- File attachments and voice input (dictation).
+- Model, mode, and context-usage controls inline in the composer.
+
+### Models
+- Add custom OpenAI-compatible models from your own providers (e.g. MiniMax and other OpenAI-compatible endpoints).
+- Define reusable providers (base URL + shared API key) and fetch their available models directly in the app.
+- Models are written to `~/.grok/config.toml` and become usable via `/model <id>`; supports setting a default model (up to 28 custom models).
+
+### Browser control
+- Browser tools through [`agent-browser`](https://agent-browser.dev), exposed as MCP tools to Grok sessions.
+- Use a managed automation runtime (a separate Chrome/Chromium profile) or attach to an existing Chromium browser (Chrome, Brave, Edge, Arc, or custom) over CDP.
+- Installs a browser-control skill into your Grok skills folder when browser tools are enabled.
+
+### Computer Use (desktop automation)
+- Optional macOS desktop-control tools exposed to Grok through an app-managed MCP helper and [`agent-desktop`](https://github.com/lahfir/agent-desktop).
+- `agent-desktop` ships bundled inside the app and shares GrokBuild's Accessibility permission — nothing to install.
+- Configurable permission policy (Auto / Ask / Deny), optional screenshots, step and timeout limits, and named sessions.
+- Installs a Computer Use skill into your Grok skills folder when enabled.
+
+### Grok CLI integration
+- **Hooks** — inspect automation hooks discovered from Grok, Cursor, Claude, project, and plugin sources.
+- **Plugins** — manage installed Grok plugins and add trusted plugin sources.
+- **Marketplace** — browse available plugins and manage marketplace sources.
+- **Skills** — view user, project, compatibility, and plugin skills available to Grok.
+- **MCP servers** — configure external Model Context Protocol servers and run health checks.
+- **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
+
+### App experience
+- Menu bar app with built-in update checks for both GrokBuild and the `grok` CLI.
 - Login-state detection with a helpful `grok login` banner.
 - Dark-mode-first visual design.
 
 ## Install
 
-Download the latest GrokBuild Desktop app from the [GitHub Releases page](https://github.com/rimusz/grok-build-desktop/releases).
+Download the latest release from the [GitHub Releases page](https://github.com/rimusz/grok-build-desktop/releases), then move `GrokBuild.app` to `/Applications` (or run it from the extracted release folder).
 
-After downloading, move `GrokBuild.app` to `/Applications` or run it from the extracted release folder.
-
-### Running Unsigned Builds
-
-Current release builds are not signed or notarized, so macOS Gatekeeper may block the app the first time you open it. You can allow it with one of these options:
-
-1. Remove the quarantine attribute:
-
-   ```bash
-   xattr -cr /Applications/GrokBuild.app
-   ```
-
-2. **Right-click** `GrokBuild.app`, choose **Open**, then confirm **Open**. This bypasses the block for that app.
-3. Open **System Settings -> Privacy & Security** and click **Open Anyway** next to the blocked app message.
-
-## Development Requirements
-
-- macOS 26+
+### Requirements
+- macOS 26 (Tahoe) or later
 - The `grok` CLI installed (usually at `~/.grok/bin/grok`)
-- You must be logged in to the CLI (`grok login` in your terminal)
+- Logged in to the CLI — run `grok login` in your terminal
 
-## Running Unsigned Builds
+### Opening unsigned builds
 
-macOS Gatekeeper blocks unsigned apps by default. To open an unsigned build:
+Current release builds are not signed or notarized, so macOS Gatekeeper may block the app the first time you open it. Allow it with any one of these:
 
-1. **Right-click** the app → **Open** (bypasses the block once)
-2. Or remove the quarantine attribute:
+1. **Right-click** `GrokBuild.app` → **Open**, then confirm **Open** (bypasses the block once).
+2. Open **System Settings → Privacy & Security** and click **Open Anyway** next to the blocked-app message.
+3. Remove the quarantine attribute:
    ```bash
    xattr -cr /Applications/GrokBuild.app
    ```
-3. Or go to **System Settings → Privacy & Security** and click **"Open Anyway"** next to the blocked app message.
 
-## To Build & Run (Minimal Setup)
+## Building from source
+
+### Minimal setup
 
 You only need **Xcode Command Line Tools**:
 
@@ -66,67 +83,34 @@ You only need **Xcode Command Line Tools**:
 xcode-select --install
 ```
 
-This is sufficient for:
-
-- Compiling the app (`swift build`)
-- Creating the `.app` bundle and DMG
-- Codesigning and notarization
-
-### Quick commands
+That is enough to compile the app, create the `.app` bundle and DMG, and codesign/notarize.
 
 ```bash
-make build          # Build the release binary
-make run            # Build + launch the menu bar app
+make build          # build the release binary
+make run            # build + launch the menu bar app
+make app            # create dist/GrokBuild.app
+make dmg            # create the .app + DMG
 ```
 
-## For Development (Recommended)
+### Recommended for SwiftUI work
 
-If you're going to edit the SwiftUI code, install the **full Xcode** IDE from the App Store.
+If you plan to edit the SwiftUI code, install the **full Xcode** IDE from the App Store for:
 
-**Why full Xcode is worth it:**
-- SwiftUI Previews (live canvas) — this is the biggest advantage
-- Much better debugging tools (view hierarchy, environment inspection, etc.)
-- Smoother experience when working with complex SwiftUI views
+- SwiftUI Previews (live canvas) — the biggest advantage
+- Better debugging tools (view hierarchy, environment inspection)
+- A smoother experience with complex SwiftUI views
 
-You can still build from the terminal with `make` or `swift build` even with full Xcode installed.
+You can still build from the terminal with `make` or `swift build` with full Xcode installed.
 
-## Other Required Tools
-
-- `make` (pre-installed on macOS)
-- The `grok` CLI (the app is just a UI frontend for it)
-
-### Packaging
-
-```bash
-make app     # creates dist/GrokBuild.app
-make dmg     # creates .app + DMG
-```
-
-The build process uses the menu bar icon from `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/`. It is automatically copied into the app bundle. (Project root PNGs are still supported as a fallback.)
-
-### Optional tools (for distribution)
-
-- A **Developer ID Application** certificate (for `make signed`)
-- App Store Connect access for notarization
-
-See [BUILDING.md](BUILDING.md) for full packaging, signing, and notarization instructions (including GitHub Actions).
-
-## Building
-
-See [BUILDING.md](BUILDING.md) for full instructions.
-
-### Quick start
-
-```bash
-make build          # build the app
-make run            # builds + launches the menu bar app
-```
-
-For signed + notarized builds:
+### Signing & notarization
 
 ```bash
 make signed SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 make notarize NOTARY_PROFILE=AC_PASSWORD
 ```
 
-The menu bar icon is in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/`. The build process copies the appropriate PNGs into the app bundle. (Raw PNGs at the project root also work as fallback.)
+Signing requires a **Developer ID Application** certificate, and notarization requires App Store Connect access. See [BUILDING.md](BUILDING.md) for full packaging, signing, and notarization instructions (including GitHub Actions).
+
+### Notes
+
+The menu bar icon lives in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/` and is copied into the app bundle during the build (raw PNGs at the project root also work as a fallback).

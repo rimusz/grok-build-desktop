@@ -85,7 +85,7 @@ macOS may block unsigned apps.
 **Quick ways to open:**
 
 1. Right-click `GrokBuild.app` (or the DMG) → **Open**
-2. Terminal: `xattr -cr /path/to/GrokBuild.app`
+2. Terminal: `xattr -cr ~/Applications/GrokBuild.app`
 3. System Settings → Privacy & Security → "Open Anyway"
 
 ---

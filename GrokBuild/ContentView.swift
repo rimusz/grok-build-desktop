@@ -7,7 +7,17 @@ struct ContentView: View {
         let store: ChatStore
         var workspace: Workspace
         var title: String
+        /// The grok session id to resume, known even before the process is started (lazy
+        /// restore). Stays valid across LRU teardown so the session can be re-resumed on reopen.
+        var grokSessionID: String?
     }
+
+    /// Most-recently-used session ids (front = most recent). Drives the LRU cap on live
+    /// `grok agent stdio` processes so steady-state memory doesn't scale with session count.
+    @State private var recentSessionOrder: [UUID] = []
+    /// Maximum number of sessions kept connected (with a live grok process) at once. Others
+    /// are torn down and re-resumed on demand when reopened.
+    private let maxConnectedSessions = 4
 
     @State private var workspaceStore = WorkspaceStore()
     @State private var placeholderStore = ChatStore()
@@ -397,7 +407,11 @@ struct ContentView: View {
     }
 
     private func isSessionEmpty(_ session: LiveSession) -> Bool {
-        !session.store.hasUserMessages && session.store.grokSessionId == nil
+        // A lazily-restored session has no loaded messages and no *live* process id yet, but it
+        // carries the saved grok id — it is NOT empty and must survive purges/persistence.
+        !session.store.hasUserMessages
+            && session.store.grokSessionId == nil
+            && session.grokSessionID == nil
     }
 
     private func purgeEmptySessions(keeping id: UUID? = nil) {
@@ -494,13 +508,16 @@ struct ContentView: View {
     private func persistSessionLayout() {
         var records: [SavedSessionRecord] = []
         for session in liveSessions {
-            guard session.store.hasUserMessages || session.store.grokSessionId != nil else { continue }
+            // Prefer the live process id, but fall back to the known/saved id so lazily-restored
+            // (not-yet-started) and LRU-evicted sessions are still persisted and resumable.
+            let grokSessionID = session.store.grokSessionId ?? session.grokSessionID
+            guard session.store.hasUserMessages || grokSessionID != nil else { continue }
             let existing = sessionLayout.records.first { $0.id == session.id }
             records.append(
                 SavedSessionRecord(
                     id: session.id,
                     workspaceID: session.workspace.id,
-                    grokSessionID: session.store.grokSessionId,
+                    grokSessionID: grokSessionID,
                     title: sessionTitle(for: session),
                     lastAccessed: existing?.lastAccessed ?? Date()
                 )
@@ -591,8 +608,9 @@ struct ContentView: View {
 
         var titleCacheByWorkspace: [Workspace.ID: [String: String]] = [:]
         let cli = GrokCLIService()
-        var shouldStartGrokProcesses = true
 
+        // Lazy restore: only rebuild lightweight session state here (no grok process spawn).
+        // The selected session is started below; the rest resume on demand when first opened.
         for record in restorableRecords {
             guard let workspace = workspaceStore.workspaces.first(where: { $0.id == record.workspaceID }) else { continue }
             guard liveSessions.first(where: { $0.id == record.id }) == nil else { continue }
@@ -605,26 +623,16 @@ struct ContentView: View {
                 cache: &titleCacheByWorkspace,
                 cli: cli
             )
+            store.prepare(workspace: workspace)
             liveSessions.append(
-                LiveSession(id: record.id, store: store, workspace: workspace, title: title)
-            )
-
-            if let grokID = record.grokSessionID, shouldStartGrokProcesses {
-                let info = GrokSessionInfo(
-                    id: grokID,
-                    created: "",
-                    updated: "",
-                    status: "",
-                    summary: title == SessionTitle.defaultTitle ? "" : title
+                LiveSession(
+                    id: record.id,
+                    store: store,
+                    workspace: workspace,
+                    title: title,
+                    grokSessionID: record.grokSessionID
                 )
-                await store.start(workspace: workspace, resumeSession: info)
-                persistSessionLayout()
-                if store.authRequiredMessage != nil || isAuthenticationFailure(store.connectionState) {
-                    shouldStartGrokProcesses = false
-                }
-            } else {
-                store.prepare(workspace: workspace)
-            }
+            )
             restoredSessionCount += 1
         }
 
@@ -643,12 +651,6 @@ struct ContentView: View {
         } else if let first = liveSessions.first {
             selectSession(first.id)
         }
-    }
-
-    private func isAuthenticationFailure(_ state: GrokProcessState) -> Bool {
-        guard case .failed(let message) = state else { return false }
-        let lowercased = message.lowercased()
-        return lowercased.contains("login") || lowercased.contains("auth")
     }
 
     private func restoredTitle(
@@ -863,8 +865,55 @@ struct ContentView: View {
         previewMessageID = nil
         previewDiffs = []
         autoSelectLatestDiffMessage()
-        Task { await refreshProjectChangedFiles() }
+        noteSessionUsed(id)
+        Task {
+            await ensureSessionStarted(id)
+            await enforceConnectionCap()
+            await refreshProjectChangedFiles()
+        }
         persistSessionLayout()
+    }
+
+    /// Move a session to the front of the most-recently-used order.
+    private func noteSessionUsed(_ id: UUID) {
+        recentSessionOrder.removeAll { $0 == id }
+        recentSessionOrder.insert(id, at: 0)
+    }
+
+    /// Lazily start (resume) a session's grok process the first time it's opened. Sessions
+    /// restored at launch are only `prepare`d; this brings one online on demand.
+    private func ensureSessionStarted(_ id: UUID) async {
+        guard let idx = liveSessions.firstIndex(where: { $0.id == id }) else { return }
+        let session = liveSessions[idx]
+        // Already connected (starting/ready/busy) — nothing to do.
+        guard session.store.connectionState == .idle else { return }
+        // No saved grok session → leave prepared; sending the first message starts a fresh one.
+        guard let grokID = session.grokSessionID else { return }
+        let info = GrokSessionInfo(
+            id: grokID,
+            created: "",
+            updated: "",
+            status: "",
+            summary: session.title == SessionTitle.defaultTitle ? "" : session.title
+        )
+        await session.store.start(workspace: session.workspace, resumeSession: info)
+        persistSessionLayout()
+    }
+
+    /// Tear down grok processes for sessions beyond the MRU cap so the resident footprint
+    /// stays bounded. The selected/most-recent sessions and any actively-working session are kept.
+    private func enforceConnectionCap() async {
+        let keep = Set(recentSessionOrder.prefix(maxConnectedSessions))
+        for index in liveSessions.indices {
+            let session = liveSessions[index]
+            if keep.contains(session.id) || session.id == selectedSessionID { continue }
+            // Skip sessions with no live process, and never interrupt one mid-turn.
+            guard session.store.connectionState != .idle,
+                  session.store.connectionState != .busy else { continue }
+            // Preserve the grok id so the session can be re-resumed when reopened.
+            liveSessions[index].grokSessionID = session.store.grokSessionId ?? session.grokSessionID
+            await session.store.shutdown()
+        }
     }
 
     private func startNewSessionForCurrentProject() {
@@ -881,11 +930,14 @@ struct ContentView: View {
             SessionNameStore.name(for: session.id)
                 ?? (session.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : session.summary)
         } ?? SessionTitle.defaultTitle
-        liveSessions.append(LiveSession(id: id, store: store, workspace: workspace, title: title))
+        liveSessions.append(
+            LiveSession(id: id, store: store, workspace: workspace, title: title, grokSessionID: resumeSession?.id)
+        )
         selectedSessionID = id
         selectedWorkspaceID = workspace.id
         previewMessageID = nil
         previewDiffs = []
+        noteSessionUsed(id)
         Task { await refreshProjectChangedFiles() }
         sessionListRevision &+= 1
         persistSessionLayout()
@@ -894,6 +946,7 @@ struct ContentView: View {
         } else {
             store.prepare(workspace: workspace)
         }
+        await enforceConnectionCap()
         return id
     }
 

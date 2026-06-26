@@ -10,6 +10,7 @@ enum SettingsTab: Hashable {
     case mcpServers
     case browser
     case computerUse
+    case models
     case permissions
 }
 
@@ -38,6 +39,7 @@ struct SettingsView: View {
 
             TabView(selection: $selectedTab) {
                 HooksSettingsPane(workspace: store.currentWorkspace)
+                    .settingsPaneColumn()
                     .tabItem {
                         Label("Hooks", systemImage: "curlybraces")
                     }
@@ -46,6 +48,7 @@ struct SettingsView: View {
                 PluginsSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
+                .settingsPaneColumn()
                 .tabItem {
                     Label("Plugins", systemImage: "shippingbox")
                 }
@@ -54,12 +57,14 @@ struct SettingsView: View {
                 MarketplaceSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
+                .settingsPaneColumn()
                 .tabItem {
                     Label("Marketplace", systemImage: "storefront")
                 }
                 .tag(SettingsTab.marketplace)
 
                 SkillsSettingsPane(workspace: store.currentWorkspace)
+                    .settingsPaneColumn()
                     .tabItem {
                         Label("Skills", systemImage: "wand.and.stars")
                     }
@@ -68,6 +73,7 @@ struct SettingsView: View {
                 MCPSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
+                .settingsPaneColumn()
                 .tabItem {
                     Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
                 }
@@ -85,9 +91,17 @@ struct SettingsView: View {
                     Task { await store.reloadConfiguration() }
                 }
                 .tabItem {
-                    Label("Computer Use", systemImage: "display")
+                    Label("Computer Use", systemImage: "desktopcomputer")
                 }
                 .tag(SettingsTab.computerUse)
+
+                CustomModelsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Models", systemImage: "cpu")
+                }
+                .tag(SettingsTab.models)
 
                 PermissionsSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -138,6 +152,21 @@ private func settingsPaneHeader(_ title: String, subtitle: String, systemImage: 
     SettingsPaneHeader(title: title, subtitle: subtitle, systemImage: systemImage, color: color)
 }
 
+private extension View {
+    /// Matches the padded, max-width-760, top-left column layout used by the
+    /// Browser / Computer Use / Models panes, so list-based panes (Hooks,
+    /// Plugins, Marketplace, Skills, MCP Servers) share the same chrome.
+    func settingsPaneColumn() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 private struct BrowserSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
@@ -169,7 +198,6 @@ private struct BrowserSettingsPane: View {
                 header
                 browserToolsCard
                 statusCard
-                installCard
                 browserRuntimeCard
                 applyCard
             }
@@ -230,16 +258,12 @@ private struct BrowserSettingsPane: View {
                 Divider()
 
                 settingRow("Backend") {
-                    Picker("", selection: $backend) {
-                        ForEach(BrowserBackendID.allCases) { backend in
-                            Text(backend.displayName).tag(backend.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 190)
+                    Text(BrowserBackendID(rawValue: backend)?.displayName ?? backend)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 190, alignment: .leading)
                 }
 
-                Text("For the normal setup, leave the browser runtime choice below on Managed Runtime and click Apply after enabling tools. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
+                Text("For the normal setup: install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -247,7 +271,7 @@ private struct BrowserSettingsPane: View {
     }
 
     private var statusCard: some View {
-        settingsCard(title: "Backend Status", systemImage: "checkmark.seal", tint: browserStatusColor) {
+        settingsCard(title: status.isReady ? "2. agent-browser Ready" : "2. Install agent-browser CLI", systemImage: status.isReady ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     Label(browserStatusTitle, systemImage: browserStatusIcon)
@@ -258,6 +282,38 @@ private struct BrowserSettingsPane: View {
                         Task { await refreshStatus() }
                     }
                     .disabled(isChecking)
+                }
+
+                if status.isReady {
+                    Text("The required local CLI is available. You can use its managed browser runtime, or optionally attach it to an existing Chrome instance below.")
+                        .foregroundStyle(.secondary)
+
+                } else if status.isInstalled {
+                    Text("The required local CLI is installed. If you want the recommended managed browser runtime, install it in the next section.")
+                        .foregroundStyle(.secondary)
+
+                } else {
+                    Text("GrokBuild needs the local `agent-browser` CLI to expose browser tools. The browser runtime itself is optional and chosen in the next section.")
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        installCommandRow(title: "Homebrew", command: "brew install agent-browser")
+                        installCommandRow(title: "npm", command: "npm install -g agent-browser")
+                    }
+
+                    Text("GrokBuild never installs this silently. Use these commands only when you want to set up browser automation on this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let installOutput, !installOutput.isEmpty {
+                    Text(installOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
                 }
 
                 if let path = status.executablePath {
@@ -286,48 +342,6 @@ private struct BrowserSettingsPane: View {
                 } label: {
                     Label("Open agent-browser Docs", systemImage: "safari")
                 }
-            }
-        }
-    }
-
-    private var installCard: some View {
-        settingsCard(title: status.isReady ? "2. agent-browser Ready" : "2. Install agent-browser CLI", systemImage: status.isReady ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
-            VStack(alignment: .leading, spacing: 12) {
-                if status.isReady {
-                    Label("agent-browser is installed and diagnostics passed.", systemImage: "checkmark.circle.fill")
-                        .font(.headline)
-                        .foregroundStyle(.green)
-
-                    Text("The required local CLI is available. You can use its managed browser runtime, or optionally attach it to an existing Chrome instance below.")
-                        .foregroundStyle(.secondary)
-
-                } else if status.isInstalled {
-                    Text("The required local CLI is installed. If you want the recommended managed browser runtime, install it in the next section.")
-                        .foregroundStyle(.secondary)
-
-                } else {
-                    Text("GrokBuild needs the local `agent-browser` CLI to expose browser tools. The browser runtime itself is optional and chosen in the next section.")
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        installCommandRow(title: "Homebrew", command: "brew install agent-browser")
-                        installCommandRow(title: "npm", command: "npm install -g agent-browser")
-                    }
-                }
-
-                if let installOutput, !installOutput.isEmpty {
-                    Text(installOutput)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-                        .foregroundStyle(.secondary)
-                }
-
-                Text("GrokBuild never installs this silently. Use these buttons only when you want to set up browser automation on this Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -1459,7 +1473,6 @@ private struct ComputerUseSettingsPane: View {
 
     @AppStorage(ComputerUseSettingsKeys.enabled) private var enabled = ComputerUseSettings.defaults.enabled
     @AppStorage(ComputerUseSettingsKeys.backend) private var backend = ComputerUseSettings.defaults.backend.rawValue
-    @AppStorage(ComputerUseSettingsKeys.agentDesktopPath) private var agentDesktopPath = ComputerUseSettings.defaults.agentDesktopPath
     @AppStorage(ComputerUseSettingsKeys.permissionPolicy) private var permissionPolicy = ComputerUseSettings.defaults.permissionPolicy.rawValue
     @AppStorage(ComputerUseSettingsKeys.maxSteps) private var maxSteps = ComputerUseSettings.defaults.maxSteps
     @AppStorage(ComputerUseSettingsKeys.commandTimeoutSeconds) private var commandTimeoutSeconds = ComputerUseSettings.defaults.commandTimeoutSeconds
@@ -1472,9 +1485,7 @@ private struct ComputerUseSettingsPane: View {
     @State private var permissionStatus = ComputerUsePermissionStatus.unavailable
     @State private var appliedSettings = ComputerUseSettingsStore.loadApplied()
     @State private var isChecking = false
-    @State private var isInstalling = false
     @State private var isRequestingPermissions = false
-    @State private var installOutput: String?
     @State private var permissionOutput: String?
     @State private var showDiagnosticsLog = false
     @State private var showPermissionDiagnostics = false
@@ -1486,7 +1497,6 @@ private struct ComputerUseSettingsPane: View {
                 header
                 enableCard
                 statusCard
-                installCard
                 permissionsCard
                 safetyCard
                 applyCard
@@ -1501,14 +1511,11 @@ private struct ComputerUseSettingsPane: View {
             appliedSettings = ComputerUseSettingsStore.loadApplied()
             await refreshStatus()
         }
-        .onChange(of: agentDesktopPath) { _, _ in
-            Task { await refreshStatus() }
-        }
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: "display.badge.checkmark")
+            Image(systemName: "desktopcomputer")
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(.purple)
                 .frame(width: 44, height: 44)
@@ -1543,16 +1550,12 @@ private struct ComputerUseSettingsPane: View {
                 Divider()
 
                 settingRow("Backend") {
-                    Picker("", selection: $backend) {
-                        ForEach(ComputerUseBackendID.allCases) { backend in
-                            Text(backend.displayName).tag(backend.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 190)
+                    Text(ComputerUseBackendID(rawValue: backend)?.displayName ?? backend)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 190, alignment: .leading)
                 }
 
-                Text("For the normal setup, install agent-desktop, grant Accessibility permission, then click Apply after enabling tools. GrokBuild will also install a small Computer Use skill into your Grok skills folder.")
+                Text("agent-desktop ships inside GrokBuild, so there's nothing to install. Grant Accessibility permission below, then click Apply after enabling tools. GrokBuild will also install a small Computer Use skill into your Grok skills folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1560,7 +1563,7 @@ private struct ComputerUseSettingsPane: View {
     }
 
     private var statusCard: some View {
-        computerSettingsCard(title: "Backend Status", systemImage: "checkmark.seal", tint: backendStatusColor) {
+        computerSettingsCard(title: backendStatus.isInstalled ? "2. agent-desktop Ready" : "2. agent-desktop Unavailable", systemImage: backendStatus.isInstalled ? "checkmark.circle" : "exclamationmark.triangle", tint: installCardTint) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     Label(backendStatusTitle, systemImage: backendStatusIcon)
@@ -1571,6 +1574,14 @@ private struct ComputerUseSettingsPane: View {
                         Task { await refreshStatus() }
                     }
                     .disabled(isChecking)
+                }
+
+                if backendStatus.isInstalled {
+                    Text("agent-desktop ships inside GrokBuild and shares the app's permissions. Grant macOS permissions below, then enable and apply Computer Use.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("agent-desktop is bundled with GrokBuild, so this is unexpected. Reinstalling the app from the latest release should restore it.")
+                        .foregroundStyle(.secondary)
                 }
 
                 if let path = backendStatus.executablePath {
@@ -1598,63 +1609,6 @@ private struct ComputerUseSettingsPane: View {
                     NSWorkspace.shared.open(URL(string: "https://github.com/lahfir/agent-desktop")!)
                 } label: {
                     Label("Open agent-desktop Docs", systemImage: "safari")
-                }
-            }
-        }
-    }
-
-    private var installCard: some View {
-        computerSettingsCard(title: backendStatus.isInstalled ? "2. agent-desktop Ready" : "2. Install agent-desktop CLI", systemImage: backendStatus.isInstalled ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
-            VStack(alignment: .leading, spacing: 12) {
-                if backendStatus.isInstalled {
-                    Label("agent-desktop is installed and available.", systemImage: "checkmark.circle.fill")
-                        .font(.headline)
-                        .foregroundStyle(.green)
-
-                    Text("The required local CLI is available. Grant macOS permissions below, then enable and apply Computer Use.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("GrokBuild needs the local `agent-desktop` CLI to expose desktop-control tools. It is never installed silently.")
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        installCommandRow(title: "npm", command: "npm install -g agent-desktop")
-                    }
-                }
-
-                HStack {
-                    Button(isInstalling ? "Installing..." : (backendStatus.isInstalled ? "Reinstall / Repair CLI" : "Install agent-desktop")) {
-                        Task { await installAgentDesktop() }
-                    }
-                    .disabled(isInstalling)
-
-                    Button("Copy Install Command") {
-                        copyToPasteboard("npm install -g agent-desktop")
-                    }
-
-                    if !agentDesktopPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button("Clear Custom Path") {
-                            agentDesktopPath = ""
-                        }
-                    }
-                }
-
-                if let installOutput, !installOutput.isEmpty {
-                    Text(installOutput)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-                        .foregroundStyle(.secondary)
-                }
-
-                settingRow("Custom path") {
-                    HStack {
-                        TextField("Optional path to agent-desktop", text: $agentDesktopPath)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Choose...") { chooseAgentDesktop() }
-                    }
                 }
             }
         }
@@ -1827,7 +1781,7 @@ private struct ComputerUseSettingsPane: View {
         ComputerUseSettings(
             enabled: enabled,
             backend: ComputerUseBackendID(rawValue: backend) ?? ComputerUseSettings.defaults.backend,
-            agentDesktopPath: agentDesktopPath,
+            agentDesktopPath: "",
             permissionPolicy: ComputerUsePermissionPolicy(rawValue: permissionPolicy)
                 ?? ComputerUseSettings.defaults.permissionPolicy,
             maxSteps: maxSteps,
@@ -1916,20 +1870,6 @@ private struct ComputerUseSettingsPane: View {
         permissionStatus = await permissions
     }
 
-    private func installAgentDesktop() async {
-        isInstalling = true
-        installOutput = "Running `npm install -g agent-desktop`..."
-        defer { isInstalling = false }
-
-        do {
-            let output = try await ComputerUseService.installAgentDesktop()
-            installOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            await refreshStatus()
-        } catch {
-            installOutput = error.localizedDescription
-        }
-    }
-
     private func requestPermissions() async {
         isRequestingPermissions = true
         permissionOutput = "Requesting Accessibility permission for GrokBuild..."
@@ -1940,19 +1880,6 @@ private struct ComputerUseSettingsPane: View {
             await refreshStatus()
         } catch {
             permissionOutput = error.localizedDescription
-        }
-    }
-
-    private func chooseAgentDesktop() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose agent-desktop"
-        panel.message = "Choose the agent-desktop executable."
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-
-        if panel.runModal() == .OK, let url = panel.url {
-            agentDesktopPath = url.path
         }
     }
 
@@ -2047,6 +1974,1164 @@ private struct ComputerUseSettingsPane: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 14).fill(tint.map { $0.opacity(0.07) } ?? Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(tint.map { $0.opacity(0.22) } ?? Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+}
+
+private struct CustomModelsSettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    @State private var providers: [Provider] = []
+    @State private var models: [CustomModel] = []
+    @State private var editingID: String?
+    @State private var draft = CustomModel(id: "", model: "", baseURL: "")
+    @State private var revealKey = false
+    @State private var editingProviderID: String?
+    @State private var providerDraft = Provider(id: "", name: "", baseURL: "")
+    @State private var revealProviderKey = false
+    @State private var errorMessage: String?
+    @State private var statusMessage: String?
+
+    // Fetched-model state, keyed by the provider id the models were fetched for.
+    @State private var fetchedModels: [String: [FetchedModel]] = [:]
+    @State private var fetchingProviderID: String?
+    @State private var fetchErrorProviderID: String?
+    @State private var fetchErrorMessage: String?
+
+    // Drives programmatic scrolling to an editor when a card opens it.
+    @State private var scrollTarget: String?
+    // True while the provider editor holds a not-yet-saved template (so we lock the id and
+    // prompt for the key). Cleared once the provider is saved or the draft is reset.
+    @State private var providerDraftFromPreset = false
+    // The editor cards are hidden until the user explicitly opens them via Install / Add /
+    // Edit, keeping the default view a clean list.
+    @State private var showingProviderEditor = false
+    @State private var showingModelEditor = false
+    // The provider-template catalog is collapsed by default so "Add Provider" stays compact.
+    @State private var showingProviderTemplates = false
+    @State private var showModelRemovalConfirmation = false
+    @State private var modelPendingRemoval: CustomModel?
+    @State private var showProviderRemovalConfirmation = false
+    @State private var providerPendingRemoval: Provider?
+
+    private var isEditing: Bool { editingID != nil }
+    private var isEditingProvider: Bool { editingProviderID != nil }
+    /// While any editor (provider or model) is open we lock the list cards so the user
+    /// finishes or cancels the current edit before starting another action.
+    private var isAnyEditorOpen: Bool { showingProviderEditor || showingModelEditor }
+    private var isAtModelLimit: Bool { models.count >= CustomModelStore.maxModels }
+
+    /// True when a provider has a non-empty fetched-model list ready for "Add model".
+    private func hasFetchedModels(for provider: Provider) -> Bool {
+        !(fetchedModels[provider.id]?.isEmpty ?? true)
+    }
+
+    private func addModelDisabledReason(for provider: Provider) -> String? {
+        if isAtModelLimit {
+            return "Maximum of \(CustomModelStore.maxModels) custom models reached. Remove a model first."
+        }
+        if !hasFetchedModels(for: provider) {
+            return "Fetch models from this provider first."
+        }
+        return nil
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    providerTemplatesCard
+                    if showingProviderEditor {
+                        providerEditorCard
+                            .id(providerEditorAnchor)
+                            .padding(.horizontal, 16)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    yourProvidersCard
+                    if showingModelEditor {
+                        editorCard
+                            .id(modelEditorAnchor)
+                            .padding(.horizontal, 16)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                    modelListCard
+                }
+                .animation(.easeInOut(duration: 0.2), value: showingProviderEditor)
+                .animation(.easeInOut(duration: 0.2), value: showingModelEditor)
+                .animation(.easeInOut(duration: 0.2), value: showingProviderTemplates)
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 22)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(target, anchor: .top)
+                }
+                scrollTarget = nil
+            }
+        }
+        .task { reload() }
+        .alert("Remove Model?", isPresented: $showModelRemovalConfirmation) {
+            Button("Cancel", role: .cancel) {
+                modelPendingRemoval = nil
+            }
+            Button("Remove", role: .destructive) {
+                if let model = modelPendingRemoval {
+                    remove(model)
+                }
+                modelPendingRemoval = nil
+            }
+        } message: {
+            if let model = modelPendingRemoval {
+                let label = model.name.isEmpty ? model.id : model.name
+                Text("Remove \(label) from ~/.grok/config.toml? You won't be able to use /model \(model.id) until you add it again.")
+            }
+        }
+        .alert("Remove Provider?", isPresented: $showProviderRemovalConfirmation) {
+            Button("Cancel", role: .cancel) {
+                providerPendingRemoval = nil
+            }
+            Button("Remove", role: .destructive) {
+                if let provider = providerPendingRemoval {
+                    removeProvider(provider)
+                }
+                providerPendingRemoval = nil
+            }
+        } message: {
+            if let provider = providerPendingRemoval {
+                Text("Remove \(provider.name) from your providers? This cannot be undone.")
+            }
+        }
+    }
+
+    private let providerEditorAnchor = "provider-editor"
+    private let modelEditorAnchor = "model-editor"
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "cpu")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.purple)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Custom Models")
+                    .font(.title3.weight(.semibold))
+                Text("Install a provider (endpoint + API key) once, then add one or more OpenAI-compatible models per provider to ~/.grok/config.toml. Use them with /model <id> in chat.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    // MARK: - Provider templates (catalog)
+
+    /// `true` when a preset has already been installed as one of `providers`.
+    private func isPresetInstalled(_ preset: ProviderPreset) -> Bool {
+        providers.contains { $0.id == preset.provider.id }
+    }
+
+    private var providerTemplatesCard: some View {
+        settingsCard(title: "1. Add Provider", systemImage: "square.grid.2x2", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showingProviderTemplates.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(showingProviderTemplates ? 90 : 0))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Provider Templates")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Popular OpenAI-compatible providers. Install one to add it to “Your Providers”, then enter its API key.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Group {
+                    if showingProviderTemplates {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 220), spacing: 10, alignment: .top)],
+                            alignment: .leading,
+                            spacing: 10
+                        ) {
+                            ForEach(ProviderPreset.allCases) { preset in
+                                providerTemplateTile(preset)
+                            }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    Divider()
+
+                    Button {
+                        beginNewProvider()
+                    } label: {
+                        Label("Create custom provider…", systemImage: "plus")
+                    }
+                    .controlSize(.small)
+                }
+                .disabled(isAnyEditorOpen)
+                .opacity(isAnyEditorOpen ? 0.45 : 1)
+            }
+        }
+    }
+
+    private func providerTemplateTile(_ preset: ProviderPreset) -> some View {
+        let template = preset.provider
+        let installed = isPresetInstalled(preset)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(preset.displayName)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if installed {
+                    Label("Installed", systemImage: "checkmark.circle.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.green)
+                        .labelStyle(.titleAndIcon)
+                }
+            }
+            Text(template.baseURL)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !template.suggestedModel.isEmpty {
+                Text("e.g. \(template.suggestedModel)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Button(installed ? "Configure" : "Install") { addProviderPreset(preset) }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .tint(installed ? .secondary : .purple)
+                .padding(.top, 2)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .textBackgroundColor)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(installed ? Color.green.opacity(0.4) : Color(nsColor: .separatorColor).opacity(0.6))
+        )
+    }
+
+    // MARK: - Your providers (installed)
+
+    private var yourProvidersCard: some View {
+        settingsCard(title: "2. Your Providers", systemImage: "server.rack", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                if providers.isEmpty {
+                    Text("No providers installed yet. Install one from a template above, or create a custom provider.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("A provider holds a base URL and a shared API key. Multiple models can reuse the same provider.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(providers) { provider in
+                        providerRow(provider)
+                        if provider.id != providers.last?.id { Divider() }
+                    }
+                }
+            }
+            .disabled(isAnyEditorOpen)
+            .opacity(isAnyEditorOpen ? 0.45 : 1)
+        }
+    }
+
+    private func providerRow(_ provider: Provider) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(provider.name)
+                        .font(.headline)
+                    providerKeyBadge(for: provider)
+                    let count = models.filter { $0.providerID == provider.id }.count
+                    if count > 0 {
+                        Text("\(count) model\(count == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let fetched = fetchedModels[provider.id] {
+                        if fetched.isEmpty {
+                            Text("0 available")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text("\(fetched.count) available")
+                                .font(.caption2)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                }
+                Text(provider.baseURL)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if fetchErrorProviderID == provider.id, let message = fetchErrorMessage {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 6) {
+                    let addModelDisabled = addModelDisabledReason(for: provider) != nil
+                    Button("Add model") { beginNewModel(forProvider: provider) }
+                        .controlSize(.small)
+                        .disabled(addModelDisabled)
+                        .help(addModelDisabledReason(for: provider) ?? "Add a model from the fetched list.")
+                    Button("Edit") { beginEditingProvider(provider) }
+                        .controlSize(.small)
+                    let inUse = modelsUsing(provider).count
+                    Button("Remove", role: .destructive) {
+                        providerPendingRemoval = provider
+                        showProviderRemovalConfirmation = true
+                    }
+                        .controlSize(.small)
+                        .disabled(inUse > 0)
+                        .help(inUse > 0
+                            ? "Remove its \(inUse) model\(inUse == 1 ? "" : "s") first before removing this provider."
+                            : "Remove this provider.")
+                }
+                let canFetchProvider = canFetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
+                let highlightFetch = !hasFetchedModels(for: provider) && canFetchProvider
+                Group {
+                    if highlightFetch {
+                        Button {
+                            fetchModels(for: provider)
+                        } label: {
+                            if fetchingProviderID == provider.id {
+                                HStack(spacing: 5) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Fetching…")
+                                }
+                            } else {
+                                Label("Fetch models", systemImage: "arrow.down.circle.fill")
+                            }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                    } else {
+                        Button {
+                            fetchModels(for: provider)
+                        } label: {
+                            if fetchingProviderID == provider.id {
+                                HStack(spacing: 5) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Fetching…")
+                                }
+                            } else {
+                                Label("Fetch models", systemImage: "arrow.down.circle")
+                            }
+                        }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .disabled(
+                    fetchingProviderID == provider.id
+                    || !canFetchProvider
+                )
+                .help(highlightFetch
+                    ? "Fetch the provider's model list before adding a model."
+                    : "Refresh the provider's model list.")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func providerKeyBadge(for provider: Provider) -> some View {
+        if provider.hasInlineKey {
+            badge("Key saved", color: .green, systemImage: "key.fill")
+        } else if provider.isLocalEndpoint {
+            badge("Local", color: .blue, systemImage: "desktopcomputer")
+        } else {
+            badge("No key", color: .orange, systemImage: "exclamationmark.triangle")
+        }
+    }
+
+    private var providerEditorTitle: String {
+        if isEditingProvider { return "Edit Provider" }
+        if providerDraftFromPreset { return "Install \(providerDraft.name)" }
+        return "Add New Provider"
+    }
+
+    /// True when the provider needs a key but none is set yet (drives the "enter your key" prompt).
+    private var providerNeedsKey: Bool {
+        !providerDraft.isLocalEndpoint
+            && providerDraft.apiKey.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var providerEditorCard: some View {
+        settingsCard(title: providerEditorTitle, systemImage: "plus.square.on.square", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                if providerDraftFromPreset && providerNeedsKey {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "key.fill")
+                            .foregroundStyle(.orange)
+                        Text("Enter your \(providerDraft.name) API key, then tap **Add Provider** to install it. Nothing is saved until you do.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.12)))
+                }
+
+                settingRow("Provider id") {
+                    TextField("zai", text: $providerDraft.id)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isEditingProvider || providerDraftFromPreset)
+                        .frame(maxWidth: 280)
+                }
+                settingRow("Name") {
+                    TextField("Z.ai (GLM)", text: $providerDraft.name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                }
+                settingRow("Base URL") {
+                    TextField("https://api.z.ai/api/coding/paas/v4", text: $providerDraft.baseURL)
+                        .textFieldStyle(.roundedBorder)
+                }
+                settingRow("API key") {
+                    HStack(spacing: 8) {
+                        Group {
+                            if revealProviderKey {
+                                TextField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
+                            } else {
+                                SecureField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
+                            }
+                        }
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                        Button {
+                            revealProviderKey.toggle()
+                        } label: {
+                            Image(systemName: revealProviderKey ? "eye.slash" : "eye")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Local/open servers don't need a key.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                providerFetchRow
+
+                HStack(spacing: 10) {
+                    Button(isEditingProvider ? "Save Provider" : "Add Provider") { saveProviderDraft() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(providerDraft.validationError != nil)
+                    Button("Cancel") { resetProviderDraft() }
+                    Spacer()
+                    if let error = providerDraft.validationError, !providerDraft.id.isEmpty {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+    }
+
+    /// "Fetch models" control + result/error summary inside the provider editor.
+    @ViewBuilder
+    private var providerFetchRow: some View {
+        let draftKey = providerDraft.id.isEmpty ? "__draft__" : providerDraft.id
+        let isFetching = fetchingProviderID == draftKey
+        let fetched = fetchedModels[draftKey] ?? []
+        let canFetchNow = canFetch(
+            baseURL: providerDraft.baseURL,
+            apiKey: providerDraft.apiKey
+        )
+
+        Divider()
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Button {
+                    fetchModelsForDraft()
+                } label: {
+                    if isFetching {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Fetching…")
+                        }
+                    } else {
+                        Label("Fetch models", systemImage: "arrow.down.circle")
+                    }
+                }
+                .controlSize(.small)
+                .disabled(!canFetchNow || isFetching)
+
+                if !fetched.isEmpty {
+                    Text("\(fetched.count) model\(fetched.count == 1 ? "" : "s") available")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+
+            Text("Queries \(ProviderModelFetcher.modelsURL(for: providerDraft.baseURL)?.absoluteString ?? "the provider")/… to list available models. Enter the API key first (local servers need none).")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            if fetchErrorProviderID == draftKey, let message = fetchErrorMessage {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+            }
+
+            if !fetched.isEmpty {
+                Text("Tip: Save this provider, then use “Add model” to pick from the fetched list.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Model list
+
+    private var modelListCard: some View {
+        settingsCard(title: "3. Models", systemImage: "list.bullet.rectangle", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("\(models.count)/\(CustomModelStore.maxModels) custom models")
+                    .font(.caption)
+                    .foregroundStyle(isAtModelLimit ? .orange : .secondary)
+
+                Group {
+                    if models.isEmpty {
+                        Text("No models yet. Use “Add model” on a provider above.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(models) { model in
+                            modelRow(model)
+                            if model.id != models.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .disabled(isAnyEditorOpen)
+                .opacity(isAnyEditorOpen ? 0.45 : 1)
+
+                if let statusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+
+    private func modelRow(_ model: CustomModel) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.name.isEmpty ? model.id : model.name)
+                    .font(.headline)
+                Text("/model \(model.id)  ·  \(model.model)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(model.baseURL)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            HStack(spacing: 6) {
+                Button("Edit") { beginEditing(model) }
+                    .controlSize(.small)
+                Button("Remove", role: .destructive) {
+                    modelPendingRemoval = model
+                    showModelRemovalConfirmation = true
+                }
+                    .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func badge(_ text: String, color: Color, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.16)))
+            .foregroundStyle(color)
+    }
+
+    // MARK: - Editor
+
+    private var editorCard: some View {
+        settingsCard(title: isEditing ? "Edit Model" : "Add Model", systemImage: "plus.rectangle.on.rectangle", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                settingRow("Provider") {
+                    Picker("", selection: providerSelection) {
+                        Text("None (enter endpoint manually)").tag("")
+                        ForEach(providers) { provider in
+                            Text(provider.name).tag(provider.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 280)
+                    .disabled(providers.isEmpty)
+                }
+
+                if let provider = providers.first(where: { $0.id == draft.providerID }) {
+                    settingRow("") {
+                        HStack(spacing: 8) {
+                            Button {
+                                fetchModels(for: provider)
+                            } label: {
+                                if fetchingProviderID == provider.id {
+                                    HStack(spacing: 5) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Fetching…")
+                                    }
+                                } else {
+                                    Label("Fetch models from \(provider.name)", systemImage: "arrow.down.circle")
+                                }
+                            }
+                            .controlSize(.small)
+                            .disabled(
+                                fetchingProviderID == provider.id
+                                || !canFetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
+                            )
+                            if fetchErrorProviderID == provider.id, let message = fetchErrorMessage {
+                                Text(message)
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+
+                    settingRow("Choose model") {
+                        HStack(spacing: 8) {
+                            Picker("", selection: fetchedModelSelection) {
+                                Text(fetchedModelsForDraft.isEmpty ? "Fetch models first…" : "Pick a fetched model…").tag("")
+                                ForEach(fetchedModelsForDraft) { fetched in
+                                    Text(fetched.id).tag(fetched.id)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: 280)
+                            .disabled(fetchedModelsForDraft.isEmpty)
+                            if !fetchedModelsForDraft.isEmpty {
+                                Text("\(fetchedModelsForDraft.count)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+
+                settingRow("Model id") {
+                    TextField(modelIDPlaceholder, text: $draft.id)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(true)
+                        .frame(maxWidth: 280)
+                }
+                settingRow("Model") {
+                    TextField(modelNamePlaceholder, text: $draft.model)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                        .onChange(of: draft.model) { _, newValue in
+                            guard !isEditing else { return }
+                            syncModelID(from: newValue)
+                        }
+                }
+                settingRow("Display name") {
+                    TextField(displayNamePlaceholder, text: $draft.name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                }
+
+                if draft.providerID == nil {
+                    // Manual endpoint + credential when not linked to a provider.
+                    settingRow("Base URL") {
+                        TextField("https://api.example.com/v1", text: $draft.baseURL)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    settingRow("API key") {
+                        HStack(spacing: 8) {
+                            Group {
+                                if revealKey {
+                                    TextField("sk-… (leave empty for local servers)", text: $draft.apiKey)
+                                } else {
+                                    SecureField("sk-… (leave empty for local servers)", text: $draft.apiKey)
+                                }
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 280)
+                            Button {
+                                revealKey.toggle()
+                            } label: {
+                                Image(systemName: revealKey ? "eye.slash" : "eye")
+                            }
+                            .buttonStyle(.borderless)
+                            .help(revealKey ? "Hide API key" : "Show API key")
+                        }
+                    }
+                    Text("Stored as api_key in ~/.grok/config.toml (plain text on disk). Local/open servers don't need a key.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let provider = providers.first(where: { $0.id == draft.providerID }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "link")
+                            .foregroundStyle(.secondary)
+                        Text("Endpoint and key come from \(provider.name) (\(provider.baseURL)).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button(isEditing ? "Save Changes" : "Add Model") { saveDraft() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(draftSaveBlockedReason != nil)
+                    Button("Cancel") { resetDraft() }
+                    Spacer()
+                    if let error = draftSaveBlockedReason, !draft.model.isEmpty || !draft.id.isEmpty {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The draft with provider endpoint/credentials applied, used for validation and preview.
+    private var resolvedDraft: CustomModel {
+        draft.resolved(using: providers)
+    }
+
+    /// Binding for the fetched-model picker. Selecting an id fills the model name and derives
+    /// the config.toml model id from it.
+    private var fetchedModelSelection: Binding<String> {
+        Binding(
+            get: {
+                let current = draft.model.trimmingCharacters(in: .whitespaces)
+                return fetchedModelsForDraft.contains(where: { $0.id == current }) ? current : ""
+            },
+            set: { newValue in
+                guard !isEditing else {
+                    if !newValue.isEmpty { draft.model = newValue }
+                    return
+                }
+                if newValue.isEmpty {
+                    draft.model = ""
+                    draft.id = ""
+                    draft.name = ""
+                    return
+                }
+                draft.model = newValue
+                syncModelID(from: newValue)
+            }
+        )
+    }
+
+    /// Derives `draft.id` from a provider model name, uniquifying against existing models.
+    private func syncModelID(from modelName: String) {
+        let base = CustomModel.suggestedID(from: modelName)
+        draft.id = uniquifiedModelID(base)
+    }
+
+    /// Returns a model id that does not collide with an existing entry (unless editing that entry).
+    private func uniquifiedModelID(_ base: String) -> String {
+        let trimmed = base.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return "" }
+        var candidate = trimmed
+        var suffix = 2
+        while models.contains(where: { $0.id == candidate && $0.id != editingID }) {
+            candidate = "\(trimmed)-\(suffix)"
+            suffix += 1
+        }
+        return candidate
+    }
+
+    /// Validation for the save button, including duplicate-id checks when adding a new model.
+    private var draftSaveBlockedReason: String? {
+        if let error = resolvedDraft.validationError { return error }
+        if !isEditing, models.count >= CustomModelStore.maxModels {
+            return "GrokBuild supports up to \(CustomModelStore.maxModels) custom models."
+        }
+        if !isEditing, models.contains(where: { $0.id == draft.id }) {
+            return "A model with this id already exists."
+        }
+        return nil
+    }
+
+    /// Binding that maps the model's optional providerID to the picker's string tag.
+    private var providerSelection: Binding<String> {
+        Binding(
+            get: { draft.providerID ?? "" },
+            set: { newValue in
+                if newValue.isEmpty {
+                    draft.providerID = nil
+                } else {
+                    draft.providerID = newValue
+                    if !isEditing {
+                        draft.model = ""
+                        draft.id = ""
+                        draft.name = ""
+                    }
+                }
+            }
+        )
+    }
+
+    // MARK: - Actions
+
+    private func reload() {
+        providers = ProviderStore.load()
+        let snapshot = CustomModelStore.load()
+        // Re-attach providerID to parsed models by matching their base_url to a known provider,
+        // since config.toml itself doesn't store the provider link. Then re-resolve the
+        // endpoint/credential from the provider so a model reflects a key added to its provider
+        // even if its own config.toml table predates that key.
+        models = snapshot.models.map { model in
+            var m = model
+            if m.providerID == nil,
+               let match = providers.first(where: { $0.baseURL == model.baseURL }) {
+                m.providerID = match.id
+            }
+            return m.resolved(using: providers)
+        }
+    }
+
+    // MARK: - Provider actions
+
+    /// Installing a template stages it in the editor (key empty) instead of persisting it
+    /// immediately — the provider is only saved once the user enters a key and taps Save.
+    /// If the preset is already installed, jump to editing the existing one.
+    private func addProviderPreset(_ preset: ProviderPreset) {
+        if let existing = providers.first(where: { $0.id == preset.provider.id }) {
+            beginEditingProvider(existing)
+            return
+        }
+        providerDraft = preset.provider
+        editingProviderID = nil
+        providerDraftFromPreset = true
+        revealProviderKey = false
+        showingProviderEditor = true
+        showingModelEditor = false
+        scrollTarget = providerEditorAnchor
+    }
+
+    private func beginNewProvider() {
+        providerDraft = Provider(id: "", name: "", baseURL: "")
+        editingProviderID = nil
+        providerDraftFromPreset = false
+        revealProviderKey = false
+        showingProviderEditor = true
+        showingModelEditor = false
+        scrollTarget = providerEditorAnchor
+    }
+
+    private func beginEditingProvider(_ provider: Provider) {
+        providerDraft = provider
+        editingProviderID = provider.id
+        providerDraftFromPreset = false
+        revealProviderKey = false
+        showingProviderEditor = true
+        showingModelEditor = false
+        scrollTarget = providerEditorAnchor
+    }
+
+    private func resetProviderDraft() {
+        providerDraft = Provider(id: "", name: "", baseURL: "")
+        editingProviderID = nil
+        providerDraftFromPreset = false
+        revealProviderKey = false
+        showingProviderEditor = false
+    }
+
+    private func saveProviderDraft() {
+        guard providerDraft.validationError == nil else { return }
+        if let editingProviderID, let index = providers.firstIndex(where: { $0.id == editingProviderID }) {
+            providers[index] = providerDraft
+            // Propagate endpoint/credential changes to models linked to this provider.
+            models = models.map { $0.providerID == editingProviderID ? $0.resolved(using: providers) : $0 }
+        } else if let index = providers.firstIndex(where: { $0.id == providerDraft.id }) {
+            providers[index] = providerDraft
+        } else {
+            providers.append(providerDraft)
+        }
+        ProviderStore.save(providers)
+        resetProviderDraft()
+        persist()
+    }
+
+    /// Models currently attached to (in use by) the given provider.
+    private func modelsUsing(_ provider: Provider) -> [CustomModel] {
+        models.filter { $0.providerID == provider.id }
+    }
+
+    private func removeProvider(_ provider: Provider) {
+        // A provider can only be removed once none of its models reference it, so the
+        // user explicitly removes the models first and we never orphan config.toml tables.
+        guard modelsUsing(provider).isEmpty else { return }
+        providers.removeAll { $0.id == provider.id }
+        ProviderStore.save(providers)
+        if editingProviderID == provider.id { resetProviderDraft() }
+        fetchedModels[provider.id] = nil
+        persist()
+    }
+
+    // MARK: - Fetch models
+
+    /// Fetches the model catalog for the provider draft currently being edited/created.
+    private func fetchModelsForDraft() {
+        let draftSnapshot = providerDraft
+        guard !draftSnapshot.baseURL.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        fetchModels(
+            forProviderID: draftSnapshot.id,
+            baseURL: draftSnapshot.baseURL,
+            apiKey: draftSnapshot.apiKey
+        )
+    }
+
+    /// Fetches the model catalog for an already-installed provider.
+    private func fetchModels(for provider: Provider) {
+        fetchModels(
+            forProviderID: provider.id,
+            baseURL: provider.baseURL,
+            apiKey: provider.apiKey
+        )
+    }
+
+    private func fetchModels(forProviderID id: String, baseURL: String, apiKey: String) {
+        let key = id.isEmpty ? "__draft__" : id
+        fetchingProviderID = key
+        fetchErrorProviderID = nil
+        fetchErrorMessage = nil
+        Task {
+            do {
+                let result = try await ProviderModelFetcher.fetch(baseURL: baseURL, apiKey: apiKey)
+                await MainActor.run {
+                    fetchedModels[key] = result
+                    fetchingProviderID = nil
+                }
+            } catch {
+                await MainActor.run {
+                    fetchingProviderID = nil
+                    fetchErrorProviderID = key
+                    fetchErrorMessage = (error as? ProviderModelFetcher.FetchError)?.errorDescription
+                        ?? error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Models fetched for the provider linked to the current model draft, if any.
+    private var fetchedModelsForDraft: [FetchedModel] {
+        guard let id = draft.providerID else { return [] }
+        return fetchedModels[id] ?? []
+    }
+
+    private func canFetch(baseURL: String, apiKey: String) -> Bool {
+        guard ProviderModelFetcher.modelsURL(for: baseURL) != nil else { return false }
+        let isLocal = Provider(id: "", name: "", baseURL: baseURL).isLocalEndpoint
+        // Local servers accept no key; remote ones need an inline key.
+        if isLocal { return true }
+        return ProviderModelFetcher.resolveKey(apiKey: apiKey) != nil
+    }
+
+    // MARK: - Model actions
+
+    private func beginNewModel(forProvider provider: Provider) {
+        guard addModelDisabledReason(for: provider) == nil else { return }
+        draft = CustomModel(
+            id: "",
+            model: "",
+            baseURL: "",
+            providerID: provider.id
+        )
+        editingID = nil
+        revealKey = false
+        errorMessage = nil
+        showingModelEditor = true
+        showingProviderEditor = false
+        scrollTarget = modelEditorAnchor
+    }
+
+    /// Opens the model editor for a brand-new manual model (no provider preselected).
+    private func beginNewModel() {
+        draft = freshModelDraft()
+        editingID = nil
+        revealKey = false
+        errorMessage = nil
+        showingModelEditor = true
+        showingProviderEditor = false
+        scrollTarget = modelEditorAnchor
+    }
+
+    private func beginEditing(_ model: CustomModel) {
+        draft = model
+        editingID = model.id
+        revealKey = false
+        errorMessage = nil
+        showingModelEditor = true
+        showingProviderEditor = false
+        scrollTarget = modelEditorAnchor
+    }
+
+    private func resetDraft() {
+        draft = freshModelDraft()
+        editingID = nil
+        revealKey = false
+        showingModelEditor = false
+    }
+
+    /// A blank model draft that defaults to the first provider (if any) so the endpoint is
+    /// inherited and the manual base_url/key fields stay hidden. Prefills the provider's
+    /// suggested starting model.
+    private func freshModelDraft() -> CustomModel {
+        if let provider = providers.first {
+            return CustomModel(
+                id: "",
+                model: "",
+                baseURL: "",
+                providerID: provider.id
+            )
+        }
+        return CustomModel(id: "", model: "", baseURL: "")
+    }
+
+    /// The provider currently linked to the model draft, if any.
+    private var draftProvider: Provider? {
+        guard let id = draft.providerID else { return nil }
+        return providers.first { $0.id == id }
+    }
+
+    private var modelIDPlaceholder: String {
+        let trimmed = draft.model.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            return CustomModel.suggestedID(from: trimmed)
+        }
+        return "my-model-id"
+    }
+
+    private var modelNamePlaceholder: String {
+        if draftProvider != nil {
+            return "Pick a model above"
+        }
+        return "provider-model-name"
+    }
+
+    private var displayNamePlaceholder: String {
+        let trimmed = draft.model.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            return "\(trimmed) (optional)"
+        }
+        return "Display name (optional)"
+    }
+
+    private func saveDraft() {
+        guard draftSaveBlockedReason == nil else { return }
+        var updated = models
+        if let editingID, let index = updated.firstIndex(where: { $0.id == editingID }) {
+            updated[index] = draft
+        } else {
+            updated.append(draft)
+        }
+        models = updated
+        resetDraft()
+        persist()
+    }
+
+    private func remove(_ model: CustomModel) {
+        models.removeAll { $0.id == model.id }
+        if editingID == model.id { resetDraft() }
+        persist()
+    }
+
+    private func persist() {
+        do {
+            let resolvedModels = models.map { $0.resolved(using: providers) }
+            // The default model is owned by grok itself (it rewrites [models].default
+            // when you switch models in a session), so we never set it here — we just
+            // preserve whatever is already in config.toml.
+            let snapshot = CustomModelStore.load()
+            try CustomModelStore.save(models: resolvedModels, defaultModelID: snapshot.defaultModelID)
+            statusMessage = "Saved to ~/.grok/config.toml."
+            errorMessage = nil
+            onConfigurationChanged()
+        } catch {
+            errorMessage = "Failed to save config.toml: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    // MARK: - Card / row helpers
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        tint: Color? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(tint ?? .primary)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(tint.map { $0.opacity(0.07) } ?? Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(tint.map { $0.opacity(0.22) } ?? Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+
+    private func settingRow<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 }
 

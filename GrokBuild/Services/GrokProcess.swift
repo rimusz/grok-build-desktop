@@ -185,6 +185,11 @@ final class GrokProcess: @unchecked Sendable {
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
     private(set) var currentModelId: String?
+    /// Set when a model switch fails or times out; the UI can surface and then clear it.
+    var modelSwitchError: String?
+    /// Set when the failed switch is recoverable by starting a new session (the agent
+    /// returned `MODEL_SWITCH_INCOMPATIBLE_AGENT` / suggested `start_new_session`).
+    var modelSwitchNeedsNewSession = false
 
     // Populated from initialize modelState so we use real models from grok CLI
     private(set) var availableModelsInfo: [(id: String, name: String, contextTokens: Int?)] = []
@@ -499,20 +504,38 @@ final class GrokProcess: @unchecked Sendable {
 
     func setModel(_ modelId: String) {
         guard let sid = sessionId else { return }
+        let previous = currentModelId
+        // Optimistically reflect the selection; revert if grok rejects/stalls the switch.
+        currentModelId = modelId
         Task {
-            if let res = try? await sendRequest(method: "session/set_model", params: [
-                "sessionId": sid,
-                "modelId": modelId
-            ]) as? [String: Any] {
-                if let meta = res["_meta"] as? [String: Any],
+            do {
+                // Switching is a control op and should be fast — bound it so a stalled
+                // set_model can never leave the UI stuck.
+                let res = try await sendRequestWithTimeout(method: "session/set_model", params: [
+                    "sessionId": sid,
+                    "modelId": modelId
+                ], seconds: 12) as? [String: Any]
+                if let meta = res?["_meta"] as? [String: Any],
                    let model = meta["model"] as? [String: Any],
                    let selected = model["Ok"] as? String {
                     currentModelId = selected
                 } else {
                     currentModelId = modelId
                 }
-            } else {
-                currentModelId = modelId
+            } catch {
+                // Timed out or failed — restore the previous selection and surface the error.
+                currentModelId = previous
+                let ns = error as NSError
+                let code = ns.userInfo["acpErrorCode"] as? String
+                let suggestion = ns.userInfo["acpSuggestion"] as? String
+                if code == "MODEL_SWITCH_INCOMPATIBLE_AGENT" || suggestion == "start_new_session" {
+                    // The agent's message already explains the incompatibility and the fix.
+                    modelSwitchError = ns.localizedDescription
+                    modelSwitchNeedsNewSession = true
+                } else {
+                    modelSwitchError = "Couldn't switch to \(modelId): \(ns.localizedDescription)"
+                    modelSwitchNeedsNewSession = false
+                }
             }
         }
     }
@@ -824,7 +847,18 @@ final class GrokProcess: @unchecked Sendable {
             if let pending {
                 pending.timeoutTask?.cancel()
                 if let err = j["error"] {
-                    pending.continuation.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: [NSLocalizedDescriptionKey: "\(err)"]))
+                    var info: [String: Any] = [:]
+                    if let dict = err as? [String: Any] {
+                        // Prefer the agent's human-readable message over dumping the raw error object.
+                        info[NSLocalizedDescriptionKey] = (dict["message"] as? String) ?? "\(err)"
+                        if let data = dict["data"] as? [String: Any] {
+                            if let code = data["code"] as? String { info["acpErrorCode"] = code }
+                            if let suggestion = data["suggestion"] as? String { info["acpSuggestion"] = suggestion }
+                        }
+                    } else {
+                        info[NSLocalizedDescriptionKey] = "\(err)"
+                    }
+                    pending.continuation.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: info))
                 } else {
                     pending.continuation.resume(returning: j["result"])
                 }
