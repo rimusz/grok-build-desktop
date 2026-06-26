@@ -78,7 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .appendingPathComponent("GrokBuild")
         let pidFile = support.appendingPathComponent("instance.pid")
 
-        if let content = try? String(contentsOf: pidFile).trimmingCharacters(in: .whitespacesAndNewlines),
+        if let content = try? String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
            let filePid = Int32(content),
            filePid == getpid() {
             try? FileManager.default.removeItem(at: pidFile)

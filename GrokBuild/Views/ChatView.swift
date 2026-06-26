@@ -1108,7 +1108,7 @@ struct PermissionCard: View {
 
         do {
             // Try to get current content as "old"
-            let oldContent = (try? String(contentsOfFile: path)) ?? ""
+            let oldContent = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
             try oldContent.write(to: oldURL, atomically: true, encoding: .utf8)
             try proposed.write(to: newURL, atomically: true, encoding: .utf8)
 
