@@ -560,13 +560,37 @@ enum CustomModelStore {
     // MARK: - TOML helpers
 
     private static func stripComment(_ line: String) -> String {
-        var insideString = false
+        var quote: Character? = nil
+        var escaped = false
         var result = ""
+
         for char in line {
-            if char == "\"" { insideString.toggle() }
-            if char == "#" && !insideString { break }
+            if let q = quote {
+                if q == "\"" {
+                    if escaped {
+                        escaped = false
+                    } else if char == "\\" {
+                        escaped = true
+                    } else if char == "\"" {
+                        quote = nil
+                    }
+                } else if char == q {
+                    quote = nil
+                }
+                result.append(char)
+                continue
+            }
+
+            if char == "\"" || char == "'" {
+                quote = char
+                result.append(char)
+                continue
+            }
+
+            if char == "#" { break }
             result.append(char)
         }
+
         return result
     }
 
