@@ -531,10 +531,6 @@ enum ComputerUseService {
         return "GrokBuild"
     }
 
-    static func installAgentDesktop() async throws -> String {
-        try await run(["/usr/bin/env", "npm", "install", "-g", "agent-desktop"], timeout: 180)
-    }
-
     static func commandPreview(_ args: [String], settings: ComputerUseSettings = ComputerUseSettingsStore.load()) -> [String] {
         [executableURL(settings: settings)?.path ?? "agent-desktop"] + args
     }

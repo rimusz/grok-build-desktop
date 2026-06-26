@@ -40,6 +40,15 @@ if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
     cp -R "$ROOT_DIR/GrokBuild/Resources/Skills/." "$APP_BUNDLE/Contents/Resources/Skills/"
 fi
 
+# Copy the Grok brand mark so GrokBrandIcon.mark() resolves it in the dev bundle
+# (menu bar icon + welcome state). Without this the app falls back to an SF Symbol.
+ICONSET_DIR="$ROOT_DIR/GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset"
+for icon in MenuBarIcon.png MenuBarIcon@2x.png MenuBarIcon@3x.png; do
+    if [ -f "$ICONSET_DIR/$icon" ]; then
+        cp "$ICONSET_DIR/$icon" "$APP_BUNDLE/Contents/Resources/$icon"
+    fi
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 chmod +x "$SCRIPT_DIR/bundle-agent-desktop.sh" "$SCRIPT_DIR/codesign-app-bundle.sh"
 "$SCRIPT_DIR/bundle-agent-desktop.sh" "$APP_BUNDLE/Contents/MacOS" || true
@@ -62,7 +71,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleVersion</key>
     <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

@@ -11,6 +11,7 @@
 #   make test           # Run unit tests
 #   make run            # Build + launch the menu bar app
 #   make app            # Package .app into dist/
+#   make install        # Package .app and copy to /Applications/
 #   make dmg            # Package .app + DMG (auto-notarizes if NOTARY_PROFILE set)
 #   make signed         # Codesigned build
 #   make notarize       # Notarize (NOTARY_PROFILE=...)
@@ -35,15 +36,16 @@ NC     := \033[0m
 
 RELEASE_TYPE   ?= unsigned
 
-.PHONY: help build test run app dmg signed clean open notarize release
+.PHONY: help build test run app install dmg dmg-package signed clean open notarize release bump-build-number
 
 help: ## Show this help
 	@echo "GrokBuild macOS Build Commands"
 	@echo ""
 	@echo "  $(YELLOW)make build$(NC)            Build release binary (SwiftPM)"
 	@echo "  $(YELLOW)make test$(NC)             Run unit tests"
-	@echo "  $(YELLOW)make run$(NC)             Build + launch the menu bar app"
+	@echo "  $(YELLOW)make run$(NC)              Build + launch the menu bar app"
 	@echo "  $(YELLOW)make app$(NC)              Package .app into dist/"
+	@echo "  $(YELLOW)make install$(NC)          Package .app and copy to /Applications/"
 	@echo "  $(YELLOW)make dmg$(NC)              Build .app + DMG (auto-notarizes + re-DMG if NOTARY_PROFILE set)"
 	@echo "  $(YELLOW)make signed$(NC)           Codesigned release"
 	@echo "  $(YELLOW)make notarize$(NC)         Notarize (NOTARY_PROFILE=...)"
@@ -57,7 +59,11 @@ help: ## Show this help
 	@echo "Release example: make release"
 	@echo "Notarized release: make release RELEASE_TYPE=notarized SIGN_IDENTITY=... NOTARY_PROFILE=..."
 
-build: ## Build using SwiftPM (Release) - recommended
+bump-build-number: ## Increment BUILD_NUMBER
+	@chmod +x scripts/bump-build-number.sh
+	@./scripts/bump-build-number.sh
+
+build: bump-build-number ## Build using SwiftPM (Release) - recommended
 	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (release)...$(NC)"
 	@swift build -c release
 	@chmod +x .build/release/GrokBuild 2>/dev/null || true
@@ -86,20 +92,25 @@ run: build ## Build + launch the menu bar app
 dmg: ## Build the .app and package it into a DMG.
 	@if [ -n "$(NOTARY_PROFILE)" ]; then \
 		$(MAKE) notarize; \
-		echo "$(GREEN)==> Re-creating DMG with stapled app...$(NC)"; \
-		DMG_PATH="dist/$(APP_NAME)-macOS.dmg"; \
-		rm -f "$$DMG_PATH"; \
-		DMG_STAGING="dist/dmg-staging"; \
-		rm -rf "$$DMG_STAGING" 2>/dev/null || true; mkdir -p "$$DMG_STAGING"; \
-		cp -R "dist/$(APP_NAME).app" "$$DMG_STAGING/"; \
-		ln -s /Applications "$$DMG_STAGING/Applications"; \
-		hdiutil create -volname "$(APP_NAME)" -srcfolder "$$DMG_STAGING" -ov -format UDZO "$$DMG_PATH"; \
-		rm -rf "$$DMG_STAGING"; \
+		$(MAKE) dmg-package; \
 	else \
-		SIGN_OPTS=""; \
-		if [ -n "$(SIGN_IDENTITY)" ]; then SIGN_OPTS="--sign \"$(SIGN_IDENTITY)\""; fi; \
-		./scripts/build-macos-app.sh $$SIGN_OPTS; \
+		if [ -n "$(SIGN_IDENTITY)" ]; then \
+			./scripts/build-macos-app.sh --sign "$(SIGN_IDENTITY)"; \
+		else \
+			./scripts/build-macos-app.sh; \
+		fi; \
 	fi
+
+dmg-package: ## Package dist/$(APP_NAME).app into a DMG (no rebuild)
+	@echo "$(GREEN)==> Packaging DMG from dist/$(APP_NAME).app...$(NC)"
+	@DMG_PATH="dist/$(APP_NAME)-macOS.dmg"; \
+	DMG_STAGING="dist/dmg-staging"; \
+	rm -f "$$DMG_PATH"; \
+	rm -rf "$$DMG_STAGING" 2>/dev/null || true; mkdir -p "$$DMG_STAGING"; \
+	cp -R "dist/$(APP_NAME).app" "$$DMG_STAGING/"; \
+	ln -s /Applications "$$DMG_STAGING/Applications"; \
+	hdiutil create -volname "$(APP_NAME)" -srcfolder "$$DMG_STAGING" -ov -format UDZO "$$DMG_PATH"; \
+	rm -rf "$$DMG_STAGING"
 	@echo "$(GREEN)==> DMG is at dist/$(APP_NAME)-macOS.dmg$(NC)"
 
 clean: ## Remove all build products and dist
@@ -118,10 +129,24 @@ open: ## Open the built app from dist/
 
 # Convenience aliases
 bundle: app
-install: app
-	@echo "Copying to /Applications (may require sudo)..."
+install: app ## Copy .app to /Applications/ (clears quarantine xattrs for unsigned builds)
+	@if [ ! -d "dist/$(APP_NAME).app" ]; then \
+		echo "dist/$(APP_NAME).app not found. Run 'make app' first."; \
+		exit 1; \
+	fi
+	@if [ ! -w /Applications ]; then \
+		echo "Cannot write to /Applications. Try: sudo make install"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)==> Installing to /Applications/$(APP_NAME).app...$(NC)"
+	@rm -rf "/Applications/$(APP_NAME).app"
 	@cp -R "dist/$(APP_NAME).app" /Applications/
-	@echo "Installed to /Applications/$(APP_NAME).app"
+	@if [ -z "$(SIGN_IDENTITY)" ]; then xattr -cr "/Applications/$(APP_NAME).app"; fi
+	@if [ ! -f "/Applications/$(APP_NAME).app/Contents/MacOS/$(APP_NAME)" ]; then \
+		echo "Install failed: /Applications/$(APP_NAME).app was not created."; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)==> Installed to /Applications/$(APP_NAME).app$(NC)"
 
 # Packaging (SPM-based)
 # The script handles creating the .app bundle + DMG and supports signing.
@@ -130,10 +155,12 @@ install: app
 signed: app
 
 # If someone runs `make app` with SIGN_IDENTITY, pass it through
-app: ## Build the .app bundle (with icon). Use SIGN_IDENTITY=... for codesigning
-	@SCRIPT_OPTS=""; \
-	if [ -n "$(SIGN_IDENTITY)" ]; then SCRIPT_OPTS="--sign \"$(SIGN_IDENTITY)\""; fi; \
-	./scripts/build-macos-app.sh $$SCRIPT_OPTS
+app: bump-build-number ## Build the .app bundle (with icon). Use SIGN_IDENTITY=... for codesigning
+	@if [ -n "$(SIGN_IDENTITY)" ]; then \
+		./scripts/build-macos-app.sh --sign "$(SIGN_IDENTITY)"; \
+	else \
+		./scripts/build-macos-app.sh; \
+	fi
 	# Icon copy is now handled inside the script
 	@echo "$(GREEN)==> .app ready in dist/$(APP_NAME).app$(NC)"
 

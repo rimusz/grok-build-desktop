@@ -7,7 +7,7 @@ description: Develops the GrokBuild macOS app in this repository. Use when editi
 
 ## Read first
 
-- `AGENTS.md` and `RTK.md` at the repository root
+- `AGENTS.md` and `ARCHITECTURE.md` at the repository root
 - `BUILDING.md` for packaging and release
 
 ## Build
@@ -17,7 +17,7 @@ make run
 make test
 ```
 
-SwiftPM target `GrokBuild`, macOS 14+. No Xcode project required.
+SwiftPM target `GrokBuild`, macOS 26+. No Xcode project required.
 
 ## Where to change things
 

@@ -2,7 +2,7 @@
 
 ## What this is
 
-Menu-bar macOS app wrapping `grok agent stdio`. SwiftPM executable target `GrokBuild`, macOS 14+, AppKit entry via `main.swift` + `AppDelegate`.
+Menu-bar macOS app wrapping `grok agent stdio`. SwiftPM executable target `GrokBuild`, macOS 26+, AppKit entry via `main.swift` + `AppDelegate`.
 
 ## Layout
 

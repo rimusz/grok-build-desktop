@@ -18,7 +18,6 @@ SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AC_PASSWORD}"
 
 app_version="$(tr -d '[:space:]' < VERSION)"
-build_number="$(tr -d '[:space:]' < BUILD_NUMBER)"
 default_tag="v${app_version}"
 input_version="${RELEASE_VERSION:-}"
 
@@ -47,16 +46,7 @@ if ! gh auth status >/dev/null 2>&1; then
 fi
 
 create_dmg() {
-  local dmg_path="dist/${APP_NAME}-macOS.dmg"
-  local staging="dist/dmg-staging"
-
-  rm -f "$dmg_path"
-  rm -rf "$staging"
-  mkdir -p "$staging"
-  cp -R "dist/${APP_NAME}.app" "$staging/"
-  ln -s /Applications "$staging/Applications"
-  hdiutil create -volname "$APP_NAME" -srcfolder "$staging" -ov -format UDZO "$dmg_path"
-  rm -rf "$staging"
+  make dmg-package
 }
 
 write_release_notes() {
@@ -85,7 +75,7 @@ macOS may block unsigned apps.
 **Quick ways to open:**
 
 1. Right-click `GrokBuild.app` (or the DMG) → **Open**
-2. Terminal: `xattr -cr /path/to/GrokBuild.app`
+2. Terminal: `xattr -cr ~/Applications/GrokBuild.app`
 3. System Settings → Privacy & Security → "Open Anyway"
 
 ---
@@ -96,14 +86,21 @@ EOF
   fi
 }
 
+read_build_number() {
+  build_number="$(tr -d '[:space:]' < BUILD_NUMBER)"
+  tracked_version="$(tr -d '[:space:]' < BUILD_NUMBER_VERSION)"
+
+  if [ "$tracked_version" != "$app_version" ]; then
+    echo "ERROR: BUILD_NUMBER_VERSION ($tracked_version) does not match VERSION ($app_version) after build."
+    exit 1
+  fi
+}
+
 if [ "$RELEASE_TYPE" = "notarized" ]; then
   if [ -z "$SIGN_IDENTITY" ]; then
     echo "ERROR: SIGN_IDENTITY is required for notarized releases."
     exit 1
   fi
-  release_name="${tag_name} (${build_number}) (Notarized)"
-else
-  release_name="${tag_name} (${build_number}) (Unsigned)"
 fi
 
 zip_path="dist/${APP_NAME}.app.zip"
@@ -119,7 +116,17 @@ if [ "$RELEASE_TYPE" = "notarized" ]; then
   echo "==> Creating DMG from notarized app..."
   create_dmg
 else
-  make dmg
+  make app
+  echo "==> Creating DMG..."
+  create_dmg
+fi
+
+read_build_number
+
+if [ "$RELEASE_TYPE" = "notarized" ]; then
+  release_name="${tag_name} (${build_number}) (Notarized)"
+else
+  release_name="${tag_name} (${build_number}) (Unsigned)"
 fi
 
 echo "==> Zipping app..."

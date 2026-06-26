@@ -86,6 +86,22 @@ struct ChatView: View {
                 ErrorBanner(message: error)
             }
 
+            if let switchError = store.modelSwitchError {
+                ModelSwitchBanner(
+                    message: switchError,
+                    canStartNewSession: store.modelSwitchNeedsNewSession,
+                    onStartNewSession: {
+                        store.modelSwitchError = nil
+                        store.modelSwitchNeedsNewSession = false
+                        Task { await store.startNewSession() }
+                    },
+                    onDismiss: {
+                        store.modelSwitchError = nil
+                        store.modelSwitchNeedsNewSession = false
+                    }
+                )
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -102,7 +118,7 @@ struct ChatView: View {
                         }
 
                         if store.isGrokking {
-                            GrokkingIndicator()
+                            GrokkingIndicator(startedAt: store.turnStartedAt)
                                 .padding(.leading, 2)
                         }
 
@@ -548,7 +564,7 @@ struct ChatView: View {
         let title = computerUseEnabled
             ? (isConfigured ? "Computer Use On" : "Computer Use Setup Needed")
             : "Computer Use Off"
-        let icon = computerUseEnabled && isConfigured ? "display.badge.checkmark" : "display"
+        let icon = computerUseEnabled && isConfigured ? "desktopcomputer.badge.checkmark" : "desktopcomputer"
         let tint: Color = computerUseEnabled ? (isConfigured ? .purple : .orange) : .secondary
 
         return Menu {
@@ -888,6 +904,41 @@ private struct ErrorBanner: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
             Spacer()
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+    }
+}
+
+private struct ModelSwitchBanner: View {
+    let message: String
+    var canStartNewSession: Bool = false
+    var onStartNewSession: () -> Void = {}
+    var onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .foregroundStyle(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Spacer()
+            if canStartNewSession {
+                Button("Start New Session", action: onStartNewSession)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
         }
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))

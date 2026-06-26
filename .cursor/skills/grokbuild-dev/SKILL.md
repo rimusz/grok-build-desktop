@@ -16,7 +16,7 @@ xed .             # open Package.swift in Xcode (optional)
 
 ## Before UI work
 
-1. Read `RTK.md` for file layout.
+1. Read `ARCHITECTURE.md` for file layout.
 2. Prefer XcodeBuildMCP or `make` over ad-hoc `xcodebuild` (no `.xcodeproj`).
 3. After Swift changes, run `swift build` or `make build`.
 

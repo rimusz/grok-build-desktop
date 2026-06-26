@@ -28,9 +28,9 @@ if [ "$IDENTITY" = "-" ]; then
     codesign --force --sign - --timestamp=none "$APP_BUNDLE"
 else
     echo "==> Signing app bundle with identity: $IDENTITY"
-    codesign --force --deep --sign "$IDENTITY" \
-        --options runtime \
-        --entitlements /dev/stdin <<'ENTITLEMENTS' "$APP_BUNDLE"
+    ENTITLEMENTS_PLIST="$(mktemp)"
+    trap 'rm -f "$ENTITLEMENTS_PLIST"' EXIT
+    cat > "$ENTITLEMENTS_PLIST" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -39,5 +39,9 @@ else
     <true/>
 </dict>
 </plist>
-ENTITLEMENTS
+EOF
+    codesign --force --deep --sign "$IDENTITY" \
+        --options runtime \
+        --entitlements "$ENTITLEMENTS_PLIST" \
+        "$APP_BUNDLE"
 fi

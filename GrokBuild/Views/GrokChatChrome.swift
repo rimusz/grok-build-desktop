@@ -76,13 +76,27 @@ struct SessionGearPopover: View {
 }
 
 struct GrokkingIndicator: View {
+    /// When the current turn started; used to show elapsed time and a "warming up" hint.
+    var startedAt: Date?
+
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.45)) { context in
             let phase = Int(context.date.timeIntervalSince1970 / 0.45) % 3
+            let elapsed = startedAt.map { max(0, context.date.timeIntervalSince($0)) }
             HStack(spacing: 4) {
                 Text("Grokking")
                 Text(String(repeating: ".", count: phase + 1))
                     .frame(width: 16, alignment: .leading)
+                if let elapsed, elapsed >= 3 {
+                    Text("· \(Int(elapsed))s")
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                    // Local models can take a while to load on first use.
+                    if elapsed >= 8 {
+                        Text("· warming up the model may take a moment")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             }
             .font(.subheadline)
             .foregroundStyle(.secondary)

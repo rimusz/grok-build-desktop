@@ -191,7 +191,7 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

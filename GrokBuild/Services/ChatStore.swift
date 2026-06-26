@@ -17,6 +17,11 @@ final class ChatStore {
     }
     private(set) var isStreaming = false
     private(set) var lastError: String?
+    /// Set when a model switch fails/times out; shown as a dismissible banner in the chat.
+    var modelSwitchError: String?
+    /// `true` when the failed switch can be resolved by starting a new session; the banner
+    /// then offers a "Start New Session" action.
+    var modelSwitchNeedsNewSession = false
 
     // VS Code extension-style turn state
     private(set) var isGrokking = false
@@ -25,6 +30,8 @@ final class ChatStore {
     private(set) var isThinkingExpanded = false
     private(set) var liveToolCalls: [LiveToolCall] = []
     private var thinkingStartedAt: Date?
+    /// When the current turn began — drives the elapsed/"warming up" indicator.
+    private(set) var turnStartedAt: Date?
 
     struct LiveToolCall: Identifiable, Hashable {
         let id: String
@@ -111,6 +118,9 @@ final class ChatStore {
     func prepare(workspace: Workspace) {
         resetSessionUI()
         currentWorkspace = workspace
+        // Surface custom models in the picker before the process starts, so a brand-new
+        // session shows them immediately instead of only after the first message.
+        mergeCustomModels()
     }
 
     func clearProject() {
@@ -300,6 +310,7 @@ final class ChatStore {
 
         clearTurnState()
         isGrokking = true
+        turnStartedAt = Date()
 
         let attachmentRefs = fileAttachments.map(\.reference).joined(separator: "\n")
         if !attachmentRefs.isEmpty {
@@ -338,6 +349,7 @@ final class ChatStore {
     private func finishPrompt(assistantID: UUID, ok: Bool) {
         isStreaming = false
         isGrokking = false
+        turnStartedAt = nil
         streamingMessageID = nil
         if let start = thinkingStartedAt, !thinkingText.isEmpty {
             thinkingDuration = Date().timeIntervalSince(start)
@@ -366,6 +378,7 @@ final class ChatStore {
         thinkingText = ""
         thinkingDuration = nil
         thinkingStartedAt = nil
+        turnStartedAt = nil
         isThinkingExpanded = false
         liveToolCalls = []
     }
@@ -373,6 +386,7 @@ final class ChatStore {
     func stop() {
         isStreaming = false
         isGrokking = false
+        turnStartedAt = nil
         streamingMessageID = nil
         pendingPermissions.removeAll()
         pendingExitPlan = nil
@@ -475,9 +489,31 @@ final class ChatStore {
 
     func setModel(_ model: String) {
         guard availableModels.contains(model) else { return }
+        let previous = currentModel
         currentModel = model
+        modelSwitchError = nil
+        modelSwitchNeedsNewSession = false
+        process.modelSwitchError = nil
+        process.modelSwitchNeedsNewSession = false
         process.setModel(model)
         saveCurrentSessionSelection()
+
+        // Reconcile after the switch settles: if grok rejected/timed out the change,
+        // restore the previous selection and surface the reason. Bounded so it can't hang.
+        Task { [weak self] in
+            guard let self else { return }
+            for _ in 0..<28 {  // ~14s, just past the 12s set_model timeout
+                try? await Task.sleep(for: .milliseconds(500))
+                if let err = self.process.modelSwitchError {
+                    self.currentModel = previous
+                    self.modelSwitchError = err
+                    self.modelSwitchNeedsNewSession = self.process.modelSwitchNeedsNewSession
+                    self.saveCurrentSessionSelection()
+                    return
+                }
+                if !self.process.modelSwitchPending { return }  // RPC completed successfully
+            }
+        }
     }
 
     func modelDisplayName(_ id: String) -> String {
@@ -806,13 +842,32 @@ final class ChatStore {
     }
 
     private func syncModelsFromProcess() {
-        guard !process.availableModelsInfo.isEmpty else { return }
-        availableModels = process.availableModelsInfo.map { $0.id }
-        modelDisplayNames = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.map { ($0.id, $0.name) })
-        modelContextTokens = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.compactMap { model in
-            guard let tokens = model.contextTokens else { return nil }
-            return (model.id, tokens)
-        })
+        if !process.availableModelsInfo.isEmpty {
+            availableModels = process.availableModelsInfo.map { $0.id }
+            modelDisplayNames = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.map { ($0.id, $0.name) })
+            modelContextTokens = Dictionary(uniqueKeysWithValues: process.availableModelsInfo.compactMap { model in
+                guard let tokens = model.contextTokens else { return nil }
+                return (model.id, tokens)
+            })
+        }
+        mergeCustomModels()
+    }
+
+    /// Fold custom OpenAI-compatible models from `~/.grok/config.toml` into the picker so they
+    /// are selectable alongside the agent's built-in models. Without this they are only reachable
+    /// by typing `/model <id>`, since the composer list is otherwise driven by the agent's
+    /// advertised `modelState.availableModels`. Idempotent — safe to call on every resync.
+    private func mergeCustomModels() {
+        for model in CustomModelStore.load().models {
+            if !availableModels.contains(model.id) {
+                availableModels.append(model.id)
+            }
+            // Prefer the explicit display name, then the provider model name (what the connected
+            // agent reports), then the table id — so the label is consistent before/after connect.
+            let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let providerModel = model.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            modelDisplayNames[model.id] = !name.isEmpty ? name : (!providerModel.isEmpty ? providerModel : model.id)
+        }
     }
 
     private func restoreSessionSelection(_ fallbackSelection: SessionSelection?) {

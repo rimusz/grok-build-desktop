@@ -103,6 +103,7 @@ enum ComputerUseSettingsKeys {
     static let includeScreenshots = "grokbuild.computerUse.includeScreenshots"
     static let allowPhysicalMouse = "grokbuild.computerUse.allowPhysicalMouse"
     static let sessionName = "grokbuild.computerUse.sessionName"
+    static let cursorIntegrationEnabled = "grokbuild.computerUse.cursorIntegration.enabled"
 
     static let appliedEnabled = "grokbuild.computerUse.applied.enabled"
     static let appliedBackend = "grokbuild.computerUse.applied.backend"
@@ -114,6 +115,7 @@ enum ComputerUseSettingsKeys {
     static let appliedIncludeScreenshots = "grokbuild.computerUse.applied.includeScreenshots"
     static let appliedAllowPhysicalMouse = "grokbuild.computerUse.applied.allowPhysicalMouse"
     static let appliedSessionName = "grokbuild.computerUse.applied.sessionName"
+    static let appliedCursorIntegrationEnabled = "grokbuild.computerUse.applied.cursorIntegration.enabled"
 }
 
 enum ComputerUseSettingsStore {

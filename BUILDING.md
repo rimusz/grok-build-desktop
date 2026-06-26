@@ -20,6 +20,7 @@ This is sufficient for:
 ```bash
 make build          # or: swift build -c release
 make run            # builds + launches the menu bar app
+make test           # run unit tests (or: swift test)
 ```
 
 You can also run directly:
