@@ -217,6 +217,7 @@ final class CustomModelTests: XCTestCase {
 
     func testProviderPresetsCoverRequestedProviders() {
         let names = Set(ProviderPreset.allCases.map { $0.displayName })
+        XCTAssertTrue(names.contains("ChatGPT (OpenAI)"))
         XCTAssertTrue(names.contains("Kimi (Moonshot)"))
         XCTAssertTrue(names.contains("Qwen (DashScope)"))
         XCTAssertTrue(names.contains("Xiaomi MiMo"))
@@ -241,6 +242,13 @@ final class CustomModelTests: XCTestCase {
         let provider = ProviderPreset.deepseek.provider
         XCTAssertEqual(provider.baseURL, "https://api.deepseek.com")
         XCTAssertEqual(provider.suggestedModel, "deepseek-v4-pro")
+    }
+
+    func testOpenAIPresetEndpoint() {
+        let provider = ProviderPreset.openai.provider
+        XCTAssertEqual(provider.id, "openai")
+        XCTAssertEqual(provider.baseURL, "https://api.openai.com/v1")
+        XCTAssertEqual(provider.suggestedModel, "gpt-4o")
     }
 
     func testModelResolvesEndpointAndKeyFromProvider() {

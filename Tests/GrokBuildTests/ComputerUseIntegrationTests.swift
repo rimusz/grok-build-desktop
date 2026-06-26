@@ -312,6 +312,133 @@ final class ComputerUseIntegrationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: ComputerUseSkillInstaller.skillURL(inSkillsRoot: skillsRoot).path))
     }
 
+    func testCursorInstallerCopiesBinariesAndUpdatesMCPConfig() throws {
+        let root = temporaryInstallRootURL()
+        let mcpURL = root.appendingPathComponent("mcp.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let helper = try makeTemporaryExecutable(named: "GrokBuildComputerUseMCP")
+        let agentDesktop = try makeTemporaryExecutable(named: "agent-desktop")
+        defer {
+            try? FileManager.default.removeItem(at: helper.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: agentDesktop.deletingLastPathComponent())
+        }
+
+        var settings = ComputerUseSettings.defaults
+        settings.permissionPolicy = .auto
+        settings.includeScreenshots = true
+        settings.sessionName = "cursor"
+
+        let output = try ComputerUseCursorInstaller.install(
+            settings: settings,
+            installRoot: root.appendingPathComponent("computer-use"),
+            cursorMCPConfigURL: mcpURL,
+            helperOverride: helper,
+            agentDesktopOverride: agentDesktop
+        )
+
+        XCTAssertTrue(output.contains("Installed Computer Use for Cursor."))
+        let status = ComputerUseCursorInstaller.status(
+            installRoot: root.appendingPathComponent("computer-use"),
+            cursorMCPConfigURL: mcpURL
+        )
+        XCTAssertTrue(status.isInstalled)
+        XCTAssertTrue(status.helperInstalled)
+        XCTAssertTrue(status.agentDesktopInstalled)
+        XCTAssertTrue(status.mcpEntryConfigured)
+
+        let entry = try XCTUnwrap(ComputerUseCursorInstaller.mcpEntry(in: mcpURL))
+        XCTAssertEqual(entry["command"] as? String, status.helperPath)
+        let env = try XCTUnwrap(entry["env"] as? [String: String])
+        XCTAssertEqual(env["AGENT_DESKTOP_PATH"], status.agentDesktopPath)
+        XCTAssertEqual(env["GROKBUILD_COMPUTER_USE_POLICY"], "auto")
+        XCTAssertEqual(env["GROKBUILD_COMPUTER_USE_SCREENSHOTS"], "true")
+        XCTAssertEqual(env["GROKBUILD_COMPUTER_USE_SESSION"], "cursor")
+    }
+
+    func testCursorInstallerMergePreservesExistingMCPServers() throws {
+        let root = temporaryInstallRootURL()
+        let mcpURL = root.appendingPathComponent("mcp.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let existing: [String: Any] = [
+            "mcpServers": [
+                "context7": [
+                    "type": "http",
+                    "url": "https://example.com/mcp"
+                ]
+            ],
+            "inputs": [
+                ["id": "example", "type": "promptString"]
+            ]
+        ]
+        let existingData = try JSONSerialization.data(withJSONObject: existing, options: [.prettyPrinted])
+        try existingData.write(to: mcpURL)
+
+        let helperDirectory = temporaryInstallRootURL()
+        let agentDesktopDirectory = temporaryInstallRootURL()
+        defer {
+            try? FileManager.default.removeItem(at: helperDirectory)
+            try? FileManager.default.removeItem(at: agentDesktopDirectory)
+        }
+
+        try FileManager.default.createDirectory(at: helperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: agentDesktopDirectory, withIntermediateDirectories: true)
+
+        let helper = helperDirectory.appendingPathComponent("GrokBuildComputerUseMCP")
+        let agentDesktop = agentDesktopDirectory.appendingPathComponent("agent-desktop")
+        FileManager.default.createFile(atPath: helper.path, contents: Data("#!/bin/sh\n".utf8))
+        FileManager.default.createFile(atPath: agentDesktop.path, contents: Data("#!/bin/sh\n".utf8))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agentDesktop.path)
+
+        _ = try ComputerUseCursorInstaller.install(
+            installRoot: root.appendingPathComponent("computer-use"),
+            cursorMCPConfigURL: mcpURL,
+            helperOverride: helper,
+            agentDesktopOverride: agentDesktop
+        )
+
+        let data = try Data(contentsOf: mcpURL)
+        let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let servers = try XCTUnwrap(parsed["mcpServers"] as? [String: Any])
+        XCTAssertNotNil(servers["context7"])
+        XCTAssertNotNil(servers[ComputerUseCursorInstaller.mcpServerName])
+        XCTAssertNotNil(parsed["inputs"])
+    }
+
+    func testCursorInstallerUninstallRemovesEntryAndFiles() throws {
+        let root = temporaryInstallRootURL()
+        let mcpURL = root.appendingPathComponent("mcp.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let helper = try makeTemporaryExecutable(named: "GrokBuildComputerUseMCP")
+        let agentDesktop = try makeTemporaryExecutable(named: "agent-desktop")
+        defer {
+            try? FileManager.default.removeItem(at: helper.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: agentDesktop.deletingLastPathComponent())
+        }
+
+        let installRoot = root.appendingPathComponent("computer-use")
+        _ = try ComputerUseCursorInstaller.install(
+            installRoot: installRoot,
+            cursorMCPConfigURL: mcpURL,
+            helperOverride: helper,
+            agentDesktopOverride: agentDesktop
+        )
+
+        let output = try ComputerUseCursorInstaller.uninstall(
+            installRoot: installRoot,
+            cursorMCPConfigURL: mcpURL
+        )
+
+        XCTAssertTrue(output.contains("Removed `\(ComputerUseCursorInstaller.mcpServerName)`"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: installRoot.path))
+        XCTAssertNil(ComputerUseCursorInstaller.mcpEntry(in: mcpURL))
+    }
+
     private var allKeys: [String] {
         [
             ComputerUseSettingsKeys.enabled,
@@ -358,5 +485,21 @@ final class ComputerUseIntegrationTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent(".grok")
             .appendingPathComponent("skills")
+    }
+
+    private func temporaryInstallRootURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("GrokBuildTests")
+            .appendingPathComponent(UUID().uuidString)
+    }
+
+    @discardableResult
+    private func makeTemporaryExecutable(named name: String) throws -> URL {
+        let directory = temporaryInstallRootURL()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent(name)
+        FileManager.default.createFile(atPath: executable.path, contents: Data("#!/bin/sh\n".utf8))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        return executable
     }
 }

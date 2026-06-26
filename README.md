@@ -39,6 +39,7 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - `agent-desktop` ships bundled inside the app and shares GrokBuild's Accessibility permission — nothing to install.
 - Configurable permission policy (Auto / Ask / Deny), optional screenshots, step and timeout limits, and named sessions.
 - Installs a Computer Use skill into your Grok skills folder when enabled.
+- Optional **Cursor integration**: install from Settings → Computer Use to copy the MCP helper and `agent-desktop` into `~/.grokbuild/computer-use/` and register `grokbuild-computer-use` in `~/.cursor/mcp.json`, so Cursor Agent gets the same `computer_*` tools in any workspace.
 
 ### Grok CLI integration
 - **Hooks** — inspect automation hooks discovered from Grok, Cursor, Claude, project, and plugin sources.

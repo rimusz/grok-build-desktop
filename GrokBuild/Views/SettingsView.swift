@@ -1480,8 +1480,11 @@ private struct ComputerUseSettingsPane: View {
     @AppStorage(ComputerUseSettingsKeys.includeScreenshots) private var includeScreenshots = ComputerUseSettings.defaults.includeScreenshots
     @AppStorage(ComputerUseSettingsKeys.allowPhysicalMouse) private var allowPhysicalMouse = ComputerUseSettings.defaults.allowPhysicalMouse
     @AppStorage(ComputerUseSettingsKeys.sessionName) private var sessionName = ComputerUseSettings.defaults.sessionName
+    @AppStorage(ComputerUseSettingsKeys.cursorIntegrationEnabled) private var cursorIntegrationEnabled = false
+    @AppStorage(ComputerUseSettingsKeys.appliedCursorIntegrationEnabled) private var appliedCursorIntegrationEnabled = false
 
     @State private var backendStatus = ComputerUseBackendStatus.unavailable
+    @State private var cursorInstallStatus = ComputerUseCursorInstallStatus.unavailable
     @State private var permissionStatus = ComputerUsePermissionStatus.unavailable
     @State private var appliedSettings = ComputerUseSettingsStore.loadApplied()
     @State private var isChecking = false
@@ -1490,6 +1493,9 @@ private struct ComputerUseSettingsPane: View {
     @State private var showDiagnosticsLog = false
     @State private var showPermissionDiagnostics = false
     @State private var showAdvancedOptions = false
+    @State private var isInstallingForCursor = false
+    @State private var isRemovingCursorIntegration = false
+    @State private var cursorInstallOutput: String?
 
     var body: some View {
         ScrollView {
@@ -1499,6 +1505,7 @@ private struct ComputerUseSettingsPane: View {
                 statusCard
                 permissionsCard
                 safetyCard
+                cursorIntegrationCard
                 applyCard
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -1756,12 +1763,82 @@ private struct ComputerUseSettingsPane: View {
         }
     }
 
+    private var cursorIntegrationCard: some View {
+        computerSettingsCard(
+            title: cursorInstallStatus.isInstalled ? "5. Cursor Integration Ready" : "5. Install for Cursor",
+            systemImage: cursorInstallStatus.isInstalled ? "cursorarrow.rays" : "cursorarrow",
+            tint: cursorInstallStatus.isInstalled ? .green : .secondary
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                Toggle(isOn: $cursorIntegrationEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable Computer Use in Cursor globally")
+                            .font(.headline)
+                        Text("Copies the MCP helper and agent-desktop into `~/.grokbuild/computer-use/` and adds `grokbuild-computer-use` to `~/.cursor/mcp.json`.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                if cursorInstallStatus.isInstalled {
+                    Label("Cursor can use `computer_*` tools in any workspace after MCP reload.", systemImage: "checkmark.circle.fill")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Install once to expose the same desktop-control tools to Cursor Agent mode across all projects.")
+                        .foregroundStyle(.secondary)
+                }
+
+                if let helperPath = cursorInstallStatus.helperPath {
+                    infoLine("Helper", helperPath)
+                }
+                if let agentDesktopPath = cursorInstallStatus.agentDesktopPath {
+                    infoLine("agent-desktop", agentDesktopPath)
+                }
+                infoLine("MCP config", cursorInstallStatus.mcpConfigPath)
+
+                HStack {
+                    Button(isInstallingForCursor ? "Installing..." : (cursorInstallStatus.isInstalled ? "Update for Cursor" : "Install for Cursor")) {
+                        Task { await installForCursor() }
+                    }
+                    .disabled(!backendStatus.isInstalled || isInstallingForCursor || isRemovingCursorIntegration)
+
+                    if cursorInstallStatus.isInstalled {
+                        Button(isRemovingCursorIntegration ? "Removing..." : "Remove from Cursor", role: .destructive) {
+                            Task { await removeCursorIntegration() }
+                        }
+                        .disabled(isInstallingForCursor || isRemovingCursorIntegration)
+                    }
+
+                    Button("Reveal MCP Config") {
+                        NSWorkspace.shared.activateFileViewerSelecting([
+                            URL(fileURLWithPath: cursorInstallStatus.mcpConfigPath)
+                        ])
+                    }
+                }
+
+                if let cursorInstallOutput, !cursorInstallOutput.isEmpty {
+                    Text(cursorInstallOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var applyCard: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Apply changes")
                     .font(.headline)
-                Text(hasPendingChanges ? "Restart the Grok connection so Computer Use MCP tools are injected into the active session." : "Computer Use settings are already applied to the active configuration.")
+                Text(hasPendingChanges
+                    ? "Restart the Grok connection so Computer Use MCP tools are injected into the active session."
+                    : "Computer Use settings are already applied to the active configuration.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1795,7 +1872,7 @@ private struct ComputerUseSettingsPane: View {
     }
 
     private var hasPendingChanges: Bool {
-        currentSettings != appliedSettings
+        currentSettings != appliedSettings || cursorIntegrationEnabled != appliedCursorIntegrationEnabled
     }
 
     private var statusBadge: some View {
@@ -1854,10 +1931,27 @@ private struct ComputerUseSettingsPane: View {
 
     private func apply() {
         let settings = currentSettings
+        let shouldInstallCursor = cursorIntegrationEnabled
+        let shouldUninstallCursor = appliedCursorIntegrationEnabled && !cursorIntegrationEnabled
+
         ComputerUseSettingsStore.save(settings)
         ComputerUseSettingsStore.saveApplied(settings)
         appliedSettings = settings
-        onConfigurationChanged()
+        appliedCursorIntegrationEnabled = cursorIntegrationEnabled
+
+        if shouldInstallCursor {
+            Task {
+                await installForCursor(showErrorsOnly: false)
+                onConfigurationChanged()
+            }
+        } else if shouldUninstallCursor {
+            Task {
+                await removeCursorIntegration()
+                onConfigurationChanged()
+            }
+        } else {
+            onConfigurationChanged()
+        }
     }
 
     private func refreshStatus() async {
@@ -1868,6 +1962,37 @@ private struct ComputerUseSettingsPane: View {
         async let permissions = ComputerUseService.permissionStatus(settings: settings)
         backendStatus = await status
         permissionStatus = await permissions
+        cursorInstallStatus = ComputerUseCursorInstaller.status()
+    }
+
+    private func installForCursor(showErrorsOnly: Bool = true) async {
+        isInstallingForCursor = true
+        if !showErrorsOnly {
+            cursorInstallOutput = "Installing Computer Use for Cursor..."
+        }
+        defer { isInstallingForCursor = false }
+
+        do {
+            cursorInstallOutput = try ComputerUseCursorInstaller.install(settings: currentSettings)
+            cursorInstallStatus = ComputerUseCursorInstaller.status()
+        } catch {
+            cursorInstallOutput = error.localizedDescription
+        }
+    }
+
+    private func removeCursorIntegration() async {
+        isRemovingCursorIntegration = true
+        cursorInstallOutput = "Removing Computer Use from Cursor..."
+        defer { isRemovingCursorIntegration = false }
+
+        do {
+            cursorInstallOutput = try ComputerUseCursorInstaller.uninstall()
+            cursorIntegrationEnabled = false
+            appliedCursorIntegrationEnabled = false
+            cursorInstallStatus = ComputerUseCursorInstaller.status()
+        } catch {
+            cursorInstallOutput = error.localizedDescription
+        }
     }
 
     private func requestPermissions() async {
@@ -2401,18 +2526,18 @@ private struct CustomModelsSettingsPane: View {
                 }
 
                 settingRow("Provider id") {
-                    TextField("zai", text: $providerDraft.id)
+                    TextField("openai", text: $providerDraft.id)
                         .textFieldStyle(.roundedBorder)
                         .disabled(isEditingProvider || providerDraftFromPreset)
                         .frame(maxWidth: 280)
                 }
                 settingRow("Name") {
-                    TextField("Z.ai (GLM)", text: $providerDraft.name)
+                    TextField("ChatGPT (OpenAI)", text: $providerDraft.name)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 280)
                 }
                 settingRow("Base URL") {
-                    TextField("https://api.z.ai/api/coding/paas/v4", text: $providerDraft.baseURL)
+                    TextField("https://api.openai.com/v1", text: $providerDraft.baseURL)
                         .textFieldStyle(.roundedBorder)
                 }
                 settingRow("API key") {

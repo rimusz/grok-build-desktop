@@ -180,6 +180,7 @@ struct Provider: Identifiable, Hashable, Codable, Sendable {
 
 /// Built-in provider presets for popular OpenAI-compatible endpoints.
 enum ProviderPreset: String, CaseIterable, Identifiable {
+    case openai
     case zai
     case minimax
     case kimi
@@ -192,6 +193,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .openai: return "ChatGPT (OpenAI)"
         case .zai: return "Z.ai (GLM)"
         case .minimax: return "MiniMax"
         case .kimi: return "Kimi (Moonshot)"
@@ -204,6 +206,13 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var provider: Provider {
         switch self {
+        case .openai:
+            return Provider(
+                id: "openai",
+                name: "ChatGPT (OpenAI)",
+                baseURL: "https://api.openai.com/v1",
+                suggestedModel: "gpt-4o"
+            )
         case .zai:
             return Provider(
                 id: "zai",

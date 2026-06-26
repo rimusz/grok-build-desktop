@@ -564,7 +564,7 @@ struct ChatView: View {
         let title = computerUseEnabled
             ? (isConfigured ? "Computer Use On" : "Computer Use Setup Needed")
             : "Computer Use Off"
-        let icon = computerUseEnabled && isConfigured ? "display.badge.checkmark" : "display"
+        let icon = computerUseEnabled && isConfigured ? "desktopcomputer.badge.checkmark" : "desktopcomputer"
         let tint: Color = computerUseEnabled ? (isConfigured ? .purple : .orange) : .secondary
 
         return Menu {
