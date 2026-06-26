@@ -511,7 +511,7 @@ final class ChatStore {
                     self.saveCurrentSessionSelection()
                     return
                 }
-                if self.process.currentModelId == model { return }  // confirmed
+                if !self.process.modelSwitchPending { return }  // RPC completed successfully
             }
         }
     }

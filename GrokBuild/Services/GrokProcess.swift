@@ -190,6 +190,10 @@ final class GrokProcess: @unchecked Sendable {
     /// Set when the failed switch is recoverable by starting a new session (the agent
     /// returned `MODEL_SWITCH_INCOMPATIBLE_AGENT` / suggested `start_new_session`).
     var modelSwitchNeedsNewSession = false
+    /// True while a `session/set_model` RPC is in-flight; cleared (false) on success or failure.
+    /// Use this rather than `currentModelId` to detect completion, since `currentModelId` is
+    /// set optimistically and cannot distinguish "pending" from "confirmed".
+    var modelSwitchPending = false
 
     // Populated from initialize modelState so we use real models from grok CLI
     private(set) var availableModelsInfo: [(id: String, name: String, contextTokens: Int?)] = []
@@ -507,7 +511,9 @@ final class GrokProcess: @unchecked Sendable {
         let previous = currentModelId
         // Optimistically reflect the selection; revert if grok rejects/stalls the switch.
         currentModelId = modelId
+        modelSwitchPending = true
         Task {
+            defer { modelSwitchPending = false }
             do {
                 // Switching is a control op and should be fast — bound it so a stalled
                 // set_model can never leave the UI stuck.
