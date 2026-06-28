@@ -242,7 +242,8 @@ echo "   DMG:  $DMG_PATH"
 echo ""
 echo "To open the app:"
 echo "   open $APP_BUNDLE"
-echo ""
-echo "For signed builds:"
-echo "   ./scripts/build-macos-app.sh --sign \"Developer ID Application: ...\""
-echo "   or: make signed SIGN_IDENTITY=\"...\""
+if [ -z "$SIGN_IDENTITY" ]; then
+    echo ""
+    echo "For signed builds, set SIGN_IDENTITY in .env or run:"
+    echo "   make signed SIGN_IDENTITY=\"Developer ID Application: ...\""
+fi

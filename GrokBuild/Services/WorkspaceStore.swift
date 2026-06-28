@@ -55,6 +55,7 @@ final class WorkspaceStore {
         workspaces.removeAll { $0.id == ws.id }
         workspaceOrder.removeAll { $0 == ws.id }
         pinnedWorkspaceIDs.removeAll { $0 == ws.id }
+        SessionLayoutStore.removeAgentSettings(for: ws.id)
         normalizeLayout()
         save()
     }

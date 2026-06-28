@@ -10,6 +10,13 @@ DerivedData/
 .idea/
 tmp/
 
+# Disposable computer-use / manual verification screenshots (not README assets)
+docs/images/verify-*.png
+
+# Accidental UserDefaults / layout exports (real data lives in ~/Library/Preferences/com.grokbuild.app.plist)
+GrokBuild.workspaceLayout.v1
+GrokBuild.sessionLayout.v2
+
 # Xcode
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/

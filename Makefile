@@ -11,12 +11,12 @@
 #   make test           # Run unit tests
 #   make run            # Build + launch the menu bar app
 #   make app            # Package .app into dist/
-#   make install        # Package .app and copy to /Applications/
+#   make install        # Package .app and copy to /Applications/ (signs when SIGN_IDENTITY in .env)
 #   make dmg            # Package .app + DMG (auto-notarizes if NOTARY_PROFILE set)
 #   make signed         # Codesigned build
 #   make notarize       # Notarize (NOTARY_PROFILE=...)
 #   make release        # Local only: build + publish GitHub release (gh auth); or push a v* tag for CI
-#   make clean
+#   make open           # Restart + launch /Applications/GrokBuild.app
 
 APP_NAME       ?= GrokBuild
 SCHEME         ?= GrokBuild
@@ -45,11 +45,12 @@ help: ## Show this help
 	@echo "  $(YELLOW)make test$(NC)             Run unit tests"
 	@echo "  $(YELLOW)make run$(NC)              Build + launch the menu bar app"
 	@echo "  $(YELLOW)make app$(NC)              Package .app into dist/"
-	@echo "  $(YELLOW)make install$(NC)          Package .app and copy to /Applications/"
+	@echo "  $(YELLOW)make install$(NC)          Package .app and copy to /Applications/ (signs if SIGN_IDENTITY in .env)"
 	@echo "  $(YELLOW)make dmg$(NC)              Build .app + DMG (auto-notarizes + re-DMG if NOTARY_PROFILE set)"
 	@echo "  $(YELLOW)make signed$(NC)           Codesigned release"
 	@echo "  $(YELLOW)make notarize$(NC)         Notarize (NOTARY_PROFILE=...)"
 	@echo "  $(YELLOW)make release$(NC)          Local only: build + publish GitHub release (or push v* tag for CI)"
+	@echo "  $(YELLOW)make open$(NC)             Restart + launch /Applications/$(APP_NAME).app"
 	@echo "  $(YELLOW)make clean$(NC)            Remove build artifacts"
 	@echo ""
 	@echo "See BUILDING.md for full packaging & signing instructions."
@@ -119,17 +120,20 @@ clean: ## Remove all build products and dist
 	@rm -rf $(DIST_DIR)
 	@echo "$(GREEN)==> Clean complete.$(NC)"
 
-open: ## Open the built app from dist/
-	@if [ -d "dist/$(APP_NAME).app" ]; then \
-		open "dist/$(APP_NAME).app"; \
-	else \
-		echo "No app found in dist/. Run 'make app' first."; \
+open: ## Restart + launch /Applications/GrokBuild.app
+	@if [ ! -d "/Applications/$(APP_NAME).app" ]; then \
+		echo "No app found at /Applications/$(APP_NAME).app. Run 'make install' first."; \
 		exit 1; \
 	fi
+	@echo "$(GREEN)==> Starting $(APP_NAME)...$(NC)"
+	@pkill -x $(APP_NAME) 2>/dev/null || true
+	@sleep 0.2
+	@open "/Applications/$(APP_NAME).app"
+	@echo "$(GREEN)==> $(APP_NAME) launched from /Applications/$(APP_NAME).app$(NC)"
 
 # Convenience aliases
 bundle: app
-install: app ## Copy .app to /Applications/ (clears quarantine xattrs for unsigned builds)
+install: signed ## Copy .app to /Applications/ (codesigns when SIGN_IDENTITY is set in .env)
 	@if [ ! -d "dist/$(APP_NAME).app" ]; then \
 		echo "dist/$(APP_NAME).app not found. Run 'make app' first."; \
 		exit 1; \
@@ -155,13 +159,12 @@ install: app ## Copy .app to /Applications/ (clears quarantine xattrs for unsign
 signed: app
 
 # If someone runs `make app` with SIGN_IDENTITY, pass it through
-app: bump-build-number ## Build the .app bundle (with icon). Use SIGN_IDENTITY=... for codesigning
+app: bump-build-number ## Build the .app bundle (with icon). Signs when SIGN_IDENTITY is set in .env
 	@if [ -n "$(SIGN_IDENTITY)" ]; then \
 		./scripts/build-macos-app.sh --sign "$(SIGN_IDENTITY)"; \
 	else \
 		./scripts/build-macos-app.sh; \
 	fi
-	# Icon copy is now handled inside the script
 	@echo "$(GREEN)==> .app ready in dist/$(APP_NAME).app$(NC)"
 
 NOTARY_PROFILE ?= AC_PASSWORD

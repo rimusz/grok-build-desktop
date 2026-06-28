@@ -1517,6 +1517,7 @@ private struct ComputerUseSettingsPane: View {
         .task {
             appliedSettings = ComputerUseSettingsStore.loadApplied()
             await refreshStatus()
+            syncCursorConfiguration(showErrorsOnly: true)
         }
     }
 
@@ -1553,6 +1554,10 @@ private struct ComputerUseSettingsPane: View {
                     }
                 }
                 .toggleStyle(.switch)
+                .onChange(of: enabled) { _, newValue in
+                    guard newValue != appliedSettings.enabled else { return }
+                    Task { await applyEnabledChange(to: newValue) }
+                }
 
                 Divider()
 
@@ -1712,6 +1717,9 @@ private struct ComputerUseSettingsPane: View {
                     .labelsHidden()
                     .pickerStyle(.segmented)
                     .frame(width: 240)
+                    .onChange(of: permissionPolicy) { _, _ in
+                        syncCursorConfiguration()
+                    }
                 }
 
                 Toggle(isOn: $includeScreenshots) {
@@ -1724,6 +1732,9 @@ private struct ComputerUseSettingsPane: View {
                     }
                 }
                 .toggleStyle(.switch)
+                .onChange(of: includeScreenshots) { _, _ in
+                    syncCursorConfiguration()
+                }
 
                 Toggle(isOn: $allowPhysicalMouse) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1735,6 +1746,9 @@ private struct ComputerUseSettingsPane: View {
                     }
                 }
                 .toggleStyle(.switch)
+                .onChange(of: allowPhysicalMouse) { _, _ in
+                    syncCursorConfiguration()
+                }
 
                 DisclosureGroup(isExpanded: $showAdvancedOptions) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -1748,10 +1762,19 @@ private struct ComputerUseSettingsPane: View {
                             .frame(width: 220)
                         }
                         Stepper("Max steps per request: \(maxSteps)", value: $maxSteps, in: 1...100)
+                            .onChange(of: maxSteps) { _, _ in
+                                syncCursorConfiguration()
+                            }
                         Stepper("Command timeout: \(commandTimeoutSeconds)s", value: $commandTimeoutSeconds, in: 5...180, step: 5)
+                            .onChange(of: commandTimeoutSeconds) { _, _ in
+                                syncCursorConfiguration()
+                            }
                         settingRow("Session name") {
                             TextField("Optional Computer Use session name", text: $sessionName)
                                 .textFieldStyle(.roundedBorder)
+                                .onSubmit {
+                                    syncCursorConfiguration()
+                                }
                         }
                     }
                     .padding(.top, 8)
@@ -1876,8 +1899,9 @@ private struct ComputerUseSettingsPane: View {
     }
 
     private var statusBadge: some View {
-        let text = enabled ? (permissionStatus.isReady ? "Ready" : "Setup needed") : "Disabled"
-        let color: Color = enabled ? (permissionStatus.isReady ? .green : .orange) : .secondary
+        let isEnabled = appliedSettings.enabled
+        let text = isEnabled ? (permissionStatus.isReady ? "Ready" : "Setup needed") : "Disabled"
+        let color: Color = isEnabled ? (permissionStatus.isReady ? .green : .orange) : .secondary
         return Text(text)
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 10)
@@ -1938,6 +1962,7 @@ private struct ComputerUseSettingsPane: View {
         ComputerUseSettingsStore.saveApplied(settings)
         appliedSettings = settings
         appliedCursorIntegrationEnabled = cursorIntegrationEnabled
+        syncCursorConfiguration(showErrorsOnly: true)
 
         if shouldInstallCursor {
             Task {
@@ -1951,6 +1976,35 @@ private struct ComputerUseSettingsPane: View {
             }
         } else {
             onConfigurationChanged()
+        }
+    }
+
+    private func applyEnabledChange(to newValue: Bool) async {
+        let result = await ComputerUseService.applyEnabled(newValue, settings: currentSettings) {
+            onConfigurationChanged()
+        }
+        if case .needsSetup = result {
+            enabled = appliedSettings.enabled
+        } else {
+            appliedSettings = ComputerUseSettingsStore.loadApplied()
+            await refreshStatus()
+        }
+    }
+
+    private func syncCursorConfiguration(showErrorsOnly: Bool = false) {
+        guard cursorInstallStatus.isInstalled else { return }
+        do {
+            if let message = try ComputerUseService.syncCursorIntegrationIfInstalled(settings: currentSettings) {
+                if !showErrorsOnly {
+                    cursorInstallOutput = message
+                }
+            }
+            appliedSettings = ComputerUseSettingsStore.loadApplied()
+            cursorInstallStatus = ComputerUseCursorInstaller.status()
+        } catch {
+            if !showErrorsOnly {
+                cursorInstallOutput = error.localizedDescription
+            }
         }
     }
 
@@ -2105,6 +2159,7 @@ private struct ComputerUseSettingsPane: View {
 private struct CustomModelsSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
+    @AppStorage(GrokSettingsKeys.reasoningEffort) private var reasoningEffort = GrokPermissionSettings.defaults.reasoningEffort
     @State private var providers: [Provider] = []
     @State private var models: [CustomModel] = []
     @State private var editingID: String?
@@ -2165,6 +2220,7 @@ private struct CustomModelsSettingsPane: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
+                    reasoningEffortCard
                     providerTemplatesCard
                     if showingProviderEditor {
                         providerEditorCard
@@ -2251,6 +2307,34 @@ private struct CustomModelsSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+        }
+    }
+
+    private var reasoningEffortCard: some View {
+        settingsCard(title: "Reasoning Effort", systemImage: "brain.head.profile", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Controls how much “thinking” reasoning models use — higher effort can be slower and use more tokens. In chat, model and effort are saved per project.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 14) {
+                    Picker("Reasoning effort", selection: $reasoningEffort) {
+                        ForEach(ReasoningEffortLevel.menuCases) { level in
+                            Text(level.displayName).tag(level.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+
+                    Spacer()
+
+                    Button("Apply to Session") {
+                        onConfigurationChanged()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
         }
     }
 
@@ -3538,12 +3622,9 @@ private struct PermissionsSettingsPane: View {
 
                 settingRow("Reasoning effort", description: "Chooses the reasoning budget passed to `grok agent`.") {
                     Picker("", selection: $reasoningEffort) {
-                        Text("Default").tag("")
-                        Text("Low").tag("low")
-                        Text("Medium").tag("medium")
-                        Text("High").tag("high")
-                        Text("XHigh").tag("xhigh")
-                        Text("Max").tag("max")
+                        ForEach(ReasoningEffortLevel.menuCases) { level in
+                            Text(level.displayName).tag(level.rawValue)
+                        }
                     }
                     .labelsHidden()
                     .frame(width: 220)

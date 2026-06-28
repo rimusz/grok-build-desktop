@@ -216,6 +216,12 @@ struct ContentView: View {
             sessionListRevision &+= 1
             persistSessionLayout()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .workspaceAgentSettingsChanged)) { note in
+            guard let workspaceID = note.userInfo?["workspaceID"] as? UUID else { return }
+            for session in liveSessions where session.workspace.id == workspaceID {
+                session.store.syncWorkspaceAgentSettingsFromStorage()
+            }
+        }
     }
 
     // MARK: - Subviews
@@ -315,30 +321,14 @@ struct ContentView: View {
     }
 
     private func toggleComputerUseFromChat() {
-        var settings = ComputerUseSettingsStore.load()
-        if settings.enabled {
-            settings.enabled = false
-            ComputerUseSettingsStore.save(settings)
-            ComputerUseSettingsStore.saveApplied(settings)
-            Task { await activeStore.reloadConfiguration() }
-            return
-        }
-
-        guard ComputerUseService.configurationIssue(settings: settings) == nil else {
-            showSettings = true
-            return
-        }
-
+        let settings = ComputerUseSettingsStore.load()
         Task {
-            let permissions = await ComputerUseService.permissionStatus(settings: settings)
-            guard permissions.isReady else {
-                await MainActor.run { showSettings = true }
-                return
+            let result = await ComputerUseService.applyEnabled(!settings.enabled) {
+                await activeStore.reloadConfiguration()
             }
-            settings.enabled = true
-            ComputerUseSettingsStore.save(settings)
-            ComputerUseSettingsStore.saveApplied(settings)
-            await activeStore.reloadConfiguration()
+            if case .needsSetup = result {
+                showSettings = true
+            }
         }
     }
 
@@ -414,22 +404,28 @@ struct ContentView: View {
             && session.grokSessionID == nil
     }
 
-    private func purgeEmptySessions(keeping id: UUID? = nil) {
+    private func purgeEmptySessions(in workspaceID: Workspace.ID? = nil, keeping id: UUID? = nil) {
         let staleIDs = liveSessions
-            .filter { $0.id != id && isSessionEmpty($0) }
+            .filter { session in
+                session.id != id
+                    && isSessionEmpty(session)
+                    && (workspaceID == nil || session.workspace.id == workspaceID)
+            }
             .map(\.id)
         for staleID in staleIDs {
             closeSession(id: staleID)
         }
     }
 
+    private func liveSessions(for workspaceID: Workspace.ID) -> [LiveSession] {
+        liveSessions.filter { $0.workspace.id == workspaceID }
+    }
+
     private var hiddenSessionCounts: [Workspace.ID: Int] {
         _ = sessionListRevision
         var counts: [Workspace.ID: Int] = [:]
         for workspace in workspaceStore.workspaces {
-            let total = liveSessions.filter {
-                $0.workspace.id == workspace.id && ($0.id == selectedSessionID || !isSessionEmpty($0))
-            }.count
+            let total = liveSessions(for: workspace.id).count
             counts[workspace.id] = max(0, total - SessionLayoutStore.maxSidebarSessions)
         }
         return counts
@@ -441,7 +437,6 @@ struct ContentView: View {
         for workspace in workspaceStore.workspaces {
             let visibleIDs = visibleSessionIDs(for: workspace.id)
             for session in liveSessions where visibleIDs.contains(session.id) {
-                guard session.id == selectedSessionID || !isSessionEmpty(session) else { continue }
                 result.append(
                     SidebarSession(
                         id: session.id,
@@ -458,9 +453,7 @@ struct ContentView: View {
     }
 
     private func visibleSessionIDs(for workspaceID: Workspace.ID) -> [UUID] {
-        let eligible = liveSessions.filter {
-            $0.workspace.id == workspaceID && ($0.id == selectedSessionID || !isSessionEmpty($0))
-        }
+        let eligible = liveSessions(for: workspaceID)
         var order = sessionLayout.sessionOrderByWorkspace[workspaceID] ?? eligible.map(\.id)
         order.removeAll { id in !eligible.contains { $0.id == id } }
         for session in eligible where !order.contains(session.id) {
@@ -536,9 +529,7 @@ struct ContentView: View {
         let hiddenSessionWorkspaceIDs = sessionLayout.hiddenSessionWorkspaceIDs.intersection(workspaceIDs)
         let recordIDs = Set(records.map(\.id))
         for workspace in workspaceStore.workspaces {
-            let ids = liveSessions
-                .filter { $0.workspace.id == workspace.id && ($0.id == selectedSessionID || !isSessionEmpty($0)) }
-                .map(\.id)
+            let ids = liveSessions(for: workspace.id).map(\.id)
             var workspaceOrder = order[workspace.id] ?? ids
             workspaceOrder.removeAll { id in !ids.contains(id) }
             for id in ids where !workspaceOrder.contains(id) {
@@ -843,9 +834,7 @@ struct ContentView: View {
         } else if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
             selectSession(session.id)
         } else {
-            selectedSessionID = nil
-            placeholderStore.prepare(workspace: workspace)
-            persistSessionLayout()
+            Task { await createLiveSession(for: workspace) }
         }
     }
 
@@ -858,8 +847,9 @@ struct ContentView: View {
     }
 
     private func selectSession(_ id: UUID) {
-        purgeEmptySessions(keeping: id)
         guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        purgeEmptySessions(in: session.workspace.id, keeping: id)
+        session.store.syncWorkspaceAgentSettingsFromStorage()
         selectedSessionID = id
         selectedWorkspaceID = session.workspace.id
         previewMessageID = nil
@@ -923,7 +913,7 @@ struct ContentView: View {
 
     @discardableResult
     private func createLiveSession(for workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async -> UUID {
-        purgeEmptySessions()
+        purgeEmptySessions(in: workspace.id)
         let id = UUID()
         let store = ChatStore()
         let title = resumeSession.flatMap { session in
@@ -1018,4 +1008,5 @@ extension Notification.Name {
     static let newSessionRequested = Notification.Name("newSessionRequested")
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
     static let liveSessionMessagesChanged = Notification.Name("liveSessionMessagesChanged")
+    static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
 }

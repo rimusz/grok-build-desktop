@@ -10,6 +10,9 @@ final class ChatStore {
         var model: String?
     }
 
+    /// Reasoning effort for the active project (not global).
+    private var workspaceReasoningEffort: String = ""
+
     private(set) var messages: [Message] = []
 
     func clearMessages() {
@@ -118,9 +121,18 @@ final class ChatStore {
     func prepare(workspace: Workspace) {
         resetSessionUI()
         currentWorkspace = workspace
-        // Surface custom models in the picker before the process starts, so a brand-new
-        // session shows them immediately instead of only after the first message.
         mergeCustomModels()
+        loadWorkspaceAgentSettings()
+    }
+
+    /// Reload model + effort from project storage (e.g. when switching sessions).
+    func syncWorkspaceAgentSettingsFromStorage() {
+        loadWorkspaceAgentSettings()
+        if connectionState != .idle,
+           availableModels.contains(currentModel),
+           process.currentModelId != currentModel {
+            process.setModel(currentModel)
+        }
     }
 
     func clearProject() {
@@ -147,6 +159,8 @@ final class ChatStore {
 
     func start(workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async {
         currentWorkspace = workspace
+        mergeCustomModels()
+        loadWorkspaceAgentSettings()
         messages.removeAll()
         streamingMessageID = nil
         authRequiredMessage = nil
@@ -208,8 +222,9 @@ final class ChatStore {
         startConnectionWatchdog()
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
-        let browserSettings = BrowserSettingsStore.load()
-        let computerUseSettings = ComputerUseSettingsStore.load()
+        let modelForLaunch = workspaceSavedModel() ?? savedSelection?.model ?? currentModel
+        let browserSettings = BrowserSettingsStore.loadApplied()
+        let computerUseSettings = ComputerUseSettingsStore.loadApplied()
         if browserSettings.enabled {
             do {
                 try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
@@ -238,7 +253,7 @@ final class ChatStore {
             noMemory: settings.noMemory,
             permissionMode: settings.permissionMode,
             reasoningEffort: settings.reasoningEffort,
-            model: savedSelection?.model,
+            model: modelForLaunch.isEmpty ? nil : modelForLaunch,
             sandboxProfile: settings.sandboxProfile,
             disableWebSearch: settings.disableWebSearch,
             noSubagents: settings.noSubagents,
@@ -283,6 +298,15 @@ final class ChatStore {
 
     @discardableResult
     func send(_ text: String) async -> Bool {
+        await deliverPrompt(text, waitForCompletion: false)
+    }
+
+    @discardableResult
+    func sendAndWait(_ text: String) async -> Bool {
+        await deliverPrompt(text, waitForCompletion: true)
+    }
+
+    private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !fileAttachments.isEmpty else { return false }
         guard currentWorkspace != nil else {
@@ -336,6 +360,12 @@ final class ChatStore {
 
         let payload = trimmed
         let assistantID = assistant.id
+
+        if waitForCompletion {
+            let ok = await process.send(payload)
+            finishPrompt(assistantID: assistantID, ok: ok)
+            return ok
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -487,6 +517,37 @@ final class ChatStore {
     func setPlanMode()  { setMode(.plan) }
     func setYoloMode()  { setMode(.yolo) }
 
+    var currentReasoningEffort: String {
+        workspaceReasoningEffort
+    }
+
+    var currentReasoningEffortLevel: ReasoningEffortLevel {
+        ReasoningEffortLevel(storedValue: currentReasoningEffort)
+    }
+
+    func reasoningEffortDisplayName(_ raw: String) -> String {
+        ReasoningEffortLevel(storedValue: raw).displayName
+    }
+
+    func needsReasoningEffortConfirmation(for effort: String) -> Bool {
+        effort != currentReasoningEffort && hasUserMessages
+    }
+
+    func applyReasoningEffort(_ effort: String, strategy: ReasoningEffortRestartStrategy) async {
+        guard effort != currentReasoningEffort else { return }
+        workspaceReasoningEffort = effort
+        saveWorkspaceAgentSettings()
+        guard currentWorkspace != nil else { return }
+
+        if strategy == .summarizeAndRestart, hasUserMessages, connectionState == .ready, !isStreaming {
+            _ = await sendAndWait("/compact")
+        }
+
+        let resumeID = process.sessionId
+        await restartProcess(resumeSessionID: resumeID)
+        appendSystemNote("Reasoning effort: \(reasoningEffortDisplayName(effort)).")
+    }
+
     func setModel(_ model: String) {
         guard availableModels.contains(model) else { return }
         let previous = currentModel
@@ -496,6 +557,7 @@ final class ChatStore {
         process.modelSwitchError = nil
         process.modelSwitchNeedsNewSession = false
         process.setModel(model)
+        saveWorkspaceAgentSettings()
         saveCurrentSessionSelection()
 
         // Reconcile after the switch settles: if grok rejected/timed out the change,
@@ -826,7 +888,7 @@ final class ChatStore {
         GrokPermissionSettings(
             permissionMode: defaults.string(forKey: GrokSettingsKeys.permissionMode) ?? GrokPermissionSettings.defaults.permissionMode,
             sandboxProfile: defaults.string(forKey: GrokSettingsKeys.sandboxProfile) ?? "",
-            reasoningEffort: defaults.string(forKey: GrokSettingsKeys.reasoningEffort) ?? "",
+            reasoningEffort: workspaceReasoningEffort,
             noMemory: defaults.bool(forKey: GrokSettingsKeys.noMemory),
             disableWebSearch: defaults.bool(forKey: GrokSettingsKeys.disableWebSearch),
             noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
@@ -870,13 +932,52 @@ final class ChatStore {
         }
     }
 
+    private func workspaceSavedModel() -> String? {
+        guard let workspace = currentWorkspace else { return nil }
+        let model = SessionLayoutStore.agentSettings(for: workspace.id).model?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let model, !model.isEmpty else { return nil }
+        return model
+    }
+
+    private func loadWorkspaceAgentSettings() {
+        guard let workspace = currentWorkspace else { return }
+        let saved = SessionLayoutStore.agentSettings(for: workspace.id)
+        if let model = saved.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+            currentModel = model
+        }
+        workspaceReasoningEffort = saved.reasoningEffort ?? ""
+    }
+
+    private func saveWorkspaceAgentSettings() {
+        guard let workspace = currentWorkspace else { return }
+        SessionLayoutStore.saveAgentSettings(
+            WorkspaceAgentSettings(model: currentModel, reasoningEffort: workspaceReasoningEffort),
+            for: workspace.id
+        )
+        NotificationCenter.default.post(
+            name: .workspaceAgentSettingsChanged,
+            object: nil,
+            userInfo: ["workspaceID": workspace.id]
+        )
+    }
+
     private func restoreSessionSelection(_ fallbackSelection: SessionSelection?) {
         let selection = process.sessionId.flatMap { sessionSelections[$0] } ?? fallbackSelection
 
-        if let model = selection?.model, availableModels.contains(model) {
+        if let model = workspaceSavedModel(), availableModels.contains(model) {
             currentModel = model
             if process.currentModelId != model {
                 process.setModel(model)
+            }
+        } else if let model = selection?.model, availableModels.contains(model) {
+            currentModel = model
+            if process.currentModelId != model {
+                process.setModel(model)
+            }
+        } else if availableModels.contains(currentModel) {
+            if process.currentModelId != currentModel {
+                process.setModel(currentModel)
             }
         } else if let processModel = process.currentModelId, availableModels.contains(processModel) {
             currentModel = processModel
@@ -900,7 +1001,7 @@ final class ChatStore {
         guard let sessionId = process.sessionId else { return }
         sessionSelections[sessionId] = SessionSelection(
             mode: currentMode.rawValue,
-            model: currentModel
+            model: nil
         )
         if let data = try? JSONEncoder().encode(sessionSelections) {
             defaults.set(data, forKey: sessionSelectionsKey)

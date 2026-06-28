@@ -61,6 +61,35 @@ struct SessionLayoutSnapshot: Codable {
 struct WorkspaceLayoutSnapshot: Codable {
     var pinnedWorkspaceIDs: [UUID]
     var workspaceOrder: [UUID]
+    var agentSettingsByWorkspace: [UUID: WorkspaceAgentSettings]
+
+    init(
+        pinnedWorkspaceIDs: [UUID],
+        workspaceOrder: [UUID],
+        agentSettingsByWorkspace: [UUID: WorkspaceAgentSettings] = [:]
+    ) {
+        self.pinnedWorkspaceIDs = pinnedWorkspaceIDs
+        self.workspaceOrder = workspaceOrder
+        self.agentSettingsByWorkspace = agentSettingsByWorkspace
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        pinnedWorkspaceIDs = try container.decode([UUID].self, forKey: .pinnedWorkspaceIDs)
+        workspaceOrder = try container.decode([UUID].self, forKey: .workspaceOrder)
+        agentSettingsByWorkspace = try container.decodeIfPresent([UUID: WorkspaceAgentSettings].self, forKey: .agentSettingsByWorkspace) ?? [:]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pinnedWorkspaceIDs
+        case workspaceOrder
+        case agentSettingsByWorkspace
+    }
+}
+
+struct WorkspaceAgentSettings: Codable, Hashable {
+    var model: String?
+    var reasoningEffort: String?
 }
 
 enum SessionLayoutStore {
@@ -95,5 +124,21 @@ enum SessionLayoutStore {
         if let data = try? JSONEncoder().encode(snapshot) {
             UserDefaults.standard.set(data, forKey: workspaceLayoutKey)
         }
+    }
+
+    static func agentSettings(for workspaceID: UUID) -> WorkspaceAgentSettings {
+        loadWorkspaceLayout().agentSettingsByWorkspace[workspaceID] ?? WorkspaceAgentSettings()
+    }
+
+    static func saveAgentSettings(_ settings: WorkspaceAgentSettings, for workspaceID: UUID) {
+        var layout = loadWorkspaceLayout()
+        layout.agentSettingsByWorkspace[workspaceID] = settings
+        saveWorkspaceLayout(layout)
+    }
+
+    static func removeAgentSettings(for workspaceID: UUID) {
+        var layout = loadWorkspaceLayout()
+        layout.agentSettingsByWorkspace.removeValue(forKey: workspaceID)
+        saveWorkspaceLayout(layout)
     }
 }

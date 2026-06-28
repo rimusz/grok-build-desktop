@@ -439,6 +439,64 @@ final class ComputerUseIntegrationTests: XCTestCase {
         XCTAssertNil(ComputerUseCursorInstaller.mcpEntry(in: mcpURL))
     }
 
+    func testSaveAppliedCursorEnvironmentUpdatesAppliedPrefixOnly() {
+        var current = ComputerUseSettings.defaults
+        current.includeScreenshots = true
+        current.allowPhysicalMouse = true
+        current.maxSteps = 17
+        ComputerUseSettingsStore.save(current)
+        ComputerUseSettingsStore.saveApplied(.defaults)
+
+        ComputerUseSettingsStore.saveAppliedCursorEnvironment(from: current)
+
+        XCTAssertEqual(ComputerUseSettingsStore.load().includeScreenshots, true)
+        XCTAssertEqual(ComputerUseSettingsStore.loadApplied().includeScreenshots, true)
+        XCTAssertEqual(ComputerUseSettingsStore.loadApplied().maxSteps, 17)
+        XCTAssertEqual(ComputerUseSettingsStore.loadApplied().enabled, false)
+    }
+
+    func testCursorInstallerUpdateConfigurationChangesEnvWithoutReinstallingBinaries() throws {
+        let root = temporaryInstallRootURL()
+        let mcpURL = root.appendingPathComponent("mcp.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let helper = try makeTemporaryExecutable(named: "GrokBuildComputerUseMCP")
+        let agentDesktop = try makeTemporaryExecutable(named: "agent-desktop")
+        defer {
+            try? FileManager.default.removeItem(at: helper.deletingLastPathComponent())
+            try? FileManager.default.removeItem(at: agentDesktop.deletingLastPathComponent())
+        }
+
+        let installRoot = root.appendingPathComponent("computer-use")
+        var settings = ComputerUseSettings.defaults
+        settings.includeScreenshots = false
+        _ = try ComputerUseCursorInstaller.install(
+            settings: settings,
+            installRoot: installRoot,
+            cursorMCPConfigURL: mcpURL,
+            helperOverride: helper,
+            agentDesktopOverride: agentDesktop
+        )
+
+        let helperBefore = try Data(contentsOf: installRoot.appendingPathComponent("GrokBuildComputerUseMCP"))
+        settings.includeScreenshots = true
+        settings.permissionPolicy = .auto
+        let output = try ComputerUseCursorInstaller.updateConfiguration(
+            settings: settings,
+            installRoot: installRoot,
+            cursorMCPConfigURL: mcpURL
+        )
+
+        XCTAssertTrue(output.contains("Updated Cursor MCP configuration"))
+        let helperAfter = try Data(contentsOf: installRoot.appendingPathComponent("GrokBuildComputerUseMCP"))
+        XCTAssertEqual(helperBefore, helperAfter)
+
+        let entry = try XCTUnwrap(ComputerUseCursorInstaller.mcpEntry(in: mcpURL))
+        let env = try XCTUnwrap(entry["env"] as? [String: String])
+        XCTAssertEqual(env["GROKBUILD_COMPUTER_USE_SCREENSHOTS"], "true")
+        XCTAssertEqual(env["GROKBUILD_COMPUTER_USE_POLICY"], "auto")
+    }
+
     private var allKeys: [String] {
         [
             ComputerUseSettingsKeys.enabled,

@@ -173,6 +173,38 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.workspaceOrder, ordered)
     }
 
+    func testWorkspaceAgentSettingsRoundTripPerProject() {
+        let workspaceID = UUID()
+        let settings = WorkspaceAgentSettings(
+            model: "grok-composer-2.5-fast",
+            reasoningEffort: "high"
+        )
+
+        SessionLayoutStore.saveAgentSettings(settings, for: workspaceID)
+
+        XCTAssertEqual(SessionLayoutStore.agentSettings(for: workspaceID), settings)
+
+        SessionLayoutStore.removeAgentSettings(for: workspaceID)
+        XCTAssertEqual(SessionLayoutStore.agentSettings(for: workspaceID), WorkspaceAgentSettings())
+    }
+
+    func testWorkspaceLayoutSnapshotDecodesWithoutAgentSettings() throws {
+        let pinned = UUID()
+        let ordered = UUID()
+        let json = """
+        {
+          "pinnedWorkspaceIDs": ["\(pinned.uuidString)"],
+          "workspaceOrder": ["\(ordered.uuidString)"]
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(WorkspaceLayoutSnapshot.self, from: json)
+
+        XCTAssertEqual(decoded.pinnedWorkspaceIDs, [pinned])
+        XCTAssertEqual(decoded.workspaceOrder, [ordered])
+        XCTAssertEqual(decoded.agentSettingsByWorkspace, [:])
+    }
+
     func testSessionNameStoreTrimsAndRemovesNames() {
         let id = UUID().uuidString
 

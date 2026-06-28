@@ -139,6 +139,17 @@ enum ComputerUseSettingsStore {
         save(settings, prefix: .applied)
     }
 
+    /// Persists Cursor MCP environment fields without requiring a full Apply + Grok restart.
+    static func saveAppliedCursorEnvironment(from settings: ComputerUseSettings) {
+        let defaults = UserDefaults.standard
+        defaults.set(settings.permissionPolicy.rawValue, forKey: ComputerUseSettingsKeys.appliedPermissionPolicy)
+        defaults.set(settings.maxSteps, forKey: ComputerUseSettingsKeys.appliedMaxSteps)
+        defaults.set(settings.commandTimeoutSeconds, forKey: ComputerUseSettingsKeys.appliedCommandTimeoutSeconds)
+        defaults.set(settings.includeScreenshots, forKey: ComputerUseSettingsKeys.appliedIncludeScreenshots)
+        defaults.set(settings.allowPhysicalMouse, forKey: ComputerUseSettingsKeys.appliedAllowPhysicalMouse)
+        defaults.set(settings.sessionName, forKey: ComputerUseSettingsKeys.appliedSessionName)
+    }
+
     private enum KeyPrefix {
         case current
         case applied

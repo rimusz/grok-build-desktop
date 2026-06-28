@@ -280,6 +280,59 @@ struct GrokPermissionSettings: Sendable {
     )
 }
 
+/// Reasoning depth passed to `grok agent --reasoning-effort` (reasoning-capable models only).
+enum ReasoningEffortLevel: String, CaseIterable, Identifiable, Sendable {
+    case `default` = ""
+    case none = "none"
+    case minimal = "minimal"
+    case low = "low"
+    case medium = "medium"
+    case high = "high"
+    case xhigh = "xhigh"
+    case max = "max"
+
+    var id: String { rawValue }
+
+    init(storedValue: String) {
+        self = ReasoningEffortLevel(rawValue: storedValue) ?? .default
+    }
+
+    var displayName: String {
+        switch self {
+        case .default: return "Default"
+        case .none: return "None"
+        case .minimal: return "Minimal"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .xhigh: return "XHigh"
+        case .max: return "Max"
+        }
+    }
+
+    static let menuCases: [ReasoningEffortLevel] = allCases.filter { $0 != .none }
+
+    /// Filled-dot count for compact composer UI (0 = default/none).
+    var dotLevel: Int {
+        switch self {
+        case .default, .none: return 0
+        case .minimal: return 1
+        case .low: return 2
+        case .medium: return 3
+        case .high: return 4
+        case .xhigh: return 5
+        case .max: return 6
+        }
+    }
+
+    static let dotPickerLevels: [ReasoningEffortLevel] = [.none, .minimal, .low, .medium, .high, .xhigh]
+}
+
+enum ReasoningEffortRestartStrategy: Sendable {
+    case restart
+    case summarizeAndRestart
+}
+
 enum GrokSettingsKeys {
     static let permissionMode = "grokbuild.permissionMode"
     static let sandboxProfile = "grokbuild.sandboxProfile"

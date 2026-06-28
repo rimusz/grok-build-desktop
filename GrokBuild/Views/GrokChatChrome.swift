@@ -39,10 +39,11 @@ struct SessionStatusDot: View {
 struct SessionGearPopover: View {
     @Bindable var store: ChatStore
     var onOpenSettings: () -> Void
+    var onReasoningEffortChange: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Model and Effort")
+            Text("Model")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -52,6 +53,16 @@ struct SessionGearPopover: View {
             )) {
                 ForEach(store.availableModels, id: \.self) { modelId in
                     Text(store.modelDisplayName(modelId)).tag(modelId)
+                }
+            }
+            .labelsHidden()
+
+            Picker("Reasoning effort", selection: Binding(
+                get: { store.currentReasoningEffort },
+                set: { onReasoningEffortChange($0) }
+            )) {
+                ForEach(ReasoningEffortLevel.menuCases) { level in
+                    Text(level.displayName).tag(level.rawValue)
                 }
             }
             .labelsHidden()

@@ -161,6 +161,48 @@ enum ComputerUseService {
         )
     }
 
+    enum ApplyEnabledResult: Sendable, Equatable {
+        case applied
+        case needsSetup
+        case unchanged
+    }
+
+    @MainActor
+    static func applyEnabled(
+        _ enabled: Bool,
+        settings baseSettings: ComputerUseSettings? = nil,
+        reloadConfiguration: () async -> Void = {}
+    ) async -> ApplyEnabledResult {
+        var settings = baseSettings ?? ComputerUseSettingsStore.load()
+        guard settings.enabled != enabled else { return .unchanged }
+
+        if enabled {
+            if configurationIssue(settings: settings) != nil {
+                return .needsSetup
+            }
+            let permissions = await permissionStatus(settings: settings)
+            guard permissions.isReady else {
+                return .needsSetup
+            }
+        }
+
+        settings.enabled = enabled
+        ComputerUseSettingsStore.save(settings)
+        ComputerUseSettingsStore.saveApplied(settings)
+        await reloadConfiguration()
+        return .applied
+    }
+
+    static func syncCursorIntegrationIfInstalled(
+        settings: ComputerUseSettings = ComputerUseSettingsStore.load()
+    ) throws -> String? {
+        let status = ComputerUseCursorInstaller.status()
+        guard status.isInstalled else { return nil }
+        let message = try ComputerUseCursorInstaller.updateConfiguration(settings: settings)
+        ComputerUseSettingsStore.saveAppliedCursorEnvironment(from: settings)
+        return message
+    }
+
     static func configurationIssue(settings: ComputerUseSettings = ComputerUseSettingsStore.load()) -> String? {
         guard settings.backend == .agentDesktop else {
             return "Computer Use backend is not configured."

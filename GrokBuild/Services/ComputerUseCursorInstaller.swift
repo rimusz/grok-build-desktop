@@ -89,6 +89,29 @@ enum ComputerUseCursorInstaller {
         )
     }
 
+    static func updateConfiguration(
+        settings: ComputerUseSettings,
+        installRoot: URL? = nil,
+        cursorMCPConfigURL: URL? = nil
+    ) throws -> String {
+        let status = status(installRoot: installRoot, cursorMCPConfigURL: cursorMCPConfigURL)
+        guard status.isInstalled,
+              let helperPath = status.helperPath,
+              let agentDesktopPath = status.agentDesktopPath else {
+            throw installError("Computer Use is not installed for Cursor.")
+        }
+
+        let entry = cursorMCPEntry(
+            settings: settings,
+            helperPath: helperPath,
+            agentDesktopPath: agentDesktopPath
+        )
+        let mcpURL = resolvedCursorMCPConfigURL(override: cursorMCPConfigURL)
+        try mergeCursorMCPConfig(entry: entry, at: mcpURL)
+
+        return "Updated Cursor MCP configuration at \(mcpURL.path). Reload MCP servers in Cursor to apply the change."
+    }
+
     static func install(
         settings: ComputerUseSettings = ComputerUseSettingsStore.load(),
         installRoot: URL? = nil,

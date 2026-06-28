@@ -34,9 +34,11 @@ struct ChatView: View {
     @State private var slashCommandsExpanded = false
     @State private var toolActivityExpanded = false
     @State private var voiceInput = VoiceInputService()
+    @State private var pendingReasoningEffortChange: String?
+    @State private var isModelSelectorOpen = false
     @FocusState private var inputFocused: Bool
-    @AppStorage(BrowserSettingsKeys.enabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
-    @AppStorage(ComputerUseSettingsKeys.enabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
+    @AppStorage(BrowserSettingsKeys.appliedEnabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
+    @AppStorage(ComputerUseSettingsKeys.appliedEnabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -180,6 +182,38 @@ struct ChatView: View {
             composer
         }
         .onAppear { inputFocused = true }
+        .confirmationDialog(
+            "Change reasoning effort?",
+            isPresented: Binding(
+                get: { pendingReasoningEffortChange != nil },
+                set: { if !$0 { pendingReasoningEffortChange = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Summarize & Restart") {
+                if let effort = pendingReasoningEffortChange {
+                    Task {
+                        await store.applyReasoningEffort(effort, strategy: .summarizeAndRestart)
+                    }
+                }
+                pendingReasoningEffortChange = nil
+            }
+            Button("Restart", role: .destructive) {
+                if let effort = pendingReasoningEffortChange {
+                    Task {
+                        await store.applyReasoningEffort(effort, strategy: .restart)
+                    }
+                }
+                pendingReasoningEffortChange = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingReasoningEffortChange = nil
+            }
+        } message: {
+            if let effort = pendingReasoningEffortChange {
+                Text("Apply \(store.reasoningEffortDisplayName(effort)) when Grok restarts. Summarize & restart runs /compact first to preserve context.")
+            }
+        }
         .onChange(of: store.connectionState) { _, newState in
             if case .ready = newState {
                 // Clear stale auth message if the CLI became ready again
@@ -724,25 +758,11 @@ struct ChatView: View {
     }
 
     private var modelSelector: some View {
-        Menu {
-            ForEach(store.availableModels, id: \.self) { modelId in
-                let isSelected = store.currentModel == modelId
-                Button {
-                    store.setModel(modelId)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(store.modelDisplayName(modelId))
-                        Spacer(minLength: 12)
-                        if isSelected {
-                            Image(systemName: "checkmark")
-                                .font(.caption.bold())
-                        }
-                    }
-                }
-            }
+        Button {
+            isModelSelectorOpen.toggle()
         } label: {
             HStack(spacing: 4) {
-                Text(store.modelDisplayName(store.currentModel))
+                Text(modelSelectorLabel)
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -754,9 +774,103 @@ struct ChatView: View {
             .padding(.vertical, 3)
             .background(Color.primary.opacity(0.06), in: Capsule())
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .help("Select model")
+        .popover(isPresented: $isModelSelectorOpen, arrowEdge: .bottom) {
+            modelSelectorPopoverContent
+        }
+        .accessibilityLabel("Model and reasoning effort")
+        .accessibilityValue(modelSelectorLabel)
+        .accessibilityIdentifier("grok-model-effort-selector")
+        .help(modelSelectorHelp)
+    }
+
+    private var modelSelectorPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Model")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+
+            ForEach(store.availableModels, id: \.self) { modelId in
+                Button {
+                    store.setModel(modelId)
+                    isModelSelectorOpen = false
+                } label: {
+                    modelMenuRow(
+                        title: store.modelDisplayName(modelId),
+                        isSelected: store.currentModel == modelId
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .accessibilityIdentifier("grok-model-option-\(modelId)")
+            }
+
+            Divider()
+                .padding(.vertical, 6)
+
+            Text("Reasoning effort")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+
+            ForEach(ReasoningEffortLevel.menuCases) { level in
+                Button {
+                    requestReasoningEffortChange(to: level.rawValue)
+                    isModelSelectorOpen = false
+                } label: {
+                    modelMenuRow(
+                        title: level.displayName,
+                        isSelected: store.currentReasoningEffort == level.rawValue
+                    )
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .disabled(store.isStreaming || store.currentWorkspace == nil)
+                .accessibilityIdentifier("grok-effort-option-\(level.rawValue)")
+            }
+        }
+        .frame(minWidth: 240)
+        .padding(.bottom, 8)
+    }
+
+    private var modelSelectorLabel: String {
+        store.modelDisplayName(store.currentModel)
+    }
+
+    private var modelSelectorHelp: String {
+        if store.isStreaming {
+            return "Select model; wait for the current turn to finish before changing reasoning effort"
+        }
+        return "Model and reasoning effort"
+    }
+
+    private func modelMenuRow(title: String, isSelected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 12)
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.caption.bold())
+            }
+        }
+    }
+
+    private func requestReasoningEffortChange(to effort: String) {
+        guard effort != store.currentReasoningEffort else { return }
+        guard store.currentWorkspace != nil, !store.isStreaming else { return }
+        if store.needsReasoningEffortConfirmation(for: effort) {
+            pendingReasoningEffortChange = effort
+        } else {
+            Task { await store.applyReasoningEffort(effort, strategy: .restart) }
+        }
     }
 
     private func submit() async {

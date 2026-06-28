@@ -283,8 +283,8 @@ func enforceActionPolicy(_ action: String) throws {
 }
 
 func baseArgs() -> [String] {
-    let trimmed = sessionName.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? [] : ["--session", trimmed]
+    // agent-desktop no longer accepts a global --session flag; snapshot ids are passed per command.
+    []
 }
 
 func buildSnapshotArgs(_ args: [String: Any]) throws -> [String] {
@@ -306,7 +306,10 @@ func buildScreenshotArgs(_ args: [String: Any]) throws -> [String] {
     var command = baseArgs() + ["screenshot"]
     appendString(args, "app", flag: "--app", to: &command)
     appendString(args, "window_id", flag: "--window-id", to: &command)
-    appendString(args, "save_path", flag: "--save-path", to: &command)
+    if let savePath = args["save_path"] as? String,
+       !savePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        command.append(savePath)
+    }
     return command
 }
 
