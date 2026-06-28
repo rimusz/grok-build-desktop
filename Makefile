@@ -3,8 +3,19 @@
 # Uses SwiftPM (no Xcode project required).
 # See BUILDING.md for full packaging & signing instructions.
 #
-# Optional: copy .env.example to .env for local SIGN_IDENTITY / NOTARY_PROFILE
+# Optional: copy .env.example to .env for local SIGN_IDENTITY / NOTARY_PROFILE / RELEASE_TYPE
+SIGN_IDENTITY ?=
+NOTARY_PROFILE ?= AC_PASSWORD
+RELEASE_TYPE ?= unsigned
 -include .env
+# Makefile $(...) parsing breaks TEAMID in parentheses — read identity via shell instead.
+ifneq (,$(wildcard .env))
+  _dotenv_sign := $(shell grep -E '^SIGN_IDENTITY=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r')
+  ifneq ($(_dotenv_sign),)
+    override SIGN_IDENTITY := $(_dotenv_sign)
+  endif
+endif
+export SIGN_IDENTITY NOTARY_PROFILE RELEASE_TYPE
 
 # Usage:
 #   make build          # Build Release binary with SwiftPM
@@ -25,16 +36,10 @@ CONFIGURATION  ?= Release
 DIST_DIR       ?= dist
 BUILD_DIR      ?= .build
 
-# Set this to your codesigning identity when using `make signed` or `make release`
-# Example: make signed SIGN_IDENTITY="Developer ID Application: Rimas (ABC1234567)"
-SIGN_IDENTITY  ?=
-
 # Colors for output
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 NC     := \033[0m
-
-RELEASE_TYPE   ?= unsigned
 
 .PHONY: help build test run app install dmg dmg-package signed clean open notarize release bump-build-number
 
@@ -57,7 +62,7 @@ help: ## Show this help
 	@echo ""
 	@echo "Quick start: make run"
 	@echo "Notarize example: make dmg NOTARY_PROFILE=AC_PASSWORD SIGN_IDENTITY=..."
-	@echo "Release example: make release"
+	@echo "Release example: make release   # uses RELEASE_TYPE from .env when set"
 	@echo "Notarized release: make release RELEASE_TYPE=notarized SIGN_IDENTITY=... NOTARY_PROFILE=..."
 
 bump-build-number: ## Increment BUILD_NUMBER
@@ -167,17 +172,11 @@ app: bump-build-number ## Build the .app bundle (with icon). Signs when SIGN_IDE
 	fi
 	@echo "$(GREEN)==> .app ready in dist/$(APP_NAME).app$(NC)"
 
-NOTARY_PROFILE ?= AC_PASSWORD
-
 notarize: signed ## Notarize (builds + signs + notarizes). Set NOTARY_PROFILE=...
 	@./scripts/notarize.sh
 	@echo "$(GREEN)==> Notarization complete.$(NC)"
 
-release: ## Build and publish GitHub release (unsigned by default). Set RELEASE_TYPE=notarized for signed builds
-	@RELEASE_TYPE="$(RELEASE_TYPE)" \
-	 RELEASE_VERSION="$(RELEASE_VERSION)" \
-	 SIGN_IDENTITY="$(SIGN_IDENTITY)" \
-	 NOTARY_PROFILE="$(NOTARY_PROFILE)" \
-	 APP_NAME="$(APP_NAME)" \
-	 ./scripts/release.sh
+release: ## Publish GitHub release (RELEASE_TYPE/SIGN_IDENTITY/NOTARY_PROFILE from .env)
+	@echo "==> Release: type=$(RELEASE_TYPE), sign=$$([ -n '$(SIGN_IDENTITY)' ] && echo yes || echo no), notary=$(NOTARY_PROFILE)"
+	@./scripts/release.sh
 

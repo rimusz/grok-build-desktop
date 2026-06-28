@@ -12,6 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT_DIR"
 
+# shellcheck source=load-dotenv.sh
+source "$SCRIPT_DIR/load-dotenv.sh"
+load_dotenv "$ROOT_DIR/.env"
+
 APP_NAME="${APP_NAME:-GrokBuild}"
 RELEASE_TYPE="${RELEASE_TYPE:-unsigned}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
@@ -80,8 +84,13 @@ macOS may block unsigned apps.
 
 ---
 
-For a signed + notarized version with no warnings, run:
-`make release RELEASE_TYPE=notarized SIGN_IDENTITY="..." NOTARY_PROFILE=...`
+For a signed + notarized version with no warnings, set in `.env`:
+
+    RELEASE_TYPE=notarized
+    SIGN_IDENTITY=Developer ID Application: ...
+    NOTARY_PROFILE=AC_PASSWORD
+
+Then run `make release`.
 EOF
   fi
 }
@@ -96,9 +105,39 @@ read_build_number() {
   fi
 }
 
+ensure_release_tag() {
+  local tag="$1"
+  local head_sha
+  head_sha="$(git rev-parse HEAD)"
+
+  if ! git rev-parse "$tag" >/dev/null 2>&1; then
+    echo "==> Creating tag ${tag} at HEAD..."
+    git tag "$tag"
+  else
+    local tag_sha
+    tag_sha="$(git rev-parse "$tag")"
+    if [ "$tag_sha" != "$head_sha" ]; then
+      echo "==> Tag ${tag} was at ${tag_sha:0:7}; moving to HEAD ${head_sha:0:7} for this release..."
+      git tag -f "$tag"
+    fi
+  fi
+
+  local remote_sha=""
+  remote_sha="$(git ls-remote --tags origin "refs/tags/${tag}^{}" 2>/dev/null | awk '{print $1}' | head -1)"
+  tag_sha="$(git rev-parse "$tag")"
+
+  if [ -z "$remote_sha" ]; then
+    echo "==> Pushing ${tag} to origin..."
+    git push origin "$tag"
+  elif [ "$remote_sha" != "$tag_sha" ]; then
+    echo "==> Updating ${tag} on origin (local release commit differs from remote tag)..."
+    git push --force origin "$tag"
+  fi
+}
+
 if [ "$RELEASE_TYPE" = "notarized" ]; then
   if [ -z "$SIGN_IDENTITY" ]; then
-    echo "ERROR: SIGN_IDENTITY is required for notarized releases."
+    echo "ERROR: SIGN_IDENTITY is required for notarized releases (set in .env or environment)."
     exit 1
   fi
 fi
@@ -109,6 +148,9 @@ release_body_file="$(mktemp)"
 trap 'rm -f "$release_body_file"' EXIT
 
 echo "==> Building ${RELEASE_TYPE} release for ${tag_name}..."
+if [ "$RELEASE_TYPE" = "notarized" ]; then
+  echo "==> Signing with: ${SIGN_IDENTITY}"
+fi
 
 if [ "$RELEASE_TYPE" = "notarized" ]; then
   make signed SIGN_IDENTITY="$SIGN_IDENTITY"
@@ -133,6 +175,8 @@ echo "==> Zipping app..."
 ditto -c -k --keepParent "dist/${APP_NAME}.app" "$zip_path"
 
 write_release_notes "$release_body_file"
+
+ensure_release_tag "$tag_name"
 
 echo "==> Publishing GitHub release ${tag_name}..."
 
