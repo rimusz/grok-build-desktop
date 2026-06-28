@@ -55,22 +55,24 @@ create_dmg() {
 
 write_release_notes() {
   local output_file="$1"
+  local zip_name="${APP_NAME}-${tag_name}.app.zip"
+  local dmg_name="${APP_NAME}-${tag_name}-macOS.dmg"
 
   if [ "$RELEASE_TYPE" = "notarized" ]; then
-    cat > "$output_file" <<'EOF'
+    cat > "$output_file" <<EOF
 ## Downloads
 
-- `GrokBuild.app.zip` — Signed + notarized build (recommended)
-- `GrokBuild-macOS.dmg` — Signed + notarized DMG
+- \`${zip_name}\` — Signed + notarized build (recommended)
+- \`${dmg_name}\` — Signed + notarized DMG
 
 This version is properly code-signed and notarized. No Gatekeeper warnings.
 EOF
   else
-    cat > "$output_file" <<'EOF'
+    cat > "$output_file" <<EOF
 ## Downloads
 
-- `GrokBuild.app.zip` — Unsigned build
-- `GrokBuild-macOS.dmg` — Unsigned DMG
+- \`${zip_name}\` — Unsigned build
+- \`${dmg_name}\` — Unsigned DMG
 
 ## How to bypass Gatekeeper protection (unsigned builds)
 
@@ -78,19 +80,19 @@ macOS may block unsigned apps.
 
 **Quick ways to open:**
 
-1. Right-click `GrokBuild.app` (or the DMG) → **Open**
-2. Terminal: `xattr -cr ~/Applications/GrokBuild.app`
+1. Right-click \`GrokBuild.app\` (or the DMG) → **Open**
+2. Terminal: \`xattr -cr ~/Applications/GrokBuild.app\`
 3. System Settings → Privacy & Security → "Open Anyway"
 
 ---
 
-For a signed + notarized version with no warnings, set in `.env`:
+For a signed + notarized version with no warnings, set in \`.env\`:
 
     RELEASE_TYPE=notarized
     SIGN_IDENTITY=Developer ID Application: ...
     NOTARY_PROFILE=AC_PASSWORD
 
-Then run `make release`.
+Then run \`make release\`.
 EOF
   fi
 }
@@ -142,8 +144,9 @@ if [ "$RELEASE_TYPE" = "notarized" ]; then
   fi
 fi
 
-zip_path="dist/${APP_NAME}.app.zip"
-dmg_path="dist/${APP_NAME}-macOS.dmg"
+zip_path="dist/${APP_NAME}-${tag_name}.app.zip"
+dmg_path="dist/${APP_NAME}-${tag_name}-macOS.dmg"
+dmg_staging="dist/${APP_NAME}-macOS.dmg"
 release_body_file="$(mktemp)"
 trap 'rm -f "$release_body_file"' EXIT
 
@@ -173,6 +176,8 @@ fi
 
 echo "==> Zipping app..."
 ditto -c -k --keepParent "dist/${APP_NAME}.app" "$zip_path"
+cp "$dmg_staging" "$dmg_path"
+echo "==> Release assets: $(basename "$zip_path"), $(basename "$dmg_path")"
 
 write_release_notes "$release_body_file"
 

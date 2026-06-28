@@ -54,7 +54,7 @@ make app     # creates a distributable .app bundle (includes MenuBarIcon)
 make dmg     # creates .app + DMG
 ```
 
-Output goes to `dist/GrokBuild.app` and `dist/GrokBuild-macOS.dmg`.
+Output goes to `dist/GrokBuild.app` and `dist/GrokBuild-macOS.dmg`. GitHub release assets are published as versioned names, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
 
 The build script automatically copies the menu bar icon (from the asset catalog under `GrokBuild/Resources/...` or project root) into `Contents/Resources/`.
 
@@ -162,7 +162,7 @@ git tag v0.1.4
 git push origin v0.1.4
 ```
 
-- **Tag push** (`v*`): publishes an **unsigned** release with `GrokBuild.app.zip` and `GrokBuild-macOS.dmg`.
+- **Tag push** (`v*`): publishes an **unsigned** release with versioned assets, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
 - **Manual workflow dispatch** (choose `notarized`): builds a signed + notarized release using repo secrets.
 
 #### CI: unsigned (tag push)

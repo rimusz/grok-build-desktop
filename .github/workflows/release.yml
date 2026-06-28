@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # push:
+  #   tags:
+  #     - 'v*'
   workflow_dispatch:
     inputs:
       release_type:
@@ -132,28 +132,34 @@ jobs:
             echo "release_name=${{ steps.validate.outputs.tag_name }} (${build_number}) (Unsigned)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Zip the .app
+      - name: Prepare versioned release assets
         run: |
-          ditto -c -k --keepParent dist/${{ env.APP_NAME }}.app dist/${{ env.APP_NAME }}.app.zip
+          TAG="${{ steps.validate.outputs.tag_name }}"
+          ditto -c -k --keepParent "dist/${{ env.APP_NAME }}.app" "dist/${{ env.APP_NAME }}-${TAG}.app.zip"
+          cp "dist/${{ env.APP_NAME }}-macOS.dmg" "dist/${{ env.APP_NAME }}-${TAG}-macOS.dmg"
 
       - name: Prepare release notes
         id: notes
+        env:
+          RELEASE_TAG: ${{ steps.validate.outputs.tag_name }}
         run: |
+          ZIP_NAME="${{ env.APP_NAME }}-${RELEASE_TAG}.app.zip"
+          DMG_NAME="${{ env.APP_NAME }}-${RELEASE_TAG}-macOS.dmg"
           if [ "${{ steps.config.outputs.notarized }}" = "true" ]; then
-            cat > release-body.txt << 'EOF'
+            cat > release-body.txt <<EOF
           ## Downloads
 
-          - `GrokBuild.app.zip` — Signed + notarized build (recommended)
-          - `GrokBuild-macOS.dmg` — Signed + notarized DMG
+          - \`${ZIP_NAME}\` — Signed + notarized build (recommended)
+          - \`${DMG_NAME}\` — Signed + notarized DMG
 
           This version is properly code-signed and notarized. No Gatekeeper warnings.
           EOF
           else
-            cat > release-body.txt << 'EOF'
+            cat > release-body.txt <<EOF
           ## Downloads
 
-          - `GrokBuild.app.zip` — Unsigned build
-          - `GrokBuild-macOS.dmg` — Unsigned DMG
+          - \`${ZIP_NAME}\` — Unsigned build
+          - \`${DMG_NAME}\` — Unsigned DMG
 
           ## How to bypass Gatekeeper protection (unsigned builds)
 
@@ -161,8 +167,8 @@ jobs:
 
           **Quick ways to open:**
 
-          1. Right-click `GrokBuild.app` (or the DMG) → **Open**
-          2. Terminal: `xattr -cr ~/Applications/GrokBuild.app`
+          1. Right-click \`GrokBuild.app\` (or the DMG) → **Open**
+          2. Terminal: \`xattr -cr ~/Applications/GrokBuild.app\`
           3. System Settings → Privacy & Security → "Open Anyway"
 
           ---
@@ -185,7 +191,7 @@ jobs:
           body: ${{ steps.notes.outputs.body }}
           overwrite_files: true
           files: |
-            dist/${{ env.APP_NAME }}.app.zip
-            dist/${{ env.APP_NAME }}-macOS.dmg
+            dist/${{ env.APP_NAME }}-${{ steps.validate.outputs.tag_name }}.app.zip
+            dist/${{ env.APP_NAME }}-${{ steps.validate.outputs.tag_name }}-macOS.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
