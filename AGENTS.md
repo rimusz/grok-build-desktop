@@ -4,7 +4,7 @@ Native SwiftUI macOS frontend for the `grok` CLI (`grok agent stdio`).
 
 ## Read first
 
-@ARCHITECTURE.md
+@ARCHITECTURE.md — app map, data flow, persistence keys, feature subsystems, and **“common tasks → files”** lookup for new chats.
 
 ## Cursor in this repo
 

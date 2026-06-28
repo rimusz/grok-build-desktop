@@ -28,18 +28,23 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - Add custom OpenAI-compatible models from your own providers (e.g. MiniMax and other OpenAI-compatible endpoints).
 - Define reusable providers (base URL + shared API key) and fetch their available models directly in the app.
 - Models are written to `~/.grok/config.toml` and become usable via `/model <id>`; supports setting a default model (up to 28 custom models).
+- **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the same composer model menu; each project remembers its own model and effort and restores them when you switch workspaces.
 
 ### Browser control
-- Browser tools through [`agent-browser`](https://agent-browser.dev), exposed as MCP tools to Grok sessions.
-- Use a managed automation runtime (a separate Chrome/Chromium profile) or attach to an existing Chromium browser (Chrome, Brave, Edge, Arc, or custom) over CDP.
-- Installs a browser-control skill into your Grok skills folder when browser tools are enabled.
+Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click, type, wait, screenshot, run JS) via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev).
+- **Managed runtime (default)** — GrokBuild installs and uses a separate automation Chrome/Chromium profile (`agent-browser install`); no CDP URL required.
+- **Existing browser** — attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP when you want Grok to use your own window.
+- Enable in **Settings → Browser**, then **Apply and Restart Grok**; toggle quickly from the chat status bar (**Browser Tools On/Off**).
+- Installs a `grokbuild-browser-control` skill into your Grok skills folder so the agent knows the workflow (snapshot → ref-based click/type).
 
 ### Computer Use (desktop automation)
-- Optional macOS desktop-control tools exposed to Grok through an app-managed MCP helper and [`agent-desktop`](https://github.com/lahfir/agent-desktop).
-- `agent-desktop` ships bundled inside the app and shares GrokBuild's Accessibility permission — nothing to install.
-- Configurable permission policy (Auto / Ask / Deny), optional screenshots, step and timeout limits, and named sessions.
-- Installs a Computer Use skill into your Grok skills folder when enabled.
-- Optional **Cursor integration**: install from Settings → Computer Use to copy the MCP helper and `agent-desktop` into `~/.grokbuild/computer-use/` and register `grokbuild-computer-use` in `~/.cursor/mcp.json`, so Cursor Agent gets the same `computer_*` tools in any workspace.
+Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, and system windows — via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop).
+- Tools include accessibility snapshots, ref-based click/type, keyboard shortcuts, waits, optional screenshots, and listing apps/windows.
+- `agent-desktop` is **bundled in GrokBuild** and reuses the app's Accessibility permission (grant once in **Settings → Computer Use**).
+- Enable in settings or from the chat status bar (**Computer Use On/Off**); optional **Allow screenshot tool** (needs Screen Recording).
+- Safety controls: action policy (Auto / Ask / Deny), step and timeout limits, accessibility-first automation (physical mouse off by default).
+- Installs a `grokbuild-computer-use` skill; use Computer Use for macOS apps, Browser control for websites in Chromium.
+- Optional **Cursor integration** — **Install for Cursor** copies the MCP helper to `~/.grokbuild/computer-use/` and registers `grokbuild-computer-use` in `~/.cursor/mcp.json` so Cursor Agent gets the same tools globally.
 
 ### Grok CLI integration
 - **Hooks** — inspect automation hooks discovered from Grok, Cursor, Claude, project, and plugin sources.
