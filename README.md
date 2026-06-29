@@ -23,7 +23,8 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 
 ### Composer
 - Fixed two-line composer with command history and slash-command autocomplete.
-- File attachments and voice input (dictation).
+- File attachments as plain paths (grok chooses how to read each file; avoids forced whole-file reads and binary failures).
+- Voice control (dictation).
 - Model, mode, and context-usage controls inline in the composer.
 
 ### Models

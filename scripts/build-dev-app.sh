@@ -79,9 +79,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
+    <string>GrokBuild uses the microphone for voice control in the chat composer.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>GrokBuild transcribes your speech to text for chat messages.</string>
+    <string>GrokBuild transcribes your speech to text for chat messages using voice control.</string>
 </dict>
 </plist>
 EOF

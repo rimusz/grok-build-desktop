@@ -116,8 +116,19 @@ struct FileAttachment: Identifiable, Hashable, Sendable {
         }
     }
 
-    var reference: String {
-        isHidden ? "@!\(path)" : "@\(path)"
+}
+
+enum AttachmentPromptBuilder {
+    /// Build attachment text for the user prompt. Uses plain paths — not `@` references,
+    /// which tell grok to read the whole file (bad for large text and binaries).
+    static func build(from attachments: [FileAttachment]) -> String? {
+        let paths = attachments.filter { !$0.isHidden }.map(\.relativePath)
+        guard !paths.isEmpty else { return nil }
+
+        if paths.count == 1 {
+            return "Attached file: \(paths[0])"
+        }
+        return "Attached files:\n" + paths.map { "- \($0)" }.joined(separator: "\n")
     }
 }
 

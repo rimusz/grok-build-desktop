@@ -308,7 +308,7 @@ final class ChatStore {
 
     private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !fileAttachments.isEmpty else { return false }
+        guard !trimmed.isEmpty || fileAttachments.contains(where: { !$0.isHidden }) else { return false }
         guard currentWorkspace != nil else {
             lastError = "Select a project first."
             return false
@@ -336,9 +336,8 @@ final class ChatStore {
         isGrokking = true
         turnStartedAt = Date()
 
-        let attachmentRefs = fileAttachments.map(\.reference).joined(separator: "\n")
-        if !attachmentRefs.isEmpty {
-            trimmed = trimmed.isEmpty ? attachmentRefs : "\(attachmentRefs)\n\(trimmed)"
+        if let attachmentBlock = AttachmentPromptBuilder.build(from: fileAttachments) {
+            trimmed = trimmed.isEmpty ? attachmentBlock : "\(attachmentBlock)\n\n\(trimmed)"
         }
         fileAttachments.removeAll()
 
@@ -473,6 +472,10 @@ final class ChatStore {
     func toggleFileAttachmentHidden(id: UUID) {
         guard let idx = fileAttachments.firstIndex(where: { $0.id == id }) else { return }
         fileAttachments[idx].isHidden.toggle()
+    }
+
+    var hasVisibleFileAttachments: Bool {
+        fileAttachments.contains { !$0.isHidden }
     }
 
     func respondToPermission(_ request: PermissionRequest, with optionId: String) {

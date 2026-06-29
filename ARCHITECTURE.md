@@ -254,6 +254,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `currentMode` | agent / plan / yolo |
 | `pendingPermissions` | Tool permission prompts |
 | `pendingExitPlan` / `pendingQuestions` | Plan / ask-user flows |
+| `fileAttachments` | Composer chips; hidden chips are excluded from the prompt |
 | `authRequiredMessage` | Login banner text |
 | `grokSessionId` | `process.sessionId` — persisted for resume |
 
@@ -269,7 +270,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `resumeSession(_:)` | Load existing grok session id |
 | `shutdown()` | Stop process (app update / prepare for shutdown) |
 | `retryConnection()` | Restart after CLI update |
-| `send(_:)` | User message → ACP prompt |
+| `send(_:)` | User message → ACP prompt (attachments become plain paths under `Attached file(s):`, not `@` reads) |
 
 ### `restartProcess` — what gets injected
 
