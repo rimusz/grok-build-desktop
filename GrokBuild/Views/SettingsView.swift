@@ -12,6 +12,7 @@ enum SettingsTab: Hashable {
     case computerUse
     case models
     case permissions
+    case app
 }
 
 struct SettingsView: View {
@@ -110,6 +111,12 @@ struct SettingsView: View {
                     Label("Permissions", systemImage: "lock.shield")
                 }
                 .tag(SettingsTab.permissions)
+
+                AppUpdatesSettingsPane()
+                .tabItem {
+                    Label("App", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tag(SettingsTab.app)
             }
             .padding()
         }
@@ -3758,5 +3765,133 @@ private struct PermissionsSettingsPane: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.25)))
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct AppUpdatesSettingsPane: View {
+    private var autoCheckBinding: Binding<Bool> {
+        Binding(
+            get: { UpdateSettingsStore.autoCheckEnabled },
+            set: { UpdateSettingsStore.autoCheckEnabled = $0 }
+        )
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SettingsPaneHeader(
+                    title: "App Updates",
+                    subtitle: "GrokBuild checks GitHub releases for signed builds and can install updates in one click.",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    color: .blue
+                )
+
+                updatesCard(title: "Installed Version", systemImage: "info.circle") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(AppVersion.display)
+                            .font(.body.monospaced())
+                        if let lastCheck = UpdateSettingsStore.lastCheckDate {
+                            Text("Last checked \(lastCheck.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Not checked yet this session.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                updatesCard(title: "Automatic Checks", systemImage: "clock.arrow.circlepath") {
+                    Toggle(isOn: autoCheckBinding) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Automatically check for updates")
+                                .font(.callout.weight(.medium))
+                            Text("Checks on launch and about once per day while GrokBuild is running.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+
+                updatesCard(title: "grok CLI", systemImage: "terminal") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let cli = UpdateScheduler.cachedCLIStatus {
+                            switch cli.state {
+                            case .upToDate(let info), .updateAvailable(let info):
+                                Text("Installed: \(info.current)")
+                                    .font(.body.monospaced())
+                                Text("Latest: \(info.latest)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let channel = info.channel, !channel.isEmpty {
+                                    Text("Channel: \(channel)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            case .notInstalled:
+                                Text("Not installed")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            case .checkFailed(let message):
+                                Text("Could not check: \(message)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("Not checked yet this session.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if UpdateScheduler.hasActionableCLIUpdate,
+                           let latest = UpdateScheduler.cachedCLIStatus?.latestVersion {
+                            Text("grok CLI \(latest) is ready to update.")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                updatesCard(title: "Manual Check", systemImage: "arrow.down.circle") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("When updates are available, use the main-window banner or Check for Updates… in the menu bar, then click Updates Available to review GrokBuild and grok CLI versions.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        if UpdateScheduler.hasActionableAppUpdate,
+                           let release = UpdateScheduler.cachedAppRelease {
+                            Text("GrokBuild \(release.latestVersion) is ready to install.")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func updatesCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.6)))
     }
 }

@@ -27,7 +27,7 @@ SwiftPM target `GrokBuild`, macOS 26+. No Xcode project required.
 | CLI process | `GrokProcess.swift`, `ChatStore.swift` |
 | Menu bar / About | `StatusBarController.swift`, `AboutPanel.swift` |
 | Updates | `UpdateChecker.swift`, `UpdatePanel.swift` |
-| Version bump | `VERSION`, `BUILD_NUMBER` |
+| Version bump | `VERSION` |
 
 ## Rules
 

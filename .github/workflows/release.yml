@@ -112,24 +112,13 @@ jobs:
           rm -f "$APPLE_API_KEY_PATH"
           make dmg-package
 
-      - name: Read build number for release
+      - name: Set release name
         id: version
-        shell: bash
         run: |
-          build_number="$(tr -d '[:space:]' < BUILD_NUMBER)"
-          tracked_version="$(tr -d '[:space:]' < BUILD_NUMBER_VERSION)"
-          app_version="${{ steps.validate.outputs.app_version }}"
-
-          if [ "$tracked_version" != "$app_version" ]; then
-            echo "::error::BUILD_NUMBER_VERSION ($tracked_version) does not match VERSION ($app_version) after build."
-            exit 1
-          fi
-
-          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
           if [ "${{ steps.config.outputs.notarized }}" = "true" ]; then
-            echo "release_name=${{ steps.validate.outputs.tag_name }} (${build_number}) (Notarized)" >> "$GITHUB_OUTPUT"
+            echo "release_name=${{ steps.validate.outputs.tag_name }} (Notarized)" >> "$GITHUB_OUTPUT"
           else
-            echo "release_name=${{ steps.validate.outputs.tag_name }} (${build_number}) (Unsigned)" >> "$GITHUB_OUTPUT"
+            echo "release_name=${{ steps.validate.outputs.tag_name }} (Unsigned)" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Prepare versioned release assets

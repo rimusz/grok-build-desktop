@@ -11,7 +11,11 @@ alwaysApply: false
 - `GrokProcess` — spawns `grok agent … stdio`, parses ACP, posts `.grokStatusChanged`.
 - `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
 - `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings.
-- `UpdateChecker` — GitHub `/releases/latest` for app; `grok update --check --json` for CLI.
+- `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
+
+## After changing these services
+
+Run `make test` and update `ARCHITECTURE.md`, `README.md` (if user-visible), and this rule or `grokbuild-grok-cli` skill when integration contracts change.
 
 ## CLI location
 

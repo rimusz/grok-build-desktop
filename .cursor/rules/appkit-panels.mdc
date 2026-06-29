@@ -27,3 +27,7 @@ Custom panel (not `orderFrontStandardAboutPanel`). Order: icon → name → Vers
 ## Window restore
 
 `AppDelegate` — validate saved frames before applying; use `open` for `make run` launches.
+
+## After changing panels or menu bar
+
+Run `make test` if logic changed; update `ARCHITECTURE.md` (UI layout, in-app updates) and `README.md` for user-visible behavior. See `docs-and-tests.mdc`.

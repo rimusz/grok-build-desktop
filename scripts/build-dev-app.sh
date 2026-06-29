@@ -9,12 +9,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="GrokBuild"
 EXECUTABLE_NAME="GrokBuild"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
-BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
 BUILD_DIR="$ROOT_DIR/.build"
+BUILD_CONFIG="${BUILD_CONFIG:-release}"
+BINARY_DIR="$BUILD_DIR/$BUILD_CONFIG"
 APP_BUNDLE="$BUILD_DIR/${APP_NAME}.app"
 
-if [ ! -x "$BUILD_DIR/release/$EXECUTABLE_NAME" ]; then
-    echo "Missing release binary. Run 'make build' first." >&2
+if [ ! -x "$BINARY_DIR/$EXECUTABLE_NAME" ]; then
+    echo "Missing $BUILD_CONFIG binary at $BINARY_DIR/$EXECUTABLE_NAME. Run 'make build' or 'make build-debug' first." >&2
     exit 1
 fi
 
@@ -22,17 +23,22 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-cp "$BUILD_DIR/release/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
+cp "$BINARY_DIR/$EXECUTABLE_NAME" "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 chmod +x "$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME"
 
-if [ -f "$BUILD_DIR/release/GrokBuildComputerUseMCP" ]; then
-    cp "$BUILD_DIR/release/GrokBuildComputerUseMCP" "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
+if [ -f "$BINARY_DIR/GrokBuildComputerUseMCP" ]; then
+    cp "$BINARY_DIR/GrokBuildComputerUseMCP" "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
     chmod +x "$APP_BUNDLE/Contents/MacOS/GrokBuildComputerUseMCP"
 fi
 
 if [ -f "$ROOT_DIR/scripts/grokbuild-browser-mcp" ]; then
     cp "$ROOT_DIR/scripts/grokbuild-browser-mcp" "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
     chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
+fi
+
+if [ -f "$ROOT_DIR/scripts/grokbuild-install-update.sh" ]; then
+    cp "$ROOT_DIR/scripts/grokbuild-install-update.sh" "$APP_BUNDLE/Contents/Resources/grokbuild-install-update"
+    chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-install-update"
 fi
 
 if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
@@ -69,7 +75,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>$BUILD_NUMBER</string>
+    <string>$APP_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>

@@ -1,0 +1,40 @@
+---
+description: Require documentation and test updates alongside code changes
+alwaysApply: true
+---
+
+# Documentation & tests (required)
+
+Any **code change** — new features, behavior changes, bug fixes, refactors that alter contracts, new persistence keys, notifications, build scripts, or CLI integration — must include **updated docs** and **tests** in the same work session. Do not leave documentation stale or ship untested logic.
+
+## Tests
+
+1. Run `make test` before finishing.
+2. Add or extend tests in `Tests/GrokBuildTests/` for behavior you changed or introduced.
+3. Prefer extending an existing test file over creating a new harness (see `ARCHITECTURE.md` → Tests).
+4. Test pure logic (parsing, persistence round-trips, settings, version compare) without requiring a live `grok` process when possible.
+5. Skip new tests only when the change is docs-only or a trivial comment/format with zero behavior change.
+
+## Documentation — what to update
+
+| Change type | Update |
+|-------------|--------|
+| New/changed feature, service, UI flow, persistence key, notification | `ARCHITECTURE.md` (source map, persistence table, notifications, common tasks → files) |
+| User-visible capability or install/requirements | `README.md` |
+| Build, sign, notarize, release CI, scripts, bundling | `BUILDING.md`, `scripts/README.md` if scripts changed |
+| grok CLI integration surface | `.cursor/skills/grokbuild-grok-cli/SKILL.md`, `grok-cli-integration.mdc` if needed |
+| Release/version/update-check behavior | `.cursor/skills/grokbuild-release/SKILL.md` |
+| Dev workflow, make targets, testing | `.cursor/skills/grokbuild-dev/SKILL.md` |
+| Agent-facing bundled skill behavior | `GrokBuild/Resources/Skills/*/SKILL.md` |
+| Agent entry / repo conventions | `AGENTS.md` |
+
+`ARCHITECTURE.md` is the canonical internal reference — keep it accurate when structure or data flow changes.
+
+## Definition of done
+
+- [ ] Code compiles (`make build` or `swift build`)
+- [ ] `make test` passes
+- [ ] Relevant docs updated (at minimum `ARCHITECTURE.md` for non-trivial app changes)
+- [ ] User-facing changes reflected in `README.md` when applicable
+
+Only commit when the user explicitly asks.

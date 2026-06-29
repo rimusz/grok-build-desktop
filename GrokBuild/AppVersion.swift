@@ -7,14 +7,8 @@ enum AppVersion {
             ?? "0.0.0"
     }
 
-    static var build: String {
-        repositoryValue(named: "BUILD_NUMBER")
-            ?? bundleValue("CFBundleVersion")
-            ?? "0"
-    }
-
     static var display: String {
-        "\(short) (\(build))"
+        short
     }
 
     private static func bundleValue(_ key: String) -> String? {

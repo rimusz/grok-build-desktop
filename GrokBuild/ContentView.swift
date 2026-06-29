@@ -42,9 +42,32 @@ struct ContentView: View {
     @State private var restoreStatusText = "Restoring sessions..."
     @State private var sessionListRevision = 0
     @State private var sessionLayout = SessionLayoutStore.loadSessions()
+    @State private var isUpgradeBannerDismissed = false
+    @State private var showUpgradeBanner = false
+    @State private var bannerAppVersion: String?
+    @State private var bannerCLIVersion: String?
 
     var body: some View {
         ZStack {
+            VStack(spacing: 0) {
+            if showUpgradeBanner {
+                UpdatesBanner(
+                    appVersion: bannerAppVersion,
+                    cliVersion: bannerCLIVersion,
+                    onAction: {
+                        Task {
+                            await UpdateUI.presentUpdatePanel(refresh: false) {
+                                refreshUpgradeBannerState()
+                            }
+                        }
+                    },
+                    onDismiss: {
+                        isUpgradeBannerDismissed = true
+                        refreshUpgradeBannerState()
+                    }
+                )
+            }
+
             HSplitView {
             SidebarView(
                 workspaces: $workspaceStore.workspaces,
@@ -137,12 +160,21 @@ struct ContentView: View {
             }
             }
             .disabled(isRestoringSessions)
+            }
 
             if isRestoringSessions {
                 sessionRestoreOverlay
             }
         }
         .onAppear(perform: bootstrap)
+        .onAppear { refreshUpgradeBannerState() }
+        .onReceive(NotificationCenter.default.publisher(for: .grokBuildUpdateAvailable)) { _ in
+            isUpgradeBannerDismissed = false
+            refreshUpgradeBannerState()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .grokBuildUpdateStateChanged)) { _ in
+            refreshUpgradeBannerState()
+        }
         .sheet(isPresented: $showPicker) {
             WorkspacePicker(initialDirectory: currentWorkspace?.path) { url in
                 addWorkspace(url: url)
@@ -220,6 +252,21 @@ struct ContentView: View {
             guard let workspaceID = note.userInfo?["workspaceID"] as? UUID else { return }
             for session in liveSessions where session.workspace.id == workspaceID {
                 session.store.syncWorkspaceAgentSettingsFromStorage()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
+            Task {
+                for session in liveSessions {
+                    await session.store.shutdown()
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .grokBuildRestartSessionsRequested)) { _ in
+            Task {
+                for session in liveSessions {
+                    await session.store.retryConnection()
+                }
+                NotificationCenter.default.post(name: .grokStatusChanged, object: nil)
             }
         }
     }
@@ -997,6 +1044,84 @@ struct ContentView: View {
             gitError = error.localizedDescription
         }
     }
+
+    private func refreshUpgradeBannerState() {
+        guard !isUpgradeBannerDismissed else {
+            showUpgradeBanner = false
+            bannerAppVersion = nil
+            bannerCLIVersion = nil
+            return
+        }
+
+        let appAvailable = UpdateScheduler.hasActionableAppUpdate
+        let cliAvailable = UpdateScheduler.hasActionableCLIUpdate
+
+        guard appAvailable || cliAvailable else {
+            showUpgradeBanner = false
+            bannerAppVersion = nil
+            bannerCLIVersion = nil
+            return
+        }
+
+        bannerAppVersion = appAvailable ? UpdateScheduler.cachedAppRelease?.latestVersion : nil
+        bannerCLIVersion = cliAvailable ? UpdateScheduler.cachedCLIStatus?.latestVersion : nil
+        showUpgradeBanner = true
+    }
+}
+
+private struct UpdatesBanner: View {
+    let appVersion: String?
+    let cliVersion: String?
+    let onAction: () -> Void
+    let onDismiss: () -> Void
+
+    private var subtitle: String {
+        switch (appVersion, cliVersion) {
+        case let (app?, nil):
+            return "GrokBuild \(app) is ready to download and install."
+        case let (nil, cli?):
+            return "grok CLI \(cli) is ready to update."
+        case let (app?, cli?):
+            return "GrokBuild \(app) and grok CLI \(cli) have updates ready."
+        default:
+            return "Review available updates."
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.title3)
+                .foregroundStyle(.blue)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Button(action: onAction) {
+                    Text("Updates Available")
+                        .font(.callout.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Dismiss until next launch")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
 }
 
 extension Notification.Name {
@@ -1009,4 +1134,11 @@ extension Notification.Name {
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
     static let liveSessionMessagesChanged = Notification.Name("liveSessionMessagesChanged")
     static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
+    static let grokBuildUpdateAvailable = Notification.Name("grokBuildUpdateAvailable")
+    static let grokBuildUpdateStateChanged = Notification.Name("grokBuildUpdateStateChanged")
+    static let grokBuildUpdaterPhaseChanged = Notification.Name("grokBuildUpdaterPhaseChanged")
+    static let grokBuildCLIUpdaterPhaseChanged = Notification.Name("grokBuildCLIUpdaterPhaseChanged")
+    static let grokBuildCLIUpdated = Notification.Name("grokBuildCLIUpdated")
+    static let grokBuildRestartSessionsRequested = Notification.Name("grokBuildRestartSessionsRequested")
+    static let grokBuildPrepareForShutdown = Notification.Name("grokBuildPrepareForShutdown")
 }

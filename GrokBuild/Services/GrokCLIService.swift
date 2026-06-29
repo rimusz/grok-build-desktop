@@ -472,6 +472,10 @@ final class GrokCLIService {
         _ = try await run(["plugin", "marketplace", "remove", source])
     }
 
+    func updateGrokCLI() async throws -> GrokCLIResult {
+        try await run(["update"], allowFailure: true)
+    }
+
     func listMCPServers() async throws -> [GrokMCPServerInfo] {
         let json = try await jsonValue(["mcp", "list", "--json"])
         return (json as? [[String: Any]] ?? []).map(GrokMCPServerInfo.init(dictionary:))
