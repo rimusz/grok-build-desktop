@@ -65,6 +65,50 @@ enum BrowserRuntimeMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Quick-setup presets for common browser-automation targets. Each preset returns
+/// settings tuned for that target (runtime mode, app, CDP URL, profile, visibility),
+/// leaving `enabled` and `backend` untouched so the toggle stays under user control.
+enum BrowserPreset: String, CaseIterable, Identifiable {
+    case grokCom
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .grokCom: return "grok.com (existing Chrome)"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .grokCom:
+            return "External Chrome with a separate `grok-com` profile and visible window, so you can log into grok.com once and let the agent drive Imagine, skills, and connectors."
+        }
+    }
+
+    var profileName: String {
+        switch self {
+        case .grokCom: return "grok-com"
+        }
+    }
+
+    /// Applies the preset to `settings` without changing `enabled` or `backend`.
+    func applied(to settings: BrowserSettings) -> BrowserSettings {
+        var updated = settings
+        switch self {
+        case .grokCom:
+            updated.runtimeMode = .external
+            updated.externalBrowserAppID = .chrome
+            updated.externalBrowserAppPath = ""
+            updated.cdpURL = "http://127.0.0.1:9222"
+            updated.profileName = profileName
+            updated.showBrowserWindow = true
+            updated.autoStartExternalBrowser = true
+        }
+        return updated
+    }
+}
+
 struct BrowserSettings: Sendable, Equatable {
     var enabled: Bool
     var backend: BrowserBackendID

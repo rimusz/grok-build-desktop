@@ -205,6 +205,7 @@ private struct BrowserSettingsPane: View {
                 header
                 browserToolsCard
                 statusCard
+                browserPresetsCard
                 browserRuntimeCard
                 applyCard
             }
@@ -351,6 +352,53 @@ private struct BrowserSettingsPane: View {
                 }
             }
         }
+    }
+
+    private var browserPresetsCard: some View {
+        settingsCard(title: "Quick Presets", systemImage: "wand.and.stars", tint: .purple) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("One-click setups for common automation targets. Applies runtime, browser app, CDP URL, and profile — you still enable Browser Tools and Apply yourself.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(BrowserPreset.allCases) { preset in
+                    presetRow(preset)
+                    if preset.id != BrowserPreset.allCases.last?.id { Divider() }
+                }
+            }
+        }
+    }
+
+    private func presetRow(_ preset: BrowserPreset) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(preset.displayName)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button("Apply Preset") {
+                    applyBrowserPreset(preset)
+                }
+                .controlSize(.small)
+                .buttonStyle(.bordered)
+                .tint(.purple)
+            }
+            Text(preset.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func applyBrowserPreset(_ preset: BrowserPreset) {
+        let applied = preset.applied(to: currentSettings)
+        runtimeMode = applied.runtimeMode.rawValue
+        externalBrowserAppID = applied.externalBrowserAppID.rawValue
+        externalBrowserAppPath = applied.externalBrowserAppPath
+        cdpURL = applied.cdpURL
+        profileName = applied.profileName
+        showBrowserWindow = applied.showBrowserWindow
+        autoStartExternalBrowser = applied.autoStartExternalBrowser
+        normalizeExternalBrowserSelection()
     }
 
     private var browserRuntimeCard: some View {

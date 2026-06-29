@@ -25,6 +25,7 @@ let package = Package(
                 .copy("Resources/Skills/grokbuild-browser-control"),
                 .copy("Resources/Skills/grokbuild-computer-use"),
                 .copy("Resources/Skills/grokbuild-desktop"),
+                .copy("Resources/Skills/grokbuild-grok-web"),
             ]
         ),
         .executableTarget(
