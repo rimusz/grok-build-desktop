@@ -3,8 +3,8 @@ import AppKit
 @MainActor
 enum UpdatePanel {
     private static let appName = "GrokBuild"
-    private static let skipAppVersionTitle = "Skip GrokBuild Version"
-    private static let skipCLIVersionTitle = "Skip grok CLI Version"
+    fileprivate static let skipAppVersionTitle = "Skip GrokBuild Version"
+    fileprivate static let skipCLIVersionTitle = "Skip grok CLI Version"
     private static var panel: NSPanel?
     private static var panelDelegate: PanelDelegate?
     private static var host: UpdatePanelHost?
