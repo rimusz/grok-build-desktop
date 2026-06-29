@@ -3,6 +3,8 @@ import AppKit
 @MainActor
 enum UpdatePanel {
     private static let appName = "GrokBuild"
+    private static let skipAppVersionTitle = "Skip GrokBuild Version"
+    private static let skipCLIVersionTitle = "Skip grok CLI Version"
     private static var panel: NSPanel?
     private static var panelDelegate: PanelDelegate?
     private static var host: UpdatePanelHost?
@@ -27,11 +29,7 @@ enum UpdatePanel {
             panel.contentView = rootView
             panel.setContentSize(size)
             configureWindow(panel)
-            let delegate = PanelDelegate {
-                UpdatePanel.host = nil
-                UpdatePanel.panelDelegate = nil
-                onDismiss()
-            }
+            let delegate = PanelDelegate(onClose: cleanupAndDismiss(onDismiss: onDismiss))
             panel.delegate = delegate
             panelDelegate = delegate
             panel.center()
@@ -52,11 +50,7 @@ enum UpdatePanel {
         window.hidesOnDeactivate = false
         configureWindow(window)
 
-        let delegate = PanelDelegate {
-            UpdatePanel.host = nil
-            UpdatePanel.panelDelegate = nil
-            onDismiss()
-        }
+        let delegate = PanelDelegate(onClose: cleanupAndDismiss(onDismiss: onDismiss))
         window.delegate = delegate
         panelDelegate = delegate
 
@@ -74,6 +68,14 @@ enum UpdatePanel {
         rootView.layoutSubtreeIfNeeded()
         panel.contentView = rootView
         panel.setContentSize(NSSize(width: panelWidth, height: rootView.fittingSize.height))
+    }
+
+    private static func cleanupAndDismiss(onDismiss: @escaping () -> Void) -> () -> Void {
+        {
+            UpdatePanel.host = nil
+            UpdatePanel.panelDelegate = nil
+            onDismiss()
+        }
     }
 
     private static func computedPanelWidth(for content: UpdatePanelHost.Presentation) -> CGFloat {
@@ -99,9 +101,9 @@ enum UpdatePanel {
         let buttonFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
         let buttonTitles: [String?] = [
             content.appPrimaryButtonTitle,
-            content.appShowSkipButton ? "Skip GrokBuild Version" : nil,
+            content.appShowSkipButton ? skipAppVersionTitle : nil,
             content.cliPrimaryButtonTitle,
-            content.cliShowSkipButton ? "Skip grok CLI Version" : nil,
+            content.cliShowSkipButton ? skipCLIVersionTitle : nil,
         ]
         for title in buttonTitles.compactMap({ $0 }) {
             maxWidth = max(maxWidth, textWidth(title, font: buttonFont) + 28)
@@ -288,7 +290,7 @@ private final class UpdatePanelHost: NSObject {
                     primaryAction: #selector(appPrimaryAction(_:)),
                     secondaryTitle: nil,
                     secondaryAction: nil,
-                    skipTitle: content.appShowSkipButton ? "Skip GrokBuild Version" : nil,
+                    skipTitle: content.appShowSkipButton ? UpdatePanel.skipAppVersionTitle : nil,
                     skipAction: #selector(skipAppVersion(_:))
                 )
             )
@@ -302,7 +304,7 @@ private final class UpdatePanelHost: NSObject {
                     primaryAction: #selector(cliPrimaryAction(_:)),
                     secondaryTitle: nil,
                     secondaryAction: nil,
-                    skipTitle: content.cliShowSkipButton ? "Skip grok CLI Version" : nil,
+                    skipTitle: content.cliShowSkipButton ? UpdatePanel.skipCLIVersionTitle : nil,
                     skipAction: #selector(skipCLIVersion(_:))
                 )
             )
