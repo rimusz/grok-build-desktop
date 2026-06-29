@@ -427,7 +427,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Service | `AgentBrowserService.swift` — agent-browser CLI, CDP, external browser launch |
 | MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
 | Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
-| Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/profile setup in `BrowserSettings.swift`, applied from the Browser pane |
+| Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
 | Chat UI | Status pill in `ChatView`; toggle from composer chrome |
 
 **Runtime modes:** managed Chromium vs external browser (Safari/Chrome/Arc) via CDP URL.

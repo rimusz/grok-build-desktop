@@ -38,7 +38,7 @@ Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click
 - **Managed runtime (default)** — GrokBuild installs and uses a separate automation Chrome/Chromium profile (`agent-browser install`); no CDP URL required.
 - **Existing browser** — attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP when you want Grok to use your own window.
 - Enable in **Settings → Browser**, then **Apply and Restart Grok**; toggle quickly from the chat status bar (**Browser Tools On/Off**).
-- **Quick Presets** — one-click setups for common targets, e.g. **grok.com (existing Chrome)** configures an external Chrome with a separate `grok-com` profile and a visible window so you can log in once and let the agent drive grok.com web features (Imagine, web-only skills/connectors) that the CLI doesn't expose.
+- **Quick Presets** — one-click setups for common targets, e.g. **grok.com (existing Chrome)** configures external Chrome with a dedicated `grok-com` session name and a visible window so you can log in once and let the agent drive grok.com web features (Imagine, web-only skills/connectors) that the CLI doesn't expose.
 - Installs `grokbuild-browser-control` and `grokbuild-grok-web` skills into your Grok skills folder so the agent knows the workflow (snapshot → ref-based click/type) and how to combine grok.com web with local Computer Use.
 
 ### Computer Use (desktop automation)

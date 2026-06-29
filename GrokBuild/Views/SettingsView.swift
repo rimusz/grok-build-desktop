@@ -357,7 +357,7 @@ private struct BrowserSettingsPane: View {
     private var browserPresetsCard: some View {
         settingsCard(title: "Quick Presets", systemImage: "wand.and.stars", tint: .purple) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("One-click setups for common automation targets. Applies runtime, browser app, CDP URL, and profile — you still enable Browser Tools and Apply yourself.")
+                Text("One-click setups for common automation targets. Applies runtime, browser app, CDP URL, and session name — you still enable Browser Tools and Apply yourself.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

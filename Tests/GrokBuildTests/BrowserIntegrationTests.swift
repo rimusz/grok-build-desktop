@@ -260,7 +260,7 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertTrue(contents.contains("grok.com Web"))
     }
 
-    func testGrokComBrowserPresetConfiguresExternalChromeWithSeparateProfile() {
+    func testGrokComBrowserPresetConfiguresExternalChromeWithDedicatedSessionName() {
         let preset = BrowserPreset.grokCom
         let settings = BrowserSettings(
             enabled: true,
@@ -300,4 +300,3 @@ final class BrowserIntegrationTests: XCTestCase {
             .appendingPathComponent("skills")
     }
 }
-

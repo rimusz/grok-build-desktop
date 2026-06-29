@@ -42,7 +42,7 @@ Skills ship under `GrokBuild/Resources/Skills/` and install to `~/.grok/skills/`
 - `grokbuild-computer-use` — `ComputerUseSkillInstaller`
 - `grokbuild-desktop` — bundled only (GrokBuild self-hints)
 
-Browser **quick presets** (`BrowserPreset` in `BrowserSettings.swift`) apply runtime/profile/CDP settings for common targets (e.g. `.grokCom`).
+Browser **quick presets** (`BrowserPreset` in `BrowserSettings.swift`) apply runtime/session-name/CDP settings for common targets (e.g. `.grokCom`).
 
 ## After changing CLI integration
 
