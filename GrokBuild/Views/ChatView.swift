@@ -669,7 +669,7 @@ struct ChatView: View {
                     .font(.title2)
             }
             .buttonStyle(.plain)
-            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && store.fileAttachments.isEmpty ||
+            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.hasVisibleFileAttachments ||
                       store.currentWorkspace == nil ||
                       store.authRequiredMessage != nil)
             .keyboardShortcut(.return, modifiers: .command)

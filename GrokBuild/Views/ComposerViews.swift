@@ -49,7 +49,7 @@ private struct FileChipView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
         .background(Color.primary.opacity(0.08), in: Capsule())
-        .help(attachment.path)
+        .help(attachment.isHidden ? "\(attachment.path) (excluded from prompt)" : attachment.path)
     }
 }
 
@@ -247,6 +247,7 @@ struct MicButton: View {
         }
         .buttonStyle(.plain)
         .help(helpText)
+        .accessibilityLabel(accessibilityLabel)
         .disabled(isDisabled)
     }
 
@@ -273,7 +274,16 @@ struct MicButton: View {
         case .listening: return "Listening… click to stop"
         case .transcribing: return "Transcribing…"
         case .unavailable(let msg): return msg
-        case .idle: return "Voice input"
+        case .idle: return "Voice control"
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch voice.state {
+        case .listening: return "Stop voice control"
+        case .transcribing: return "Transcribing voice control"
+        case .unavailable: return "Voice control unavailable"
+        case .idle: return "Voice control"
         }
     }
 

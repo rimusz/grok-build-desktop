@@ -13,15 +13,18 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - Streaming chat with Markdown rendering, thinking blocks, live tool activity, permission prompts, and question cards.
 - Resumable sessions with a session browser for reopening existing Grok sessions in the current project.
 - Diff review of file changes proposed during a session.
+- Multi-tab sessions with lazy restore and an LRU cap on live Grok processes (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ### Projects & workspaces
 - Persistent project sidebar with pinned projects, per-project session lists, session rename/close, and recent-session collapsing.
+- Per-project **model** and **reasoning effort** — restored when you switch projects.
 - Git branch and worktree management from the chat status row.
 - `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
 
 ### Composer
 - Fixed two-line composer with command history and slash-command autocomplete.
-- File attachments and voice input (dictation).
+- File attachments as plain paths (grok chooses how to read each file; avoids forced whole-file reads and binary failures).
+- Voice control (dictation).
 - Model, mode, and context-usage controls inline in the composer.
 
 ### Models
@@ -55,13 +58,21 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
 
 ### App experience
-- Menu bar app with built-in update checks for both GrokBuild and the `grok` CLI.
+- Menu bar item plus main window (Dock icon); single-instance app with status bar quick actions.
+- Built-in update checks for **GrokBuild** and the **`grok` CLI** (background on launch + daily; manual via **Check for Updates…**).
+- **In-app GrokBuild updates** — for signed + **notarized** releases only: background check shows a main-window banner; click **Updates Available** to open the panel, download `GrokBuild-{tag}.app.zip`, verify signature, **Install and Restart** (via bundled install helper).
+- **In-app grok CLI updates** — banner → updates panel → **Update grok CLI** runs `grok update`; live sessions stop during the upgrade and can be restarted afterward.
+- **Settings → App** — installed versions, auto-check toggle, pending update status.
 - Login-state detection with a helpful `grok login` banner.
 - Dark-mode-first visual design.
 
 ## Install
 
-Download the latest release from the [GitHub Releases page](https://github.com/rimusz/grok-build-desktop/releases), then move `GrokBuild.app` to `/Applications` (or run it from the extracted release folder).
+Download a release from the [GitHub Releases page](https://github.com/rimusz/grok-build-desktop/releases), then move `GrokBuild.app` to `/Applications` (or run it from the extracted folder).
+
+**Recommended:** choose a release titled **`(Notarized)`** — no Gatekeeper warnings, and the in-app updater only offers **notarized** builds (unsigned releases on GitHub are ignored by the updater even if they are newer).
+
+Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
 
 ### Requirements
 - macOS 26 (Tahoe) or later
@@ -70,7 +81,7 @@ Download the latest release from the [GitHub Releases page](https://github.com/r
 
 ### Opening unsigned builds
 
-Current release builds are not signed or notarized, so macOS Gatekeeper may block the app the first time you open it. Allow it with any one of these:
+Some releases are published as **`(Unsigned)`** for development. macOS Gatekeeper may block them the first time you open:
 
 1. **Right-click** `GrokBuild.app` → **Open**, then confirm **Open** (bypasses the block once).
 2. Open **System Settings → Privacy & Security** and click **Open Anyway** next to the blocked-app message.
@@ -78,6 +89,8 @@ Current release builds are not signed or notarized, so macOS Gatekeeper may bloc
    ```bash
    xattr -cr /Applications/GrokBuild.app
    ```
+
+Unsigned builds do not receive in-app GrokBuild upgrade offers. Use a notarized release for one-click updates, or build from source.
 
 ## Building from source
 
@@ -93,10 +106,14 @@ That is enough to compile the app, create the `.app` bundle and DMG, and codesig
 
 ```bash
 make build          # build the release binary
-make run            # build + launch the menu bar app
+make test           # run unit tests
+make run            # build release + launch from .build/GrokBuild.app
+make run-debug      # build debug + launch — includes menu **Simulate Updates**
 make app            # create dist/GrokBuild.app
 make dmg            # create the .app + DMG
 ```
+
+See [BUILDING.md](BUILDING.md) for packaging, signing, notarization, and GitHub releases.
 
 ### Recommended for SwiftUI work
 
@@ -106,17 +123,35 @@ If you plan to edit the SwiftUI code, install the **full Xcode** IDE from the Ap
 - Better debugging tools (view hierarchy, environment inspection)
 - A smoother experience with complex SwiftUI views
 
-You can still build from the terminal with `make` or `swift build` with full Xcode installed.
+You can still build from the terminal with `make` or `swift build` with full Xcode installed:
+
+```bash
+xed .          # open Package.swift in Xcode
+```
 
 ### Signing & notarization
 
 ```bash
+cp .env.example .env   # optional: SIGN_IDENTITY, NOTARY_PROFILE
 make signed SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 make notarize NOTARY_PROFILE=AC_PASSWORD
+make release RELEASE_TYPE=notarized
 ```
 
-Signing requires a **Developer ID Application** certificate, and notarization requires App Store Connect access. See [BUILDING.md](BUILDING.md) for full packaging, signing, and notarization instructions (including GitHub Actions).
+Signing requires a **Developer ID Application** certificate, and notarization requires App Store Connect access. Full details: [BUILDING.md](BUILDING.md).
+
+### Developer documentation
+
+| Doc | Purpose |
+|-----|---------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **Start here** — app structure, data flow, persistence, updates, common tasks → files |
+| [AGENTS.md](AGENTS.md) | Agent/copilot entry point |
+| [BUILDING.md](BUILDING.md) | Build, sign, notarize, release CI |
+
+Debug builds (`make run-debug`) include a menu-bar **Simulate Updates** submenu for testing the update UI without publishing releases. It is compiled out of release builds (`make run`, `make app`, GitHub releases).
 
 ### Notes
 
-The menu bar icon lives in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/` and is copied into the app bundle during the build (raw PNGs at the project root also work as a fallback).
+- Version strings come from `VERSION` → `AppVersion.display`.
+- The menu bar icon lives in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/` and is copied into the app bundle during the build.
+- Bundled grok skills and the in-app install helper are copied into the `.app` at package time (`scripts/build-macos-app.sh`).

@@ -24,7 +24,6 @@ EXECUTABLE_NAME="GrokBuild"
 SCHEME="GrokBuild"
 CONFIGURATION="Release"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
-BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
 
 BUILD_DIR="$ROOT_DIR/.build"
 DIST_DIR="$ROOT_DIR/dist"
@@ -89,6 +88,11 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
         cp "$ROOT_DIR/scripts/grokbuild-browser-mcp" "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
         chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-browser-mcp"
         echo "==> Copied browser MCP bridge"
+    fi
+    if [ -f "$ROOT_DIR/scripts/grokbuild-install-update.sh" ]; then
+        cp "$ROOT_DIR/scripts/grokbuild-install-update.sh" "$APP_BUNDLE/Contents/Resources/grokbuild-install-update"
+        chmod +x "$APP_BUNDLE/Contents/Resources/grokbuild-install-update"
+        echo "==> Copied install-update helper"
     fi
     if [ -d "$ROOT_DIR/GrokBuild/Resources/Skills" ]; then
         mkdir -p "$APP_BUNDLE/Contents/Resources/Skills"
@@ -187,15 +191,15 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
     <key>CFBundleShortVersionString</key>
     <string>$APP_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>$BUILD_NUMBER</string>
+    <string>$APP_VERSION</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>GrokBuild uses the microphone for voice input in the chat composer.</string>
+    <string>GrokBuild uses the microphone for voice control in the chat composer.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>GrokBuild transcribes your speech to text for chat messages.</string>
+    <string>GrokBuild transcribes your speech to text for chat messages using voice control.</string>
 </dict>
 </plist>
 EOF

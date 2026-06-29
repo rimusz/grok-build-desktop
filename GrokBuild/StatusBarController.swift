@@ -20,15 +20,13 @@ class StatusBarController: NSObject {
 
         statusItem.menu = menu
 
-        // Single-instance support: listen for "show me" requests from other launches
-        DistributedNotificationCenter.default().addObserver(
+        DistributedNotificationCenter.default.addObserver(
             self,
             selector: #selector(handleExternalShowMainWindow),
             name: NSNotification.Name("com.grokbuild.showMainWindow"),
             object: nil
         )
 
-        // Observe status for live dot indicator
         NotificationCenter.default.addObserver(
             forName: .grokStatusChanged,
             object: nil,
@@ -49,24 +47,43 @@ class StatusBarController: NSObject {
             }
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .grokBuildUpdateAvailable,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshUpdateMenuItem()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .grokBuildUpdateStateChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshUpdateMenuItem()
+            }
+        }
+
         updateIcon(for: .idle)
-        updateAuthIndicator(authenticated: true) // default until we know
+        updateAuthIndicator(authenticated: true)
+        Task { @MainActor in
+            self.refreshUpdateMenuItem()
+        }
     }
 
     private func setupStatusItem() {
         guard let button = statusItem.button else { return }
 
-        // Menu bar icon is in GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/
-        // The packaging script copies the PNGs into Contents/Resources/.
-        // We prefer NSImage(named:) or direct resource lookup; falls back to SF Symbol.
         let iconImage: NSImage? = GrokBrandIcon.mark()
 
         if let image = iconImage {
             image.size = NSSize(width: 22, height: 22)
-            image.isTemplate = true  // Important: makes it adapt to light/dark menu bar and system tint
+            image.isTemplate = true
             button.image = image
         } else {
-            // Fallback
             button.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "GrokBuild")
         }
 
@@ -84,7 +101,6 @@ class StatusBarController: NSObject {
     private var grokBuildTitleItem: NSMenuItem!
     private var updateCheckItem: NSMenuItem!
     private func setupMenu() {
-        // Status with auth dot
         grokBuildTitleItem = NSMenuItem(title: menuTitle(authenticated: true), action: nil, keyEquivalent: "")
         grokBuildTitleItem.isEnabled = false
         menu.addItem(grokBuildTitleItem)
@@ -99,6 +115,11 @@ class StatusBarController: NSObject {
         updateCheckItem.target = self
         menu.addItem(updateCheckItem)
 
+#if DEBUG
+        menu.addItem(.separator())
+        menu.addItem(makeSimulateUpdatesMenuItem())
+#endif
+
         menu.addItem(.separator())
 
         let viewUsageItem = NSMenuItem(title: "View Usage on grok.com…", action: #selector(openUsagePage), keyEquivalent: "")
@@ -107,14 +128,12 @@ class StatusBarController: NSObject {
 
         menu.addItem(.separator())
 
-        // Open the normal Dock app window
         let openItem = NSMenuItem(title: "Open GrokBuild", action: #selector(openGrokBuild), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
 
         menu.addItem(.separator())
 
-        // New Session
         let newSessionItem = NSMenuItem(title: "New Session", action: #selector(newSession), keyEquivalent: "n")
         newSessionItem.target = self
         menu.addItem(newSessionItem)
@@ -125,14 +144,12 @@ class StatusBarController: NSObject {
 
         menu.addItem(.separator())
 
-        // Quick actions
         let chooseWorkspace = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "")
         chooseWorkspace.target = self
         menu.addItem(chooseWorkspace)
 
         menu.addItem(.separator())
 
-        // Quit
         let quitItem = NSMenuItem(title: "Quit GrokBuild", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -143,15 +160,13 @@ class StatusBarController: NSObject {
     }
 
     @objc private func handleExternalShowMainWindow() {
-        // Called via DistributedNotificationCenter when another instance
-        // of the app tried to launch. Show the main window and bring us forward.
         DispatchQueue.main.async { [weak self] in
             self?.showMainWindow()
         }
     }
 
     deinit {
-        DistributedNotificationCenter.default().removeObserver(self)
+        DistributedNotificationCenter.default.removeObserver(self)
     }
 
     @objc private func openGrokBuild() {
@@ -181,19 +196,18 @@ class StatusBarController: NSObject {
         updateCheckItem.isEnabled = false
         updateCheckItem.title = "Checking for Updates…"
 
-        Task { [weak self] in
-            async let appResult = Self.fetchAppUpdateResult()
-            async let cliStatus = UpdateChecker.checkGrokCLI()
-            let (app, cli) = await (appResult, cliStatus)
-            await self?.presentUpdateResults(app: app, cli: cli)
-        }
-    }
+        Task { @MainActor [weak self] in
+            self?.statusItem.menu?.cancelTracking()
+            await UpdateScheduler.checkNow()
+            self?.resetUpdateMenuItem()
 
-    private static func fetchAppUpdateResult() async -> Result<UpdateChecker.AppRelease, Error> {
-        do {
-            return .success(try await UpdateChecker.checkAppRelease())
-        } catch {
-            return .failure(error)
+            if UpdateScheduler.hasAnyActionableUpdate {
+                self?.showMainWindow()
+            } else {
+                await UpdateUI.presentUpdatePanel(refresh: false) { [weak self] in
+                    self?.resetUpdateMenuItem()
+                }
+            }
         }
     }
 
@@ -208,23 +222,91 @@ class StatusBarController: NSObject {
     }
 
     @MainActor
-    private func presentUpdateResults(
-        app: Result<UpdateChecker.AppRelease, Error>,
-        cli: UpdateChecker.GrokCLIStatus
-    ) {
-        statusItem.menu?.cancelTracking()
-        UpdatePanel.show(app: app, cli: cli) { [weak self] in
-            self?.resetUpdateMenuItem()
-        }
-    }
-
-    @MainActor
     private func resetUpdateMenuItem() {
-        updateCheckItem.title = "Check for Updates…"
+        refreshUpdateMenuItem()
         updateCheckItem.isEnabled = true
     }
 
-    // MARK: - Status dot indicator (reused from referenced repo)
+    @MainActor
+    private func refreshUpdateMenuItem() {
+        if UpdateScheduler.hasAnyActionableUpdate {
+            updateCheckItem.title = "Upgrade Available…"
+        } else {
+            updateCheckItem.title = "Check for Updates…"
+        }
+    }
+
+#if DEBUG
+    private func makeSimulateUpdatesMenuItem() -> NSMenuItem {
+        let submenu = NSMenu()
+
+        let appItem = NSMenuItem(
+            title: "App Update Available",
+            action: #selector(simulateAppUpdate),
+            keyEquivalent: ""
+        )
+        appItem.target = self
+        submenu.addItem(appItem)
+
+        let cliItem = NSMenuItem(
+            title: "grok CLI Update Available",
+            action: #selector(simulateCLIUpdate),
+            keyEquivalent: ""
+        )
+        cliItem.target = self
+        submenu.addItem(cliItem)
+
+        let bothItem = NSMenuItem(
+            title: "Both Updates Available",
+            action: #selector(simulateBothUpdates),
+            keyEquivalent: ""
+        )
+        bothItem.target = self
+        submenu.addItem(bothItem)
+
+        submenu.addItem(.separator())
+
+        let clearItem = NSMenuItem(
+            title: "Clear Simulation",
+            action: #selector(clearSimulatedUpdates),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        submenu.addItem(clearItem)
+
+        let item = NSMenuItem(title: "Simulate Updates", action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func simulateAppUpdate() {
+        Task { @MainActor in
+            UpdateDebugSimulator.apply(.app)
+            self.refreshUpdateMenuItem()
+        }
+    }
+
+    @objc private func simulateCLIUpdate() {
+        Task { @MainActor in
+            UpdateDebugSimulator.apply(.cli)
+            self.refreshUpdateMenuItem()
+        }
+    }
+
+    @objc private func simulateBothUpdates() {
+        Task { @MainActor in
+            UpdateDebugSimulator.apply(.both)
+            self.refreshUpdateMenuItem()
+        }
+    }
+
+    @objc private func clearSimulatedUpdates() {
+        Task { @MainActor in
+            await UpdateDebugSimulator.clear()
+            self.refreshUpdateMenuItem()
+        }
+    }
+#endif
 
     private func updateIcon(for status: GrokStatus) {
         guard let button = statusItem.button else { return }
@@ -257,7 +339,6 @@ class StatusBarController: NSObject {
         icon.size = NSSize(width: 22, height: 22)
 
         if dotColor == .clear {
-            // No status dot — use the base template icon directly (cleanest rendering, no extra composition)
             button.image = icon
         } else {
             let size = NSSize(width: 22, height: 22)
@@ -269,7 +350,6 @@ class StatusBarController: NSObject {
                 NSBezierPath(ovalIn: dotRect).fill()
                 return true
             }
-            // The main symbol is template-tinted; the dot is drawn on top in its native color
             composedImage.isTemplate = true
             button.image = composedImage
         }
@@ -297,5 +377,4 @@ class StatusBarController: NSObject {
         image.isTemplate = false
         return image
     }
-
 }

@@ -20,8 +20,8 @@ await GrokCLIService.versionDisplayLine()
 GrokProcess — grok agent … stdio, ACP events
 
 // Updates
-UpdateChecker.checkAppRelease()
-UpdateChecker.checkGrokCLI()
+UpdateChecker.checkAppRelease()   // notarized GitHub releases only
+UpdateChecker.checkGrokCLI()      // grok update --check --json
 ```
 
 ## Auth & status bar
@@ -34,9 +34,22 @@ UpdateChecker.checkGrokCLI()
 
 Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `permissionMode`, etc. Passed to `GrokLaunchOptions` in `ChatStore`.
 
-## Bundled skill
+## Bundled skills
 
-Browser automation skill ships at `GrokBuild/Resources/Skills/grokbuild-browser-control/SKILL.md`. Installed to `~/.grok/skills/` by `BrowserSkillInstaller` when browser tools are enabled.
+Skills ship under `GrokBuild/Resources/Skills/` and install to `~/.grok/skills/` when features are enabled:
+- `grokbuild-browser-control` — `BrowserSkillInstaller`
+- `grokbuild-computer-use` — `ComputerUseSkillInstaller`
+- `grokbuild-desktop` — bundled only (GrokBuild self-hints)
+
+## After changing CLI integration
+
+Same session, before finishing:
+
+1. **`make test`** — extend `UpdateCheckerTests`, integration tests, or service tests as appropriate.
+2. **`ARCHITECTURE.md`** — GrokProcess/ACP flow, persistence keys, notifications, feature subsystem table.
+3. **`README.md`** — if user-visible CLI/settings behavior changed.
+4. **This skill** + `grok-cli-integration.mdc` — if APIs or update-check behavior changed.
+5. **Bundled skill `SKILL.md`** — if install path, tools, or agent instructions changed.
 
 ## Workspace instructions
 

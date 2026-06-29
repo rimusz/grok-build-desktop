@@ -97,16 +97,6 @@ EOF
   fi
 }
 
-read_build_number() {
-  build_number="$(tr -d '[:space:]' < BUILD_NUMBER)"
-  tracked_version="$(tr -d '[:space:]' < BUILD_NUMBER_VERSION)"
-
-  if [ "$tracked_version" != "$app_version" ]; then
-    echo "ERROR: BUILD_NUMBER_VERSION ($tracked_version) does not match VERSION ($app_version) after build."
-    exit 1
-  fi
-}
-
 ensure_release_tag() {
   local tag="$1"
   local head_sha
@@ -166,12 +156,10 @@ else
   create_dmg
 fi
 
-read_build_number
-
 if [ "$RELEASE_TYPE" = "notarized" ]; then
-  release_name="${tag_name} (${build_number}) (Notarized)"
+  release_name="${tag_name} (Notarized)"
 else
-  release_name="${tag_name} (${build_number}) (Unsigned)"
+  release_name="${tag_name} (Unsigned)"
 fi
 
 echo "==> Zipping app..."

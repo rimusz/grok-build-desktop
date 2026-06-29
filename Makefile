@@ -41,14 +41,16 @@ GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 NC     := \033[0m
 
-.PHONY: help build test run app install dmg dmg-package signed clean open notarize release bump-build-number
+.PHONY: help build build-debug test run run-debug run-app app install dmg dmg-package signed clean open notarize release
 
 help: ## Show this help
 	@echo "GrokBuild macOS Build Commands"
 	@echo ""
 	@echo "  $(YELLOW)make build$(NC)            Build release binary (SwiftPM)"
+	@echo "  $(YELLOW)make build-debug$(NC)      Build debug binary (Simulate Updates menu)"
 	@echo "  $(YELLOW)make test$(NC)             Run unit tests"
-	@echo "  $(YELLOW)make run$(NC)              Build + launch the menu bar app"
+	@echo "  $(YELLOW)make run$(NC)              Build release + launch the menu bar app"
+	@echo "  $(YELLOW)make run-debug$(NC)        Build debug + launch (dev tools, Simulate Updates)"
 	@echo "  $(YELLOW)make app$(NC)              Package .app into dist/"
 	@echo "  $(YELLOW)make install$(NC)          Package .app and copy to /Applications/ (signs if SIGN_IDENTITY in .env)"
 	@echo "  $(YELLOW)make dmg$(NC)              Build .app + DMG (auto-notarizes + re-DMG if NOTARY_PROFILE set)"
@@ -65,11 +67,19 @@ help: ## Show this help
 	@echo "Release example: make release   # uses RELEASE_TYPE from .env when set"
 	@echo "Notarized release: make release RELEASE_TYPE=notarized SIGN_IDENTITY=... NOTARY_PROFILE=..."
 
-bump-build-number: ## Increment BUILD_NUMBER
-	@chmod +x scripts/bump-build-number.sh
-	@./scripts/bump-build-number.sh
+build-debug: ## Build using SwiftPM (Debug) - includes Simulate Updates menu
+	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (debug)...$(NC)"
+	@swift build
+	@chmod +x .build/debug/GrokBuild 2>/dev/null || true
+	@chmod +x .build/debug/GrokBuildComputerUseMCP 2>/dev/null || true
+	@mkdir -p .build/debug
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon.png .build/debug/ 2>/dev/null || true
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png .build/debug/ 2>/dev/null || true
+	@cp -f GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@3x.png .build/debug/ 2>/dev/null || true
+	@cp -f AppIcon.png .build/debug/ 2>/dev/null || true
+	@echo "$(GREEN)==> Debug build complete. Use 'make run-debug' for Simulate Updates.$(NC)"
 
-build: bump-build-number ## Build using SwiftPM (Release) - recommended
+build: ## Build using SwiftPM (Release) - recommended
 	@echo "$(GREEN)==> Building $(APP_NAME) with SwiftPM (release)...$(NC)"
 	@swift build -c release
 	@chmod +x .build/release/GrokBuild 2>/dev/null || true
@@ -85,10 +95,16 @@ test: ## Run unit tests
 	@echo "$(GREEN)==> Running unit tests...$(NC)"
 	@swift test
 
-run: build ## Build + launch the menu bar app
-	@echo "$(GREEN)==> Packaging dev app bundle...$(NC)"
+run: build ## Build release + launch the menu bar app
+	@$(MAKE) run-app BUILD_CONFIG=release
+
+run-debug: build-debug ## Build debug + launch (includes Simulate Updates menu)
+	@$(MAKE) run-app BUILD_CONFIG=debug
+
+run-app:
+	@echo "$(GREEN)==> Packaging dev app bundle ($(BUILD_CONFIG))...$(NC)"
 	@chmod +x scripts/build-dev-app.sh
-	@./scripts/build-dev-app.sh
+	@BUILD_CONFIG=$(BUILD_CONFIG) ./scripts/build-dev-app.sh
 	@echo "$(GREEN)==> Starting GrokBuild...$(NC)"
 	@pkill -x GrokBuild 2>/dev/null || true
 	@sleep 0.2
@@ -164,7 +180,7 @@ install: signed ## Copy .app to /Applications/ (codesigns when SIGN_IDENTITY is 
 signed: app
 
 # If someone runs `make app` with SIGN_IDENTITY, pass it through
-app: bump-build-number ## Build the .app bundle (with icon). Signs when SIGN_IDENTITY is set in .env
+app: ## Build the .app bundle (with icon). Signs when SIGN_IDENTITY is set in .env
 	@if [ -n "$(SIGN_IDENTITY)" ]; then \
 		./scripts/build-macos-app.sh --sign "$(SIGN_IDENTITY)"; \
 	else \

@@ -22,3 +22,4 @@ alwaysApply: false
 
 - Large refactors unrelated to the task.
 - Blocking the main thread for CLI calls — use `Task` + `GrokCLIService` async APIs.
+- Finishing with code-only diffs — update `ARCHITECTURE.md`, tests, and user docs per `docs-and-tests.mdc`.

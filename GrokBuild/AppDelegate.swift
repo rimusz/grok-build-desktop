@@ -55,6 +55,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         statusBarController = StatusBarController()
+        UpdateScheduler.start()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(openMainWindowRequested),

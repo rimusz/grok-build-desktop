@@ -10,13 +10,21 @@ SwiftPM macOS menu-bar app — UI for `grok agent stdio`, not a replacement for 
 ## Key facts
 
 - Target: `GrokBuild/` executable, entry `main.swift` + `AppDelegate` (not `GrokBuildApp.swift` @main).
-- Version: `VERSION` and `BUILD_NUMBER` files → `AppVersion.display`.
+- Version: `VERSION` file → `AppVersion.display`.
 - Build: `make run`, `make test`, `make app`, `make release` (see `BUILDING.md`).
-- Full reference: `RTK.md`, agent entry: `AGENTS.md`.
+- Full reference: `ARCHITECTURE.md`, agent entry: `AGENTS.md`.
 
 ## When editing
 
 - Keep changes focused; reuse existing services and notification names.
 - Do not add an Xcode project; stay on SwiftPM + Makefile scripts.
 - Menu bar icon: `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/`.
+- **Docs + tests required** with every code change — see `.cursor/rules/docs-and-tests.mdc`.
 - Only commit when the user explicitly asks.
+
+## Key docs
+
+- `ARCHITECTURE.md` — canonical app map (update when structure/flow changes)
+- `AGENTS.md` — agent entry
+- `BUILDING.md` — build, sign, release
+- `README.md` — user-facing features

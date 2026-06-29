@@ -2,6 +2,8 @@
 
 GrokBuild is built with **Swift Package Manager** (SPM). No Xcode project is required.
 
+For how the app works internally (sessions, MCP, updates, persistence), see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## To Build & Run (Minimal Setup)
 
 You only need **Xcode Command Line Tools**:
@@ -19,16 +21,19 @@ This is sufficient for:
 
 ```bash
 make build          # or: swift build -c release
-make run            # builds + launches the menu bar app
-make test           # run unit tests (or: swift test)
+make test           # unit tests (Tests/GrokBuildTests/)
+make run            # builds + launches .build/GrokBuild.app (release)
+make run-debug      # debug build — includes Simulate Updates menu (see below)
 ```
 
-You can also run directly:
+You can also run the raw binary:
 
 ```bash
 swift build -c release
 ./.build/release/GrokBuild
 ```
+
+`make run` uses `scripts/build-dev-app.sh` for a lightweight `.app` wrapper; `make app` produces a full `dist/GrokBuild.app` for distribution.
 
 ## For Development (Recommended)
 
@@ -47,16 +52,44 @@ xed .          # open Package.swift in Xcode
 
 Then select the `GrokBuild` scheme.
 
+### Testing update UI locally
+
+Debug builds (`make run-debug`) include a menu-bar **Simulate Updates** submenu (`#if DEBUG` — absent from release/`make run`/`make app` binaries). Use it to exercise the banner and update panel without publishing GitHub releases. Simulated app install relaunches GrokBuild (no binary swap); simulated CLI updates never run `grok update`.
+
+To test real update flows:
+- **CLI:** `grok update --version <older>` then **Check for Updates…** → click **Updates Available** on the banner → **Update grok CLI**
+- **App:** install an older notarized build from `/Applications`, or temporarily lower `VERSION` before `make app`; the in-app updater only offers **notarized** GitHub releases (see [In-app updates](#in-app-updates) below)
+
 ## Packaging
 
 ```bash
-make app     # creates a distributable .app bundle (includes MenuBarIcon)
+make app     # creates dist/GrokBuild.app (bundles skills, install helper, agent-desktop)
 make dmg     # creates .app + DMG
 ```
 
-Output goes to `dist/GrokBuild.app` and `dist/GrokBuild-macOS.dmg`. GitHub release assets are published as versioned names, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
+Output:
+- `dist/GrokBuild.app`
+- `dist/GrokBuild-macOS.dmg`
 
-The build script automatically copies the menu bar icon (from the asset catalog under `GrokBuild/Resources/...` or project root) into `Contents/Resources/`.
+GitHub release assets use versioned names, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
+
+The build script (`scripts/build-macos-app.sh`) also:
+- Copies menu bar icon assets into `Contents/Resources/`
+- Bundles `Resources/Skills/` into the app
+- Copies `scripts/grokbuild-install-update.sh` → `Contents/Resources/grokbuild-install-update` (in-app upgrade helper)
+- Bundles `agent-desktop` into `Contents/MacOS/` when present on the build machine (CI installs it via npm)
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/build-macos-app.sh` | Assemble `dist/GrokBuild.app`, optional `--sign` |
+| `scripts/build-dev-app.sh` | Lightweight `.build/GrokBuild.app` for `make run` |
+| `scripts/notarize.sh` | Submit signed app to Apple notary service + staple |
+| `scripts/release.sh` | Local GitHub release publish (`make release`) |
+| `scripts/grokbuild-install-update.sh` | Used by the app at **Install and Restart** — wait for PID, `ditto` replace bundle, relaunch |
+
+See also [scripts/README.md](scripts/README.md).
 
 ## Codesigning / Distribution
 
@@ -130,13 +163,13 @@ You only need to set `NOTARY_PROFILE` once per shell or in your environment.
 You can also run directly:
 
 ```bash
-./scripts/notarize.sh
+./scripts/notarize.sh dist/GrokBuild.app
 ```
 
 With custom profile:
 
 ```bash
-NOTARY_PROFILE=myprofile ./scripts/notarize.sh
+NOTARY_PROFILE=myprofile ./scripts/notarize.sh dist/GrokBuild.app
 ```
 
 Create the keychain profile once:
@@ -146,70 +179,101 @@ xcrun notarytool store-credentials "APPLE_CONNECT_PASSWORD" \
   --apple-id your@email.com --team-id YOURTEAMID
 ```
 
+## In-app updates
+
+GrokBuild ships a custom updater (not Sparkle). Two paths:
+
+| Target | Mechanism |
+|--------|-----------|
+| **GrokBuild app** | Download `GrokBuild-{tag}.app.zip` from GitHub, verify codesign + Gatekeeper, replace bundle via `grokbuild-install-update` |
+| **grok CLI** | Run `grok update` after shutting down live sessions |
+
+### Notarized releases only (app)
+
+`UpdateChecker` scans GitHub releases and picks the newest release marked **notarized**:
+- Release **title** contains `(Notarized)`, e.g. `v0.1.10 (Notarized)`
+- Or release **notes** contain `properly code-signed and notarized`
+
+**Unsigned releases are never offered** in-app, even if they are the newest tag. Publish notarized builds for users who rely on one-click upgrades.
+
+Implementation: `GrokBuild/Services/UpdateChecker.swift`, `AppUpdater.swift`, `GrokCLIUpdater.swift`, `UpdatePanel.swift`. Full flow: [ARCHITECTURE.md — In-app updates](ARCHITECTURE.md#in-app-updates).
+
+### Install helper
+
+At **Install and Restart**, `AppUpdater` execs the bundled bash script:
+
+```
+Contents/Resources/grokbuild-install-update
+```
+
+Source: `scripts/grokbuild-install-update.sh` (copied during `make app`). It waits for the running app PID, replaces the bundle with `ditto`, and reopens the app.
+
+In-app install requires:
+- A writable install location (typically `/Applications`)
+- Downloaded zip passing signature verification
+- Matching Team ID when the installed app is signed
+
 ## GitHub Releases
 
-There are two ways to publish a release. Use one path per version — not both.
+There are two ways to publish a release: **GitHub Actions** (recommended) or **local `make release`**. Use one path per version — not both at once.
+
+Release title format (both paths):
+- `v{VERSION} (Notarized)` — signed + notarized; **required for in-app app updates**
+- `v{VERSION} (Unsigned)` — development builds; Gatekeeper workarounds in release notes
 
 ### CI (recommended)
 
-See `.github/workflows/release.yml`:
+Workflow: `.github/workflows/release.yml`
 
-1. Bump `VERSION` (and `BUILD_NUMBER` if needed), commit, and push.
-2. Create and push a matching tag:
+**Trigger:** **Actions → Release → Run workflow** (manual dispatch only). Tag push auto-release is currently disabled in the workflow file.
 
-```bash
-git tag v0.1.4
-git push origin v0.1.4
-```
+Inputs:
+- `release_type`: `notarized` (default) or `unsigned`
+- `version`: optional tag override; must match `VERSION` (e.g. `v0.1.11`)
 
-- **Tag push** (`v*`): publishes an **unsigned** release with versioned assets, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0.1.10-macOS.dmg`.
-- **Manual workflow dispatch** (choose `notarized`): builds a signed + notarized release using repo secrets.
-
-#### CI: unsigned (tag push)
+Steps before dispatch:
+1. Bump `VERSION`.
+2. Commit and push to the branch you are releasing from.
 
 ```mermaid
 flowchart LR
-  A[git push v0.1.4] --> B[GitHub Actions]
-  B --> C[make app + make dmg]
-  C --> D[Zip .app]
-  D --> E[Create GitHub Release]
+  A[Manual workflow dispatch] --> B{release_type}
+  B -->|unsigned| C[make app + dmg]
+  B -->|notarized| D[Import cert + make signed]
+  D --> E[notarize.sh + dmg]
+  C --> F[Zip + GitHub Release]
+  E --> F
 ```
 
-No signing. Same output as `make release` locally (unsigned default).
+#### Notarized CI release (default)
 
-#### CI: signed + notarized (manual dispatch only)
-
-Triggered from **Actions → Release → Run workflow** with `release_type: notarized`. **Not** triggered by tag push.
-
-```mermaid
-flowchart LR
-  A[Manual dispatch] --> B[Import p12 cert from secrets]
-  B --> C[make signed]
-  C --> D[notarize.sh]
-  D --> E[make dmg]
-  E --> F[Zip + GitHub Release]
-```
-
-**Repo secrets used:**
+Requires repo secrets:
 
 | Secret | Purpose |
 |--------|---------|
 | `MACOS_CERTIFICATE` | Base64-encoded `.p12` Developer ID cert |
 | `MACOS_CERTIFICATE_PWD` | Password for the `.p12` |
 | `SIGN_IDENTITY` | Codesign identity (defaults to `Developer ID Application`) |
+| `APPLE_API_KEY_ID` | App Store Connect API key ID |
+| `APPLE_API_ISSUER_ID` | App Store Connect issuer ID |
+| `APPLE_API_KEY_BASE64` | Base64-encoded `.p8` API key |
 
-**Notarization on CI:** `notarize.sh` supports Apple API keys (`APPLE_API_KEY_PATH`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`) for headless runners. Keychain profiles (`NOTARY_PROFILE`) work locally but not on ephemeral CI machines — wire API key secrets into the workflow if you use notarized CI releases.
+CI installs `agent-desktop` globally (`npm install -g agent-desktop`) before building so it can be bundled into the app.
+
+#### Unsigned CI release
+
+Select `release_type: unsigned` in the workflow dispatch. No signing secrets required. Release notes include Gatekeeper bypass instructions.
+
+**Notarization on CI:** `notarize.sh` supports Apple API keys (`APPLE_API_KEY_*`) for headless runners. Keychain profiles (`NOTARY_PROFILE`) work locally but not on ephemeral CI machines.
 
 **Local vs CI credentials:**
 
 | | Local (`.env` / keychain) | CI (GitHub secrets) |
 |--|---------------------------|---------------------|
 | Signing | `SIGN_IDENTITY` in Keychain | `MACOS_CERTIFICATE` p12 imported per job |
-| Notarization | `NOTARY_PROFILE` (keychain) | Apple API key env vars (recommended) |
+| Notarization | `NOTARY_PROFILE` (keychain) | Apple API key env vars |
 
-Release title format: `v{VERSION} ({BUILD_NUMBER}) (Unsigned)` or `(Notarized)`.
-
-The release body includes download links, Gatekeeper notes for unsigned builds, and auto-generated changelog notes from merged PRs/commits.
+The workflow creates/updates the GitHub release for tag `v{VERSION}` with versioned `.app.zip` and `.dmg` assets plus generated changelog notes.
 
 ### Local (`make release`)
 
@@ -221,7 +285,7 @@ For publishing entirely from your Mac (requires [GitHub CLI](https://cli.github.
 make release
 ```
 
-`make release` is **local only**. It mirrors the CI release workflow: same naming, notes, and assets. By default it produces an **unsigned** build — same as pushing a `v*` tag.
+`make release` runs `scripts/release.sh`: builds, zips, creates/updates the GitHub release, and pushes tag `v{VERSION}` if needed.
 
 **Notarized local release** (with `.env` configured):
 
@@ -248,7 +312,15 @@ make release RELEASE_TYPE=notarized \
 
 The tag is derived from `VERSION` (e.g. `0.1.4` → `v0.1.4`). If a release for that tag already exists, assets and notes are updated in place.
 
-Implementation: `scripts/release.sh` (invoked by the Makefile `release` target).
+## SPM targets
+
+| Target | Output |
+|--------|--------|
+| `GrokBuild` | Main menu-bar app |
+| `GrokBuildComputerUseMCP` | Stdio MCP bridge → `agent-desktop` (bundled/copied at app build) |
+| `GrokBuildTests` | Unit tests |
+
+Platform: macOS 26+ (`Package.swift`).
 
 ## Icon
 
@@ -258,6 +330,13 @@ The menu bar icon lives in the asset catalog:
 - `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/MenuBarIcon@2x.png` (recommended)
 - `...@3x.png` (also supported)
 
-The build script automatically finds the icon from the asset catalog (or as a fallback from the project root) and copies the PNGs into `Contents/Resources/`. 
+The build script copies these into `Contents/Resources/`. No need to duplicate PNGs at the project root.
 
-No need to place duplicate files at the project root — the files already in the imageset are used.
+## Related docs
+
+| Doc | Use |
+|-----|-----|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | App architecture, persistence, updates, task → file map |
+| [AGENTS.md](AGENTS.md) | Agent entry point |
+| [README.md](README.md) | User-facing feature list |
+| [scripts/README.md](scripts/README.md) | Build script overview |
