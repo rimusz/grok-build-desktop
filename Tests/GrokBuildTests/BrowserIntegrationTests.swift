@@ -240,6 +240,50 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: BrowserSkillInstaller.skillURL(inSkillsRoot: skillsRoot).path))
     }
 
+    func testBrowserSkillInstallerAlsoInstallsGrokWebSkillWhenEnabled() throws {
+        let skillsRoot = temporarySkillsRootURL()
+        defer { try? FileManager.default.removeItem(at: skillsRoot) }
+
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .agentBrowser,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false
+        )
+
+        try BrowserSkillInstaller.installIfNeeded(settings: settings, skillsRoot: skillsRoot)
+
+        let grokWebSkill = BrowserSkillInstaller.skillURL(named: "grokbuild-grok-web", inSkillsRoot: skillsRoot)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: grokWebSkill.path))
+        let contents = try String(contentsOf: grokWebSkill, encoding: .utf8)
+        XCTAssertTrue(contents.contains("grok.com Web"))
+    }
+
+    func testGrokComBrowserPresetConfiguresExternalChromeWithDedicatedSessionName() {
+        let preset = BrowserPreset.grokCom
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .agentBrowser,
+            runtimeMode: .managed,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false
+        )
+
+        let applied = preset.applied(to: settings)
+
+        XCTAssertEqual(applied.runtimeMode, .external)
+        XCTAssertEqual(applied.externalBrowserAppID, .chrome)
+        XCTAssertEqual(applied.cdpURL, "http://127.0.0.1:9222")
+        XCTAssertEqual(applied.profileName, "grok-com")
+        XCTAssertTrue(applied.showBrowserWindow)
+        XCTAssertTrue(applied.autoStartExternalBrowser)
+        // Preset must not flip the user's enable toggle or change the backend.
+        XCTAssertEqual(applied.enabled, settings.enabled)
+        XCTAssertEqual(applied.backend, settings.backend)
+    }
+
     private func restore(_ value: Any?, forKey key: String) {
         if let value {
             UserDefaults.standard.set(value, forKey: key)
@@ -256,4 +300,3 @@ final class BrowserIntegrationTests: XCTestCase {
             .appendingPathComponent("skills")
     }
 }
-

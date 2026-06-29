@@ -38,8 +38,11 @@ Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `
 
 Skills ship under `GrokBuild/Resources/Skills/` and install to `~/.grok/skills/` when features are enabled:
 - `grokbuild-browser-control` — `BrowserSkillInstaller`
+- `grokbuild-grok-web` — `BrowserSkillInstaller` (installed alongside browser-control when browser tools enabled; drives grok.com web features like Imagine/skills/connectors via browser tools)
 - `grokbuild-computer-use` — `ComputerUseSkillInstaller`
 - `grokbuild-desktop` — bundled only (GrokBuild self-hints)
+
+Browser **quick presets** (`BrowserPreset` in `BrowserSettings.swift`) apply runtime/session-name/CDP settings for common targets (e.g. `.grokCom`).
 
 ## After changing CLI integration
 

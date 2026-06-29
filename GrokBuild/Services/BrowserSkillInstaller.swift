@@ -2,6 +2,7 @@ import Foundation
 
 enum BrowserSkillInstaller {
     static let skillName = "grokbuild-browser-control"
+    static let bundledSkillNames: [String] = ["grokbuild-browser-control", "grokbuild-grok-web"]
 
     static var userSkillsRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -19,8 +20,17 @@ enum BrowserSkillInstaller {
 
     @discardableResult
     static func install(to skillsRoot: URL = userSkillsRoot) throws -> URL {
-        let source = try bundledSkillURL()
-        let destination = skillURL(inSkillsRoot: skillsRoot)
+        var lastURL: URL?
+        for name in bundledSkillNames {
+            lastURL = try installSkill(named: name, to: skillsRoot)
+        }
+        return lastURL ?? skillURL(inSkillsRoot: skillsRoot)
+    }
+
+    @discardableResult
+    static func installSkill(named name: String, to skillsRoot: URL) throws -> URL {
+        let source = try bundledSkillURL(named: name)
+        let destination = skillURL(named: name, inSkillsRoot: skillsRoot)
         let fileManager = FileManager.default
 
         try fileManager.createDirectory(
@@ -42,16 +52,24 @@ enum BrowserSkillInstaller {
     }
 
     static func skillURL(inSkillsRoot skillsRoot: URL = userSkillsRoot) -> URL {
+        skillURL(named: skillName, inSkillsRoot: skillsRoot)
+    }
+
+    static func skillURL(named name: String, inSkillsRoot skillsRoot: URL = userSkillsRoot) -> URL {
         skillsRoot
-            .appendingPathComponent(skillName)
+            .appendingPathComponent(name)
             .appendingPathComponent("SKILL.md")
     }
 
     static func bundledSkillURL() throws -> URL {
+        try bundledSkillURL(named: skillName)
+    }
+
+    static func bundledSkillURL(named name: String) throws -> URL {
         if let url = Bundle.main.url(
             forResource: "SKILL",
             withExtension: "md",
-            subdirectory: "Skills/\(skillName)"
+            subdirectory: "Skills/\(name)"
         ) {
             return url
         }
@@ -60,7 +78,7 @@ enum BrowserSkillInstaller {
         if let url = Bundle.module.url(
             forResource: "SKILL",
             withExtension: "md",
-            subdirectory: "Skills/\(skillName)"
+            subdirectory: "Skills/\(name)"
         ) {
             return url
         }
@@ -71,7 +89,7 @@ enum BrowserSkillInstaller {
             let candidate = directory
                 .appendingPathComponent("Resources")
                 .appendingPathComponent("Skills")
-                .appendingPathComponent(skillName)
+                .appendingPathComponent(name)
                 .appendingPathComponent("SKILL.md")
             if FileManager.default.fileExists(atPath: candidate.path) {
                 return candidate
@@ -82,7 +100,7 @@ enum BrowserSkillInstaller {
         throw NSError(
             domain: "BrowserSkillInstaller",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Bundled browser-control skill was not found."]
+            userInfo: [NSLocalizedDescriptionKey: "Bundled skill \(name) was not found."]
         )
     }
 }
