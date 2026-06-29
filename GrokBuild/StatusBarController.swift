@@ -57,6 +57,16 @@ class StatusBarController: NSObject {
             }
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .grokBuildUpdateStateChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshUpdateMenuItem()
+            }
+        }
+
         updateIcon(for: .idle)
         updateAuthIndicator(authenticated: true)
         Task { @MainActor in

@@ -27,7 +27,11 @@ enum UpdatePanel {
             panel.contentView = rootView
             panel.setContentSize(size)
             configureWindow(panel)
-            let delegate = PanelDelegate(onClose: onDismiss)
+            let delegate = PanelDelegate {
+                UpdatePanel.host = nil
+                UpdatePanel.panelDelegate = nil
+                onDismiss()
+            }
             panel.delegate = delegate
             panelDelegate = delegate
             panel.center()
@@ -49,6 +53,8 @@ enum UpdatePanel {
         configureWindow(window)
 
         let delegate = PanelDelegate {
+            UpdatePanel.host = nil
+            UpdatePanel.panelDelegate = nil
             onDismiss()
         }
         window.delegate = delegate
@@ -91,13 +97,14 @@ enum UpdatePanel {
         }
 
         let buttonFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        if content.appUpdateAvailable {
-            maxWidth = max(maxWidth, textWidth("Update App", font: buttonFont) + 28)
-            maxWidth = max(maxWidth, textWidth("Open Release Page", font: buttonFont) + 28)
-        }
-        if content.cliUpdateAvailable {
-            maxWidth = max(maxWidth, textWidth("Update grok CLI", font: buttonFont) + 28)
-            maxWidth = max(maxWidth, textWidth("Restart Sessions", font: buttonFont) + 28)
+        let buttonTitles: [String?] = [
+            content.appPrimaryButtonTitle,
+            content.appShowSkipButton ? "Skip GrokBuild Version" : nil,
+            content.cliPrimaryButtonTitle,
+            content.cliShowSkipButton ? "Skip grok CLI Version" : nil,
+        ]
+        for title in buttonTitles.compactMap({ $0 }) {
+            maxWidth = max(maxWidth, textWidth(title, font: buttonFont) + 28)
         }
 
         return maxWidth
