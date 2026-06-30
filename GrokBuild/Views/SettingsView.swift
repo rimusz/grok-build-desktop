@@ -2602,7 +2602,7 @@ private struct CustomModelsSettingsPane: View {
                         }
                         .controlSize(.small)
                         .font(.caption)
-                        .help("Open the Cline Pass models table in the docs.")
+                        .help("Open the \(provider.name) models table in the docs.")
                     }
                 } else {
                     let canFetchProvider = canFetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
@@ -2769,7 +2769,7 @@ private struct CustomModelsSettingsPane: View {
                 .font(.caption.weight(.semibold))
 
             if let url = preset.catalogDocumentationURL {
-                Link("docs.cline.bot/getting-started/clinepass#models", destination: url)
+                Link("Documentation", destination: url)
                     .font(.caption)
             }
 
@@ -2944,7 +2944,7 @@ private struct CustomModelsSettingsPane: View {
                     if provider.usesCatalogModels {
                         if let docsURL = provider.catalogDocumentationURL {
                             settingRow("") {
-                                Link("docs.cline.bot/getting-started/clinepass#models", destination: docsURL)
+                                Link("Documentation", destination: docsURL)
                                     .font(.caption)
                             }
                         }
