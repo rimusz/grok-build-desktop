@@ -188,8 +188,14 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     case xiaomiMiMo
     case deepseek
     case ollama
+    case clinePass
 
     var id: String { rawValue }
+
+    /// Finds the built-in preset whose provider id matches an installed provider.
+    static func matching(provider: Provider) -> ProviderPreset? {
+        allCases.first { $0.provider.id == provider.id }
+    }
 
     var displayName: String {
         switch self {
@@ -201,7 +207,49 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .xiaomiMiMo: return "Xiaomi MiMo"
         case .deepseek: return "DeepSeek"
         case .ollama: return "Ollama (local)"
+        case .clinePass: return "Cline Pass"
         }
+    }
+
+    /// Whether GrokBuild can discover models via `GET {base_url}/models`.
+    var supportsModelListingFetch: Bool {
+        switch self {
+        case .clinePass: return false
+        default: return true
+        }
+    }
+
+    /// Fixed model ids from provider docs when listing fetch is unavailable.
+    var catalogModelIDs: [String] {
+        switch self {
+        case .clinePass:
+            return ClinePassCatalog.modelIDs
+        default:
+            return []
+        }
+    }
+
+    var catalogModels: [FetchedModel] {
+        switch self {
+        case .clinePass:
+            return ClinePassCatalog.fetchedModels
+        default:
+            return []
+        }
+    }
+
+    var catalogDocumentationURL: URL? {
+        switch self {
+        case .clinePass:
+            return ClinePassCatalog.documentationURL
+        default:
+            return nil
+        }
+    }
+
+    /// Presets that ship a fixed model catalog instead of a `/models` listing API.
+    var usesCatalogModels: Bool {
+        !supportsModelListingFetch && !catalogModelIDs.isEmpty
     }
 
     var provider: Provider {
@@ -265,7 +313,78 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
                 apiKey: "ollama",
                 suggestedModel: "llama3.2"
             )
+        case .clinePass:
+            return Provider(
+                id: "clinepass",
+                name: "Cline Pass",
+                baseURL: "https://api.cline.bot/api/v1",
+                suggestedModel: "cline-pass/glm-5.2"
+            )
         }
+    }
+}
+
+/// Model catalog from the [ClinePass docs — Models](https://docs.cline.bot/getting-started/clinepass#models) table.
+enum ClinePassCatalog {
+    struct Entry: Hashable, Sendable {
+        /// Human-readable model name from the docs (e.g. "GLM-5.2").
+        var name: String
+        /// Full ClinePass model slug for the `model` field (e.g. `cline-pass/glm-5.2`).
+        var modelID: String
+    }
+
+    static let documentationURL = URL(string: "https://docs.cline.bot/getting-started/clinepass#models")!
+
+    /// Order and ids match the ## Models table in the ClinePass documentation.
+    static let models: [Entry] = [
+        Entry(name: "GLM-5.2", modelID: "cline-pass/glm-5.2"),
+        Entry(name: "Kimi K2.7 Code", modelID: "cline-pass/kimi-k2.7-code"),
+        Entry(name: "Kimi K2.6", modelID: "cline-pass/kimi-k2.6"),
+        Entry(name: "DeepSeek V4 Pro", modelID: "cline-pass/deepseek-v4-pro"),
+        Entry(name: "DeepSeek V4 Flash", modelID: "cline-pass/deepseek-v4-flash"),
+        Entry(name: "MiMo-V2.5", modelID: "cline-pass/mimo-v2.5"),
+        Entry(name: "MiMo-V2.5-Pro", modelID: "cline-pass/mimo-v2.5-pro"),
+        Entry(name: "MiniMax M3", modelID: "cline-pass/minimax-m3"),
+        Entry(name: "Qwen3.7 Max", modelID: "cline-pass/qwen3.7-max"),
+        Entry(name: "Qwen3.7 Plus", modelID: "cline-pass/qwen3.7-plus"),
+    ]
+
+    static var modelIDs: [String] { models.map(\.modelID) }
+
+    static var fetchedModels: [FetchedModel] {
+        models.map { FetchedModel(id: $0.modelID, ownedBy: $0.name) }
+    }
+
+    /// Display name written to config.toml `name` (e.g. "Cline Kimi K2.7 Code").
+    static func displayName(for catalogName: String) -> String {
+        let trimmed = catalogName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.lowercased().hasPrefix("cline ") { return trimmed }
+        return "Cline \(trimmed)"
+    }
+}
+
+extension Provider {
+    var matchingPreset: ProviderPreset? { ProviderPreset.matching(provider: self) }
+
+    var supportsModelListingFetch: Bool {
+        matchingPreset?.supportsModelListingFetch ?? true
+    }
+
+    var catalogModelIDs: [String] {
+        matchingPreset?.catalogModelIDs ?? []
+    }
+
+    var catalogDocumentationURL: URL? {
+        matchingPreset?.catalogDocumentationURL
+    }
+
+    var usesCatalogModels: Bool {
+        matchingPreset?.usesCatalogModels ?? false
+    }
+
+    var catalogModels: [FetchedModel] {
+        matchingPreset?.catalogModels ?? []
     }
 }
 

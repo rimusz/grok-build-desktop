@@ -117,6 +117,27 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(Set(reparsed.models.map(\.id)), ["minimax-m2.5", "minimax-m2.7"])
     }
 
+    func testRewriteSupportsMultipleClinePassModels() {
+        let providerURL = "https://api.cline.bot/api/v1"
+        let modelA = CustomModel(
+            id: "cline-pass-glm-5.2",
+            model: "cline-pass/glm-5.2",
+            baseURL: providerURL,
+            apiKey: "sk-1"
+        )
+        let modelB = CustomModel(
+            id: "cline-pass-kimi-k2.6",
+            model: "cline-pass/kimi-k2.6",
+            baseURL: providerURL,
+            apiKey: "sk-1"
+        )
+        let rewritten = CustomModelStore.rewrite("", models: [modelA, modelB], defaultModelID: nil)
+        let reparsed = CustomModelStore.parse(rewritten)
+        XCTAssertEqual(reparsed.models.count, 2)
+        XCTAssertEqual(Set(reparsed.models.map(\.id)), ["cline-pass-glm-5.2", "cline-pass-kimi-k2.6"])
+        XCTAssertEqual(reparsed.models.first?.model, "cline-pass/glm-5.2")
+    }
+
     func testMaxModelsLimitIsTwentyEight() {
         XCTAssertEqual(CustomModelStore.maxModels, 28)
     }
@@ -222,6 +243,7 @@ final class CustomModelTests: XCTestCase {
         XCTAssertTrue(names.contains("Qwen (DashScope)"))
         XCTAssertTrue(names.contains("Xiaomi MiMo"))
         XCTAssertTrue(names.contains("DeepSeek"))
+        XCTAssertTrue(names.contains("Cline Pass"))
         XCTAssertTrue(names.contains("Ollama (local)"))
         // Ollama is local and defaults its inline key to the conventional "ollama"
         // placeholder its OpenAI endpoint expects.
@@ -242,6 +264,66 @@ final class CustomModelTests: XCTestCase {
         let provider = ProviderPreset.deepseek.provider
         XCTAssertEqual(provider.baseURL, "https://api.deepseek.com")
         XCTAssertEqual(provider.suggestedModel, "deepseek-v4-pro")
+    }
+
+    func testClinePassPresetUsesCatalogNotFetch() {
+        let preset = ProviderPreset.clinePass
+        XCTAssertFalse(preset.supportsModelListingFetch)
+        XCTAssertTrue(preset.usesCatalogModels)
+        XCTAssertEqual(preset.provider.id, "clinepass")
+        XCTAssertEqual(preset.provider.baseURL, "https://api.cline.bot/api/v1")
+        XCTAssertEqual(preset.provider.suggestedModel, "cline-pass/glm-5.2")
+        XCTAssertEqual(
+            preset.catalogDocumentationURL?.absoluteString,
+            ClinePassCatalog.documentationURL.absoluteString
+        )
+        XCTAssertEqual(preset.catalogModelIDs, ClinePassCatalog.modelIDs)
+        XCTAssertEqual(preset.catalogModels.count, ClinePassCatalog.models.count)
+    }
+
+    func testClinePassCatalogMatchesDocumentationModelsTable() {
+        let expected: [(String, String)] = [
+            ("GLM-5.2", "cline-pass/glm-5.2"),
+            ("Kimi K2.7 Code", "cline-pass/kimi-k2.7-code"),
+            ("Kimi K2.6", "cline-pass/kimi-k2.6"),
+            ("DeepSeek V4 Pro", "cline-pass/deepseek-v4-pro"),
+            ("DeepSeek V4 Flash", "cline-pass/deepseek-v4-flash"),
+            ("MiMo-V2.5", "cline-pass/mimo-v2.5"),
+            ("MiMo-V2.5-Pro", "cline-pass/mimo-v2.5-pro"),
+            ("MiniMax M3", "cline-pass/minimax-m3"),
+            ("Qwen3.7 Max", "cline-pass/qwen3.7-max"),
+            ("Qwen3.7 Plus", "cline-pass/qwen3.7-plus"),
+        ]
+        XCTAssertEqual(ClinePassCatalog.models.count, expected.count)
+        for (index, pair) in expected.enumerated() {
+            XCTAssertEqual(ClinePassCatalog.models[index].name, pair.0, "row \(index + 1) name")
+            XCTAssertEqual(ClinePassCatalog.models[index].modelID, pair.1, "row \(index + 1) id")
+        }
+        XCTAssertEqual(
+            ClinePassCatalog.fetchedModels.first?.ownedBy,
+            "GLM-5.2"
+        )
+    }
+
+    func testSuggestedIDForClinePassModel() {
+        XCTAssertEqual(CustomModel.suggestedID(from: "cline-pass/glm-5.2"), "cline-pass-glm-5.2")
+    }
+
+    func testClinePassDisplayNamePrefixesCline() {
+        XCTAssertEqual(ClinePassCatalog.displayName(for: "Kimi K2.7 Code"), "Cline Kimi K2.7 Code")
+        XCTAssertEqual(ClinePassCatalog.displayName(for: "GLM-5.2"), "Cline GLM-5.2")
+        XCTAssertEqual(ClinePassCatalog.displayName(for: "Cline GLM-5.2"), "Cline GLM-5.2")
+    }
+
+    func testProviderCatalogFlagsFromMatchingPreset() {
+        let cline = ProviderPreset.clinePass.provider
+        XCTAssertTrue(cline.usesCatalogModels)
+        XCTAssertFalse(cline.supportsModelListingFetch)
+        XCTAssertEqual(cline.catalogModelIDs.count, 10)
+
+        let zai = ProviderPreset.zai.provider
+        XCTAssertFalse(zai.usesCatalogModels)
+        XCTAssertTrue(zai.supportsModelListingFetch)
     }
 
     func testOpenAIPresetEndpoint() {
