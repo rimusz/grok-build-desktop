@@ -150,9 +150,3 @@ Signing requires a **Developer ID Application** certificate, and notarization re
 | [BUILDING.md](BUILDING.md) | Build, sign, notarize, release CI |
 
 Debug builds (`make run-debug`) include a menu-bar **Simulate Updates** submenu for testing the update UI without publishing releases. It is compiled out of release builds (`make run`, `make app`, GitHub releases).
-
-### Notes
-
-- Version strings come from `VERSION` → `AppVersion.display`.
-- The menu bar icon lives in `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/` and is copied into the app bundle during the build.
-- Bundled grok skills and the in-app install helper are copied into the `.app` at package time (`scripts/build-macos-app.sh`).
