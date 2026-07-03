@@ -130,6 +130,7 @@ struct ContentView: View {
                         onSelectSession: { selectSession($0) },
                         onBrowseSessions: { showSessions = true },
                         onNewSession: { startNewSessionForCurrentProject() },
+                        onAddProject: { showPicker = true },
                         onOpenProjectIn: { openCurrentProject(in: $0) },
                         onToggleBrowserTools: { toggleBrowserToolsFromChat() },
                         onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },

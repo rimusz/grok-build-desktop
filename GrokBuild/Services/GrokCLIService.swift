@@ -247,12 +247,16 @@ struct GrokSessionInfo: Identifiable, Hashable, Sendable {
             let rest = trimmed.dropFirst(36).trimmingCharacters(in: .whitespaces)
             let pieces = rest.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
             guard pieces.count >= 3 else { return nil }
+            // The CLI prints a literal "(no summary)" placeholder; normalize it to empty so
+            // callers can treat "has a summary" as a simple non-empty check.
+            let rawSummary = pieces.count > 3 ? String(pieces[3]).trimmingCharacters(in: .whitespaces) : ""
+            let summary = rawSummary.caseInsensitiveCompare("(no summary)") == .orderedSame ? "" : rawSummary
             return GrokSessionInfo(
                 id: sessionID,
                 created: String(pieces[0]),
                 updated: String(pieces[1]),
                 status: String(pieces[2]),
-                summary: pieces.count > 3 ? String(pieces[3]) : ""
+                summary: summary
             )
         }
     }

@@ -11,7 +11,8 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 ### Chat & sessions
 - Native macOS SwiftUI interface for `grok agent stdio`.
 - Streaming chat with Markdown rendering, thinking blocks, live tool activity, permission prompts, and question cards.
-- Resumable sessions with a session browser for reopening existing Grok sessions in the current project.
+- Guided empty state — a new session offers one-tap quick-start prompts (explain the project, find a bug, add tests, review changes), and a first launch with no projects shows an **Add Project** call-to-action.
+- Resumable sessions with a session browser for reopening existing Grok sessions in the current project, including per-session delete and a one-click **Clear Empty** cleanup for unnamed, empty sessions.
 - Diff review of file changes proposed during a session.
 - Multi-tab sessions with lazy restore and an LRU cap on live Grok processes (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
@@ -31,7 +32,8 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - Add custom OpenAI-compatible models from your own providers (e.g. MiniMax and other OpenAI-compatible endpoints).
 - Define reusable providers (base URL + shared API key) and fetch their available models directly in the app.
 - Models are written to `~/.grok/config.toml` and become usable via `/model <id>`; supports setting a default model (up to 28 custom models).
-- **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the same composer model menu; each project remembers its own model and effort and restores them when you switch workspaces.
+- Add GrokBuild-only metadata for custom models: context-window size, image/thinking hints, and whether reasoning effort should appear for that model.
+- **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the composer model menu; it stays available for custom models unless you turn it off in their settings. Effort is saved **per project**; set the starting default for new projects in **Settings → Permissions → Default reasoning effort**.
 
 ### Browser control
 Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click, type, wait, screenshot, run JS) via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev).

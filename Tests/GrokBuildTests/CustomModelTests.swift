@@ -65,6 +65,58 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(reparsed.models.first?.apiKey, #"sk-with"quote\and-backslash"#)
     }
 
+    func testModelMetadataRoundTripsThroughRewrite() {
+        let model = CustomModel(
+            id: "zai-glm",
+            model: "glm-5.2",
+            baseURL: "https://api.z.ai/api/coding/paas/v4",
+            contextTokens: 128_000,
+            supportsReasoningEffort: true,
+            supportsVision: true,
+            supportsThinkingDisplay: true
+        )
+
+        let rewritten = CustomModelStore.rewrite("", models: [model], defaultModelID: nil)
+        XCTAssertTrue(rewritten.contains("grokbuild_context_tokens = 128000"))
+        XCTAssertTrue(rewritten.contains("grokbuild_supports_reasoning_effort = true"))
+        XCTAssertTrue(rewritten.contains("grokbuild_supports_vision = true"))
+        XCTAssertTrue(rewritten.contains("grokbuild_supports_thinking = true"))
+
+        let reparsed = CustomModelStore.parse(rewritten)
+        XCTAssertEqual(reparsed.models.first?.contextTokens, 128_000)
+        XCTAssertEqual(reparsed.models.first?.supportsReasoningEffort, true)
+        XCTAssertEqual(reparsed.models.first?.supportsVision, true)
+        XCTAssertEqual(reparsed.models.first?.supportsThinkingDisplay, true)
+    }
+
+    func testModelMetadataDefaultsWhenMissing() {
+        let toml = """
+        [model.unknown]
+        model = "unknown"
+        base_url = "https://api.example.com/v1"
+        """
+
+        let model = CustomModelStore.parse(toml).models.first
+        XCTAssertNil(model?.contextTokens)
+        // Reasoning effort is opt-out: an existing entry with no key keeps the control visible.
+        XCTAssertEqual(model?.supportsReasoningEffort, true)
+        // Vision and thinking display stay conservative (off) when unspecified.
+        XCTAssertEqual(model?.supportsVision, false)
+        XCTAssertEqual(model?.supportsThinkingDisplay, false)
+    }
+
+    func testExplicitReasoningEffortFalseIsHonored() {
+        let toml = """
+        [model.no-effort]
+        model = "no-effort"
+        base_url = "https://api.example.com/v1"
+        grokbuild_supports_reasoning_effort = false
+        """
+
+        let model = CustomModelStore.parse(toml).models.first
+        XCTAssertEqual(model?.supportsReasoningEffort, false)
+    }
+
     func testDottedModelIDIsQuotedInTableHeader() {
         // A dot in the id must be quoted, else TOML nests it: `[model.minimax-m2.5]` would be
         // read by the Grok CLI as model id `minimax-m2`. Header must be `[model."minimax-m2.5"]`.

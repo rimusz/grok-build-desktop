@@ -72,6 +72,7 @@ final class ChatStore {
         "grok-composer-2.5-fast": 200_000,
         "grok-build": 512_000
     ]
+    private var customModelsByID: [String: CustomModel] = [:]
     private(set) var usedContextTokens: Int?
 
     // Persist mode/model choices per Grok session id.
@@ -223,6 +224,7 @@ final class ChatStore {
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
         let modelForLaunch = workspaceSavedModel() ?? savedSelection?.model ?? currentModel
+        let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? settings.reasoningEffort : ""
         let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseSettings = ComputerUseSettingsStore.loadApplied()
         if browserSettings.enabled {
@@ -252,7 +254,7 @@ final class ChatStore {
             agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
             noMemory: settings.noMemory,
             permissionMode: settings.permissionMode,
-            reasoningEffort: settings.reasoningEffort,
+            reasoningEffort: reasoningEffortForLaunch,
             model: modelForLaunch.isEmpty ? nil : modelForLaunch,
             sandboxProfile: settings.sandboxProfile,
             disableWebSearch: settings.disableWebSearch,
@@ -583,6 +585,40 @@ final class ChatStore {
 
     func modelDisplayName(_ id: String) -> String {
         modelDisplayNames[id] ?? id
+    }
+
+    var currentModelSupportsReasoningEffort: Bool {
+        modelSupportsReasoningEffort(currentModel)
+    }
+
+    var isCurrentModelCustom: Bool {
+        isCustomModel(currentModel)
+    }
+
+    func isCustomModel(_ id: String) -> Bool {
+        customModelsByID[id] != nil
+    }
+
+    func modelSupportsReasoningEffort(_ id: String) -> Bool {
+        customModelsByID[id]?.supportsReasoningEffort ?? true
+    }
+
+    func modelCapabilityHint(for id: String) -> String? {
+        guard let model = customModelsByID[id] else { return nil }
+        var pieces = ["Custom model"]
+        if let tokens = model.contextTokens {
+            pieces.append("\(Self.compactTokenCount(tokens)) context")
+        } else {
+            pieces.append("context unknown")
+        }
+        pieces.append(model.supportsReasoningEffort ? "reasoning effort on" : "reasoning effort off")
+        if model.supportsVision {
+            pieces.append("vision")
+        }
+        if model.supportsThinkingDisplay {
+            pieces.append("thinking")
+        }
+        return pieces.joined(separator: " · ")
     }
 
     var currentModelContextLabel: String {
@@ -923,7 +959,16 @@ final class ChatStore {
     /// by typing `/model <id>`, since the composer list is otherwise driven by the agent's
     /// advertised `modelState.availableModels`. Idempotent — safe to call on every resync.
     private func mergeCustomModels() {
-        for model in CustomModelStore.load().models {
+        let customModels = CustomModelStore.load().models
+        customModelsByID = [:]
+        for model in customModels {
+            customModelsByID[model.id] = model
+        }
+        let acpContextModelIDs = Set(process.availableModelsInfo.compactMap { model in
+            model.contextTokens == nil ? nil : model.id
+        })
+
+        for model in customModels {
             if !availableModels.contains(model.id) {
                 availableModels.append(model.id)
             }
@@ -932,6 +977,13 @@ final class ChatStore {
             let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let providerModel = model.model.trimmingCharacters(in: .whitespacesAndNewlines)
             modelDisplayNames[model.id] = !name.isEmpty ? name : (!providerModel.isEmpty ? providerModel : model.id)
+            if !acpContextModelIDs.contains(model.id) {
+                if let contextTokens = model.contextTokens {
+                    modelContextTokens[model.id] = contextTokens
+                } else {
+                    modelContextTokens.removeValue(forKey: model.id)
+                }
+            }
         }
     }
 
@@ -949,7 +1001,18 @@ final class ChatStore {
         if let model = saved.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             currentModel = model
         }
-        workspaceReasoningEffort = saved.reasoningEffort ?? ""
+        // A workspace with no saved effort inherits the global default (Settings →
+        // Permissions → "Default reasoning effort"); the composer picker then overrides
+        // it per project.
+        let globalDefault = defaults.string(forKey: GrokSettingsKeys.reasoningEffort) ?? ""
+        workspaceReasoningEffort = Self.resolveReasoningEffort(saved: saved.reasoningEffort, globalDefault: globalDefault)
+    }
+
+    /// Resolves the effective per-project reasoning effort: an explicitly saved value
+    /// (including an empty "Default") wins; otherwise the workspace inherits the global
+    /// default configured in Settings → Permissions.
+    nonisolated static func resolveReasoningEffort(saved: String?, globalDefault: String) -> String {
+        saved ?? globalDefault
     }
 
     private func saveWorkspaceAgentSettings() {

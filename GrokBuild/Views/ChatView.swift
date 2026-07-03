@@ -19,6 +19,7 @@ struct ChatView: View {
     var onSelectSession: (UUID) -> Void = { _ in }
     var onBrowseSessions: () -> Void = {}
     var onNewSession: () -> Void = {}
+    var onAddProject: () -> Void = {}
     var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
     var onToggleBrowserTools: () -> Void = {}
     var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
@@ -107,10 +108,13 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
-                        if store.messages.isEmpty && store.currentWorkspace != nil {
-                            switch store.connectionState {
-                            case .failed: EmptyView()
-                            default: welcomeState
+                        if store.messages.isEmpty {
+                            if store.currentWorkspace == nil {
+                                noProjectState
+                            } else if case .failed = store.connectionState {
+                                EmptyView()
+                            } else {
+                                welcomeState
                             }
                         }
 
@@ -265,7 +269,7 @@ struct ChatView: View {
                     openInButton(title: "Zed", target: .zed, appURL: app, fallbackSystemImage: "square.and.pencil")
                 }
             } label: {
-                Image(systemName: "square.and.arrow.up")
+                Image(systemName: "arrow.up.forward.app")
             }
             .menuStyle(.borderlessButton)
             .disabled(store.currentWorkspace == nil)
@@ -325,30 +329,97 @@ struct ChatView: View {
         return nil
     }
 
+    private var brandMark: some View {
+        Group {
+            if let icon = GrokBrandIcon.mark() {
+                Image(nsImage: icon)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 40, height: 40)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var welcomeState: some View {
-        VStack(spacing: 8) {
-            Group {
-                if let icon = GrokBrandIcon.mark() {
-                    Image(nsImage: icon)
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: "sparkles")
-                        .font(.title2)
+        VStack(spacing: 22) {
+            VStack(spacing: 10) {
+                brandMark
+                Text("How can I help?")
+                    .font(.title2.weight(.semibold))
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(connectionStatusColor)
+                        .frame(width: 6, height: 6)
+                    Text(connectionSubtitle)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
             }
-            Text("Grok Build")
-                .font(.title3.weight(.semibold))
-            Text(connectionSubtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10),
+                ],
+                spacing: 10
+            ) {
+                ForEach(QuickStartPrompt.defaults) { item in
+                    QuickStartChip(item: item) {
+                        input = item.prompt
+                        inputFocused = true
+                    }
+                }
+            }
+
+            Text("⏎ send · ⇧⏎ new line · / for skills")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
+        .frame(maxWidth: 520)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 48)
+        .padding(.vertical, 52)
+        .padding(.horizontal, 24)
+    }
+
+    private var noProjectState: some View {
+        VStack(spacing: 18) {
+            brandMark
+            VStack(spacing: 6) {
+                Text("Welcome to GrokBuild")
+                    .font(.title2.weight(.semibold))
+                Text("Add a project folder to start a Grok session — then plan, build, and explore your code together.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(action: onAddProject) {
+                Label("Add Project", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .help("Choose a folder to work in")
+        }
+        .frame(maxWidth: 440)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 64)
+        .padding(.horizontal, 24)
+    }
+
+    private var connectionStatusColor: Color {
+        switch store.connectionState {
+        case .starting: return .yellow
+        case .ready, .busy: return .green
+        case .failed: return .red
+        case .idle: return store.currentWorkspace == nil ? .secondary : .green
+        }
     }
 
     private var connectionSubtitle: String {
@@ -800,6 +871,7 @@ struct ChatView: View {
                 } label: {
                     modelMenuRow(
                         title: store.modelDisplayName(modelId),
+                        subtitle: store.modelCapabilityHint(for: modelId),
                         isSelected: store.currentModel == modelId
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -810,31 +882,51 @@ struct ChatView: View {
                 .accessibilityIdentifier("grok-model-option-\(modelId)")
             }
 
-            Divider()
-                .padding(.vertical, 6)
+            if store.currentModelSupportsReasoningEffort {
+                Divider()
+                    .padding(.vertical, 6)
 
-            Text("Reasoning effort")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+                Text("Reasoning effort")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 2)
 
-            ForEach(ReasoningEffortLevel.menuCases) { level in
-                Button {
-                    requestReasoningEffortChange(to: level.rawValue)
-                    isModelSelectorOpen = false
-                } label: {
-                    modelMenuRow(
-                        title: level.displayName,
-                        isSelected: store.currentReasoningEffort == level.rawValue
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Saved for this project. Set the default for new projects in Settings → Permissions.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+
+                ForEach(ReasoningEffortLevel.menuCases) { level in
+                    Button {
+                        requestReasoningEffortChange(to: level.rawValue)
+                        isModelSelectorOpen = false
+                    } label: {
+                        modelMenuRow(
+                            title: level.displayName,
+                            subtitle: nil,
+                            isSelected: store.currentReasoningEffort == level.rawValue
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .disabled(store.isStreaming || store.currentWorkspace == nil)
+                    .accessibilityIdentifier("grok-effort-option-\(level.rawValue)")
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .disabled(store.isStreaming || store.currentWorkspace == nil)
-                .accessibilityIdentifier("grok-effort-option-\(level.rawValue)")
+            } else if store.isCurrentModelCustom {
+                Divider()
+                    .padding(.vertical, 6)
+
+                Text("Reasoning effort is off for this custom model. Enable it in Settings → Models if the provider supports it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
             }
         }
         .frame(minWidth: 240)
@@ -849,12 +941,23 @@ struct ChatView: View {
         if store.isStreaming {
             return "Select model; wait for the current turn to finish before changing reasoning effort"
         }
+        if !store.currentModelSupportsReasoningEffort {
+            return "Model selector; reasoning effort is off for this custom model"
+        }
         return "Model and reasoning effort"
     }
 
-    private func modelMenuRow(title: String, isSelected: Bool) -> some View {
-        HStack(spacing: 8) {
-            Text(title)
+    private func modelMenuRow(title: String, subtitle: String?, isSelected: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
             Spacer(minLength: 12)
             if isSelected {
                 Image(systemName: "checkmark")
@@ -864,6 +967,7 @@ struct ChatView: View {
     }
 
     private func requestReasoningEffortChange(to effort: String) {
+        guard store.currentModelSupportsReasoningEffort else { return }
         guard effort != store.currentReasoningEffort else { return }
         guard store.currentWorkspace != nil, !store.isStreaming else { return }
         if store.needsReasoningEffortConfirmation(for: effort) {
@@ -964,6 +1068,47 @@ struct ChatView: View {
 
     private func currentBranchLabel(for projectURL: URL) -> String {
         GitService.currentBranch(in: projectURL) ?? "No branch"
+    }
+}
+
+// MARK: - Quick Start
+
+private struct QuickStartChip: View {
+    let item: QuickStartPrompt
+    var onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 10) {
+                Image(systemName: item.icon)
+                    .font(.callout)
+                    .foregroundStyle(.tint)
+                    .frame(width: 20)
+                Text(item.title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.primary.opacity(isHovered ? 0.09 : 0.05),
+                in: RoundedRectangle(cornerRadius: 10)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(isHovered ? 0.16 : 0.08))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(item.prompt)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 

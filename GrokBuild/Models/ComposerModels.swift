@@ -94,6 +94,38 @@ enum SlashAutocompleteGroups {
     }
 }
 
+/// A one-tap starter shown in the empty chat state. Selecting one seeds the composer with
+/// `prompt` (it does not send) so a new session has an obvious, editable first step.
+struct QuickStartPrompt: Identifiable, Hashable, Sendable {
+    var id: String { title }
+    let icon: String
+    let title: String
+    let prompt: String
+
+    static let defaults: [QuickStartPrompt] = [
+        QuickStartPrompt(
+            icon: "doc.text.magnifyingglass",
+            title: "Explain this project",
+            prompt: "Give me a high-level overview of this project: its purpose, structure, and how the main pieces fit together."
+        ),
+        QuickStartPrompt(
+            icon: "ladybug",
+            title: "Find & fix a bug",
+            prompt: "Help me track down a bug. Ask me what I'm seeing, then investigate the relevant code and propose a fix."
+        ),
+        QuickStartPrompt(
+            icon: "checkmark.seal",
+            title: "Add tests",
+            prompt: "Add tests for the recent changes in this project, following the existing testing conventions."
+        ),
+        QuickStartPrompt(
+            icon: "arrow.triangle.branch",
+            title: "Review my changes",
+            prompt: "Review my uncommitted changes for correctness, style, and potential issues."
+        ),
+    ]
+}
+
 struct FileAttachment: Identifiable, Hashable, Sendable {
     let id: UUID
     let path: String

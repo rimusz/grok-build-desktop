@@ -215,6 +215,64 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertNil(SessionNameStore.name(for: id))
     }
 
+    // MARK: - Session list parsing
+
+    func testParseListOutputNormalizesNoSummaryPlaceholder() {
+        let output = """
+        SESSION ID                            CREATED     UPDATED     STATUS      SUMMARY
+        019f191a-c344-7ac2-ac79-dd49cec5460a  2026-07-03  2026-07-03  both  Implement /voice Slash Command Feature
+        019f191a-2795-74f1-a8a3-b1df0cf2d49f  2026-06-30  2026-06-30  local  (no summary)
+        """
+
+        let sessions = GrokSessionInfo.parseListOutput(output)
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions[0].summary, "Implement /voice Slash Command Feature")
+        // The literal "(no summary)" placeholder normalizes to empty.
+        XCTAssertEqual(sessions[1].summary, "")
+    }
+
+    // MARK: - Sessions cleanup ("Clear Empty")
+
+    func testCleanableSessionRequiresNoIdentityAndNotInUse() {
+        // Unnamed, no summary, not active, not live → safe to bulk-clear.
+        XCTAssertTrue(SessionsBrowserPanel.isCleanableSession(
+            summary: "   ", hasCustomName: false, isActive: false, isLive: false
+        ))
+    }
+
+    func testCleanableSessionExcludesNamedSummarizedActiveOrLive() {
+        // A summary protects the session.
+        XCTAssertFalse(SessionsBrowserPanel.isCleanableSession(
+            summary: "Implement feature", hasCustomName: false, isActive: false, isLive: false
+        ))
+        // A user-assigned name protects it.
+        XCTAssertFalse(SessionsBrowserPanel.isCleanableSession(
+            summary: "", hasCustomName: true, isActive: false, isLive: false
+        ))
+        // The active session is never cleared out from under the user.
+        XCTAssertFalse(SessionsBrowserPanel.isCleanableSession(
+            summary: "", hasCustomName: false, isActive: true, isLive: false
+        ))
+        // An open live tab is never cleared.
+        XCTAssertFalse(SessionsBrowserPanel.isCleanableSession(
+            summary: "", hasCustomName: false, isActive: false, isLive: true
+        ))
+    }
+
+    // MARK: - Reasoning effort default inheritance
+
+    func testResolveReasoningEffortInheritsGlobalDefaultWhenUnset() {
+        // No per-project value → inherit the global default for new projects.
+        XCTAssertEqual(ChatStore.resolveReasoningEffort(saved: nil, globalDefault: "high"), "high")
+    }
+
+    func testResolveReasoningEffortPrefersSavedValueIncludingDefault() {
+        // An explicit per-project choice wins over the global default…
+        XCTAssertEqual(ChatStore.resolveReasoningEffort(saved: "low", globalDefault: "high"), "low")
+        // …including an explicit "Default" (empty string), which must not fall back.
+        XCTAssertEqual(ChatStore.resolveReasoningEffort(saved: "", globalDefault: "high"), "")
+    }
+
     private func restore(_ data: Data?, forKey key: String) {
         if let data {
             UserDefaults.standard.set(data, forKey: key)
