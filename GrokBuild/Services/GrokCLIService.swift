@@ -348,6 +348,30 @@ enum GrokSettingsKeys {
     static let denyRules = "grokbuild.denyRules"
 }
 
+/// Best-effort sign-in detection used only at launch, before any grok process runs.
+/// Sign-in is defined solely by the grok CLI's own cached credentials in
+/// ~/.grok/auth.json (written by `grok login`, cleared by `grok logout`); the app
+/// deliberately does NOT treat environment API keys as being signed in. A running
+/// session's `.grokStatusChanged` remains authoritative and overrides this hint.
+enum GrokAuthProbe {
+    static var cachedCredentialsURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok/auth.json")
+    }
+
+    /// True when auth.json exists and holds more than an empty object. Testable via injected URL/FileManager.
+    static func hasCachedCredentials(at url: URL = cachedCredentialsURL,
+                                     fileManager: FileManager = .default) -> Bool {
+        guard let attrs = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int else { return false }
+        return size > 2 // more than "{}" / empty
+    }
+
+    /// Best-effort launch hint: signed in iff the grok CLI has cached credentials.
+    static func isLikelyAuthenticated() -> Bool {
+        hasCachedCredentials()
+    }
+}
+
 final class GrokCLIService {
     enum CLIError: LocalizedError {
         case notFound

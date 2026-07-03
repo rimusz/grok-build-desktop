@@ -61,12 +61,15 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
 
 ### App experience
-- Menu bar item plus main window (Dock icon); single-instance app with status bar quick actions.
-- Built-in update checks for **GrokBuild** and the **`grok` CLI** (background on launch + daily; manual via **Check for Updates…**).
+- Menu bar item plus main window (Dock icon); single-instance app with status bar quick actions (open/new session, settings ⌘,, updates, sign-in recovery).
+- Status menu header shows grok CLI sign-in state at launch (based on `~/.grok/auth.json` from `grok login`); when signed out, **Run `grok login` in Terminal…** and **Retry Connection** appear in the menu. A running session's `.grokStatusChanged` updates override the launch hint.
+- Menu bar icon shows a colored status dot (ready / working / starting / error) with accessibility labels; the grok mark still adapts to light/dark menu bars.
+- **Settings…** (⌘,) in the status menu and App menu opens Settings in the main window.
+- Built-in update checks for **GrokBuild** and the **`grok` CLI** (background on launch + daily; manual via **Check for Updates…** — opens the updates panel directly).
 - **In-app GrokBuild updates** — for signed + **notarized** releases only: background check shows a main-window banner; click **Updates Available** to open the panel, download `GrokBuild-{tag}.app.zip`, verify signature, **Install and Restart** (via bundled install helper).
 - **In-app grok CLI updates** — banner → updates panel → **Update grok CLI** runs `grok update`; live sessions stop during the upgrade and can be restarted afterward.
 - **Settings → App** — installed versions, auto-check toggle, pending update status.
-- Login-state detection with a helpful `grok login` banner.
+- Login-state detection with a helpful `grok login` banner and menu-bar sign-in recovery actions.
 - Dark-mode-first visual design.
 
 ## Install

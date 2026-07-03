@@ -160,6 +160,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         about.target = self
         appMenu.addItem(about)
         appMenu.addItem(.separator())
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(settings)
+        appMenu.addItem(NSMenuItem(title: "Hide GrokBuild", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit GrokBuild", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         let editMenu = NSMenu(title: "Edit")
@@ -220,6 +225,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showAbout() {
         AboutPanel.show()
+    }
+
+    @objc private func openSettings() {
+        openMainWindow()
+        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
     }
 
     @objc private func chooseWorkspace() {

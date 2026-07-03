@@ -20,9 +20,11 @@ Custom panel (not `orderFrontStandardAboutPanel`). Order: icon → name → Vers
 
 ## Status bar menu
 
-- Header reflects auth: "GrokBuild connected to grok cli" / "not connected".
+- Header reflects auth: "Signed in to grok CLI" / "Sign in required — run grok login".
 - Green/red dot via `updateAuthIndicator(authenticated:)`.
-- Check for Updates → `UpdatePanel.show`; do not block menu on CLI version checks.
+- Signed-out menu items: **Run `grok login` in Terminal…**, **Retry Connection** (posts `.retryConnectionRequested`).
+- **Settings…** (⌘,) posts `.openSettingsRequested`.
+- Check for Updates / Upgrade Available → `UpdatePanel.show` directly after check; do not block menu on CLI version checks.
 
 ## Window restore
 

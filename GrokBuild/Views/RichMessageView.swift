@@ -37,6 +37,14 @@ enum MarkdownBlockParser {
         return blocks.isEmpty ? [.text(text)] : blocks
     }
 
+    /// True when `$…$` content looks like LaTeX, not currency or shell variables.
+    static func looksLikeInlineMath(_ content: String) -> Bool {
+        if content.contains("\\") { return true }
+        if content.contains(where: { "^_{}".contains($0) }) { return true }
+        if content.contains(where: { "=<>≠≤≥≈∝".contains($0) }) { return true }
+        return false
+    }
+
     private struct Match {
         let range: Range<String.Index>
         let block: MarkdownBlock
@@ -94,11 +102,15 @@ enum MarkdownBlockParser {
     private static func matchInlineMath(in text: String) -> Match? {
         guard let regex = try? NSRegularExpression(pattern: #"(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)"#) else { return nil }
         let ns = text as NSString
-        guard let result = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)),
-              result.numberOfRanges > 1,
-              let fullRange = Range(result.range, in: text),
-              let contentRange = Range(result.range(at: 1), in: text) else { return nil }
-        return Match(range: fullRange, block: .latex(String(text[contentRange]), display: false))
+        for result in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            guard result.numberOfRanges > 1,
+                  let fullRange = Range(result.range, in: text),
+                  let contentRange = Range(result.range(at: 1), in: text) else { continue }
+            let content = String(text[contentRange])
+            guard looksLikeInlineMath(content) else { continue }
+            return Match(range: fullRange, block: .latex(content, display: false))
+        }
+        return nil
     }
 }
 
@@ -115,11 +127,9 @@ struct RichMessageView: View {
                         .font(.body)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .mermaid(let source):
-                    MermaidWebView(source: source)
-                        .frame(minHeight: 120)
+                    SizedMermaidWebView(source: source)
                 case .latex(let expr, let display):
-                    LaTeXWebView(latex: expr, displayMode: display)
-                        .frame(minHeight: display ? 48 : 28)
+                    SizedLaTeXWebView(latex: expr, displayMode: display)
                 }
             }
         }
@@ -139,21 +149,77 @@ struct RichMessageView: View {
     }
 }
 
+private struct SizedMermaidWebView: View {
+    let source: String
+    private let minHeight: CGFloat = 120
+    @State private var height: CGFloat = 120
+
+    var body: some View {
+        MermaidWebView(source: source) { newHeight in
+            // Never shrink below the fallback: a premature/small scrollHeight
+            // (mermaid renders after didFinish) must not collapse the block.
+            let clamped = max(newHeight, minHeight)
+            if abs(clamped - height) > 1 {
+                height = clamped
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+private struct SizedLaTeXWebView: View {
+    let latex: String
+    let displayMode: Bool
+    private let minHeight: CGFloat
+    @State private var height: CGFloat
+
+    init(latex: String, displayMode: Bool) {
+        self.latex = latex
+        self.displayMode = displayMode
+        let floorHeight: CGFloat = displayMode ? 48 : 28
+        self.minHeight = floorHeight
+        _height = State(initialValue: floorHeight)
+    }
+
+    var body: some View {
+        LaTeXWebView(latex: latex, displayMode: displayMode) { newHeight in
+            let clamped = max(newHeight, minHeight)
+            if abs(clamped - height) > 1 {
+                height = clamped
+            }
+        }
+        .frame(height: height)
+    }
+}
+
 private struct MermaidWebView: NSViewRepresentable {
     let source: String
+    var onHeightChange: (CGFloat) -> Void = { _ in }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onHeightChange: onHeightChange)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let view = WKWebView(frame: .zero)
         view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = context.coordinator
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onHeightChange = onHeightChange
+        guard source != context.coordinator.lastLoadedSource else { return }
+        context.coordinator.lastLoadedSource = source
+        view.loadHTMLString(Self.html(for: source), baseURL: nil)
+    }
+
+    private static func html(for source: String) -> String {
         let escaped = source
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
             .replacingOccurrences(of: "$", with: "\\$")
-        let html = """
+        return """
         <!doctype html><html><head>
         <meta charset="utf-8">
         <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
@@ -161,26 +227,68 @@ private struct MermaidWebView: NSViewRepresentable {
         </head><body><div class="mermaid">\(escaped)</div>
         <script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script></body></html>
         """
-        view.loadHTMLString(html, baseURL: nil)
     }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var lastLoadedSource: String?
+        var onHeightChange: (CGFloat) -> Void
+
+        init(onHeightChange: @escaping (CGFloat) -> Void) {
+            self.onHeightChange = onHeightChange
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript("document.body.scrollHeight") { result, _ in
+                guard let height = webViewScrollHeight(from: result) else { return }
+                DispatchQueue.main.async {
+                    self.onHeightChange(height)
+                }
+            }
+        }
+    }
+}
+
+private func webViewScrollHeight(from result: Any?) -> CGFloat? {
+    let raw: CGFloat?
+    if let value = result as? Double { raw = CGFloat(value) }
+    else if let value = result as? Int { raw = CGFloat(value) }
+    else if let value = result as? CGFloat { raw = value }
+    else { raw = nil }
+    // Ignore non-positive readings (transient/blocked load) so the fallback height holds.
+    guard let height = raw, height > 0 else { return nil }
+    return height
 }
 
 private struct LaTeXWebView: NSViewRepresentable {
     let latex: String
     let displayMode: Bool
+    var onHeightChange: (CGFloat) -> Void = { _ in }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onHeightChange: onHeightChange)
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let view = WKWebView(frame: .zero)
         view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = context.coordinator
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.onHeightChange = onHeightChange
+        let key = "\(displayMode)|\(latex)"
+        guard key != context.coordinator.lastLoadedKey else { return }
+        context.coordinator.lastLoadedKey = key
+        view.loadHTMLString(Self.html(latex: latex, displayMode: displayMode), baseURL: nil)
+    }
+
+    private static func html(latex: String, displayMode: Bool) -> String {
         let escaped = latex
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
             .replacingOccurrences(of: "\n", with: " ")
-        let html = """
+        return """
         <!doctype html><html><head>
         <meta charset="utf-8">
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
@@ -191,6 +299,23 @@ private struct LaTeXWebView: NSViewRepresentable {
         katex.render('\(escaped)', document.getElementById('math'), { displayMode: \(displayMode ? "true" : "false"), throwOnError: false });
         </script></body></html>
         """
-        view.loadHTMLString(html, baseURL: nil)
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var lastLoadedKey: String?
+        var onHeightChange: (CGFloat) -> Void
+
+        init(onHeightChange: @escaping (CGFloat) -> Void) {
+            self.onHeightChange = onHeightChange
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.evaluateJavaScript("document.body.scrollHeight") { result, _ in
+                guard let height = webViewScrollHeight(from: result) else { return }
+                DispatchQueue.main.async {
+                    self.onHeightChange(height)
+                }
+            }
+        }
     }
 }

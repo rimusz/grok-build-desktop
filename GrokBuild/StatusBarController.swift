@@ -2,7 +2,39 @@ import AppKit
 import SwiftUI
 
 enum GrokStatus {
-    case idle, ready, busy, error
+    case idle, ready, busy, error, starting
+
+    init(rawStatus: String) {
+        switch rawStatus {
+        case "ready": self = .ready
+        case "busy": self = .busy
+        case "error": self = .error
+        case "starting": self = .starting
+        default: self = .idle
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .idle: return "Idle"
+        case .ready: return "Ready"
+        case .busy: return "Working"
+        case .error: return "Error"
+        case .starting: return "Starting"
+        }
+    }
+}
+
+enum StatusBarMenuCopy {
+    static func menuTitle(authenticated: Bool) -> String {
+        authenticated
+            ? "Signed in to grok CLI"
+            : "Sign in required — run grok login"
+    }
+
+    static func updateMenuTitle(hasActionableUpdate: Bool) -> String {
+        hasActionableUpdate ? "Upgrade Available…" : "Check for Updates…"
+    }
 }
 
 class StatusBarController: NSObject {
@@ -33,14 +65,7 @@ class StatusBarController: NSObject {
             queue: .main
         ) { [weak self] note in
             if let raw = note.userInfo?["status"] as? String {
-                let status: GrokStatus
-                switch raw {
-                case "ready": status = .ready
-                case "busy": status = .busy
-                case "error": status = .error
-                default: status = .idle
-                }
-                self?.updateIcon(for: status)
+                self?.updateIcon(for: GrokStatus(rawStatus: raw))
             }
             if let auth = note.userInfo?["authenticated"] as? Bool {
                 self?.updateAuthIndicator(authenticated: auth)
@@ -68,7 +93,7 @@ class StatusBarController: NSObject {
         }
 
         updateIcon(for: .idle)
-        updateAuthIndicator(authenticated: true)
+        updateAuthIndicator(authenticated: GrokAuthProbe.isLikelyAuthenticated())
         Task { @MainActor in
             self.refreshUpdateMenuItem()
         }
@@ -99,40 +124,38 @@ class StatusBarController: NSObject {
     }
 
     private var grokBuildTitleItem: NSMenuItem!
+    private var terminalLoginItem: NSMenuItem!
+    private var retryConnectionItem: NSMenuItem!
     private var updateCheckItem: NSMenuItem!
+
     private func setupMenu() {
-        grokBuildTitleItem = NSMenuItem(title: menuTitle(authenticated: true), action: nil, keyEquivalent: "")
+        grokBuildTitleItem = NSMenuItem(
+            title: StatusBarMenuCopy.menuTitle(authenticated: GrokAuthProbe.isLikelyAuthenticated()),
+            action: nil,
+            keyEquivalent: ""
+        )
         grokBuildTitleItem.isEnabled = false
         menu.addItem(grokBuildTitleItem)
 
-        menu.addItem(.separator())
+        terminalLoginItem = NSMenuItem(
+            title: "Run `grok login` in Terminal…",
+            action: #selector(openTerminalForLogin),
+            keyEquivalent: ""
+        )
+        terminalLoginItem.target = self
+        terminalLoginItem.isHidden = true
+        menu.addItem(terminalLoginItem)
 
-        let aboutItem = NSMenuItem(title: "About GrokBuild", action: #selector(showAbout), keyEquivalent: "")
-        aboutItem.target = self
-        menu.addItem(aboutItem)
-
-        updateCheckItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
-        updateCheckItem.target = self
-        menu.addItem(updateCheckItem)
-
-#if DEBUG
-        menu.addItem(.separator())
-        menu.addItem(makeSimulateUpdatesMenuItem())
-#endif
-
-        menu.addItem(.separator())
-
-        let viewUsageItem = NSMenuItem(title: "View Usage on grok.com…", action: #selector(openUsagePage), keyEquivalent: "")
-        viewUsageItem.target = self
-        menu.addItem(viewUsageItem)
+        retryConnectionItem = NSMenuItem(title: "Retry Connection", action: #selector(retryConnection), keyEquivalent: "")
+        retryConnectionItem.target = self
+        retryConnectionItem.isHidden = true
+        menu.addItem(retryConnectionItem)
 
         menu.addItem(.separator())
 
         let openItem = NSMenuItem(title: "Open GrokBuild", action: #selector(openGrokBuild), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
-
-        menu.addItem(.separator())
 
         let newSessionItem = NSMenuItem(title: "New Session", action: #selector(newSession), keyEquivalent: "n")
         newSessionItem.target = self
@@ -142,13 +165,37 @@ class StatusBarController: NSObject {
         sessionsItem.target = self
         menu.addItem(sessionsItem)
 
-        menu.addItem(.separator())
-
         let chooseWorkspace = NSMenuItem(title: "Add Project…", action: #selector(chooseWorkspace), keyEquivalent: "")
         chooseWorkspace.target = self
         menu.addItem(chooseWorkspace)
 
         menu.addItem(.separator())
+
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        updateCheckItem = NSMenuItem(
+            title: StatusBarMenuCopy.updateMenuTitle(hasActionableUpdate: false),
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        updateCheckItem.target = self
+        menu.addItem(updateCheckItem)
+
+#if DEBUG
+        menu.addItem(makeSimulateUpdatesMenuItem())
+#endif
+
+        let viewUsageItem = NSMenuItem(title: "View Usage on grok.com…", action: #selector(openUsagePage), keyEquivalent: "")
+        viewUsageItem.target = self
+        menu.addItem(viewUsageItem)
+
+        menu.addItem(.separator())
+
+        let aboutItem = NSMenuItem(title: "About GrokBuild", action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
 
         let quitItem = NSMenuItem(title: "Quit GrokBuild", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
@@ -188,6 +235,37 @@ class StatusBarController: NSObject {
         showMainWindow()
     }
 
+    @objc private func openSettings() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+    }
+
+    @objc private func retryConnection() {
+        showMainWindow()
+        NotificationCenter.default.post(name: .retryConnectionRequested, object: nil)
+    }
+
+    @objc private func openTerminalForLogin() {
+        let script = """
+        tell application "Terminal"
+            activate
+            do script "grok login"
+        end tell
+        """
+
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+            if error != nil {
+                if let url = URL(string: "file:///System/Applications/Utilities/Terminal.app") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        } else if let url = URL(string: "file:///System/Applications/Utilities/Terminal.app") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     @objc private func showAbout() {
         AboutPanel.show()
     }
@@ -201,12 +279,8 @@ class StatusBarController: NSObject {
             await UpdateScheduler.checkNow()
             self?.resetUpdateMenuItem()
 
-            if UpdateScheduler.hasAnyActionableUpdate {
-                self?.showMainWindow()
-            } else {
-                await UpdateUI.presentUpdatePanel(refresh: false) { [weak self] in
-                    self?.resetUpdateMenuItem()
-                }
+            await UpdateUI.presentUpdatePanel(refresh: false) { [weak self] in
+                self?.resetUpdateMenuItem()
             }
         }
     }
@@ -229,11 +303,9 @@ class StatusBarController: NSObject {
 
     @MainActor
     private func refreshUpdateMenuItem() {
-        if UpdateScheduler.hasAnyActionableUpdate {
-            updateCheckItem.title = "Upgrade Available…"
-        } else {
-            updateCheckItem.title = "Check for Updates…"
-        }
+        updateCheckItem.title = StatusBarMenuCopy.updateMenuTitle(
+            hasActionableUpdate: UpdateScheduler.hasAnyActionableUpdate
+        )
     }
 
 #if DEBUG
@@ -311,11 +383,13 @@ class StatusBarController: NSObject {
     private func updateIcon(for status: GrokStatus) {
         guard let button = statusItem.button else { return }
 
+        button.setAccessibilityValue(status.accessibilityLabel)
+
         let dotColor: NSColor
         switch status {
         case .ready:
             dotColor = .systemGreen
-        case .busy:
+        case .busy, .starting:
             dotColor = .systemBlue
         case .error:
             dotColor = .systemRed
@@ -341,30 +415,47 @@ class StatusBarController: NSObject {
         if dotColor == .clear {
             button.image = icon
         } else {
+            let labelColor = menuBarLabelColor(for: button)
+            let tintedIcon = tinted(icon, color: labelColor)
             let size = NSSize(width: 22, height: 22)
             let composedImage = NSImage(size: size, flipped: false) { rect in
-                icon.draw(in: rect)
+                tintedIcon.draw(in: rect)
                 let dotSize: CGFloat = 7
                 let dotRect = NSRect(x: rect.width - dotSize - 2, y: 2, width: dotSize, height: dotSize)
                 dotColor.setFill()
                 NSBezierPath(ovalIn: dotRect).fill()
                 return true
             }
-            composedImage.isTemplate = true
+            composedImage.isTemplate = false
             button.image = composedImage
         }
+    }
+
+    private func menuBarLabelColor(for button: NSStatusBarButton) -> NSColor {
+        var color = NSColor.labelColor
+        button.effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = NSColor.labelColor
+        }
+        return color
+    }
+
+    private func tinted(_ image: NSImage, color: NSColor) -> NSImage {
+        let out = NSImage(size: image.size, flipped: false) { rect in
+            image.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        out.isTemplate = false
+        return out
     }
 
     private func updateAuthIndicator(authenticated: Bool) {
         let color = authenticated ? NSColor.systemGreen : NSColor.systemRed
         grokBuildTitleItem.image = dotImage(color: color)
-        grokBuildTitleItem.title = menuTitle(authenticated: authenticated)
-    }
-
-    private func menuTitle(authenticated: Bool) -> String {
-        authenticated
-            ? "GrokBuild connected to grok cli"
-            : "GrokBuild not connected to grok cli"
+        grokBuildTitleItem.title = StatusBarMenuCopy.menuTitle(authenticated: authenticated)
+        terminalLoginItem.isHidden = authenticated
+        retryConnectionItem.isHidden = authenticated
     }
 
     private func dotImage(color: NSColor) -> NSImage {
