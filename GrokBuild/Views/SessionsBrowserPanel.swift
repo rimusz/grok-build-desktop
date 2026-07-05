@@ -245,8 +245,8 @@ struct SessionsBrowserPanel: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .disabled(isMutating || isOpenLive)
-                .help(isOpenLive ? "Close this session before deleting it" : "Delete this session permanently")
+                .disabled(isMutating || isOpenLive || isActive)
+                .help(isOpenLive ? "Close this session before deleting it" : isActive ? "Switch away from this session before deleting it" : "Delete this session permanently")
             }
 
             HStack(spacing: 10) {

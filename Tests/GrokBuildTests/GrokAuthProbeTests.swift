@@ -20,6 +20,24 @@ final class GrokAuthProbeTests: XCTestCase {
         XCTAssertFalse(GrokAuthProbe.hasCachedCredentials(at: url))
     }
 
+    func testHasCachedCredentialsFalseWhenWhitespacePaddedEmptyObject() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GrokAuthProbeTests-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try "{\n}".write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertFalse(GrokAuthProbe.hasCachedCredentials(at: url))
+    }
+
+    func testHasCachedCredentialsFalseWhenSpacePaddedEmptyObject() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GrokAuthProbeTests-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try "{ }".write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertFalse(GrokAuthProbe.hasCachedCredentials(at: url))
+    }
+
     func testHasCachedCredentialsFalseWhenMissing() {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("GrokAuthProbeTests-\(UUID().uuidString).json")

@@ -358,12 +358,15 @@ enum GrokAuthProbe {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok/auth.json")
     }
 
-    /// True when auth.json exists and holds more than an empty object. Testable via injected URL/FileManager.
+    /// True when auth.json exists and holds a non-empty JSON object. Testable via injected URL.
+    /// An unreadable or malformed file is treated conservatively as "no credentials"
+    /// so the UI falls back to the authoritative `.grokStatusChanged` notification.
     static func hasCachedCredentials(at url: URL = cachedCredentialsURL,
                                      fileManager: FileManager = .default) -> Bool {
-        guard let attrs = try? fileManager.attributesOfItem(atPath: url.path),
-              let size = attrs[.size] as? Int else { return false }
-        return size > 2 // more than "{}" / empty
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return !obj.isEmpty
     }
 
     /// Best-effort launch hint: signed in iff the grok CLI has cached credentials.
