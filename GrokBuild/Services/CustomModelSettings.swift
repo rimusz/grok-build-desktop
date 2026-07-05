@@ -24,6 +24,17 @@ struct CustomModel: Identifiable, Hashable, Sendable {
     var name: String
     /// API key stored inline in config.toml. Empty for local/open servers.
     var apiKey: String
+    /// Optional context-window size GrokBuild uses when the CLI does not advertise one.
+    var contextTokens: Int?
+    /// Whether GrokBuild should expose the reasoning-effort control for this model.
+    /// Opt-out: defaults to `true` (both for new models and for existing config.toml
+    /// entries missing the `grokbuild_supports_reasoning_effort` key) so the control keeps
+    /// showing unless the user explicitly disables it.
+    var supportsReasoningEffort: Bool
+    /// Whether the provider model can accept image inputs.
+    var supportsVision: Bool
+    /// Whether GrokBuild should expect/display model thinking blocks for this model.
+    var supportsThinkingDisplay: Bool
     /// Optional link to a saved `Provider`. GrokBuild-only; the endpoint/credential are still
     /// written into this model's own `[model.<id>]` table so the Grok CLI can read them.
     var providerID: String?
@@ -34,6 +45,10 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         baseURL: String,
         name: String = "",
         apiKey: String = "",
+        contextTokens: Int? = nil,
+        supportsReasoningEffort: Bool = true,
+        supportsVision: Bool = false,
+        supportsThinkingDisplay: Bool = false,
         providerID: String? = nil
     ) {
         self.id = id
@@ -41,6 +56,10 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         self.baseURL = baseURL
         self.name = name
         self.apiKey = apiKey
+        self.contextTokens = contextTokens
+        self.supportsReasoningEffort = supportsReasoningEffort
+        self.supportsVision = supportsVision
+        self.supportsThinkingDisplay = supportsThinkingDisplay
         self.providerID = providerID
     }
 
@@ -104,6 +123,9 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         if trimmedURL.isEmpty { return "Base URL is required." }
         if !(trimmedURL.hasPrefix("http://") || trimmedURL.hasPrefix("https://")) {
             return "Base URL must start with http:// or https://."
+        }
+        if let contextTokens, contextTokens <= 0 {
+            return "Context window must be greater than zero."
         }
         return nil
     }
@@ -559,7 +581,11 @@ enum CustomModelStore {
                 model: fields["model"] ?? "",
                 baseURL: fields["base_url"] ?? "",
                 name: fields["name"] ?? "",
-                apiKey: fields["api_key"] ?? ""
+                apiKey: fields["api_key"] ?? "",
+                contextTokens: parseInt(fields["grokbuild_context_tokens"]),
+                supportsReasoningEffort: parseBool(fields["grokbuild_supports_reasoning_effort"]) ?? true,
+                supportsVision: parseBool(fields["grokbuild_supports_vision"]) ?? false,
+                supportsThinkingDisplay: parseBool(fields["grokbuild_supports_thinking"]) ?? false
             ))
             currentModelID = nil
             fields = [:]
@@ -657,6 +683,12 @@ enum CustomModelStore {
             if !model.apiKey.trimmingCharacters(in: .whitespaces).isEmpty {
                 result += "api_key = \(quote(model.apiKey))\n"
             }
+            if let contextTokens = model.contextTokens {
+                result += "grokbuild_context_tokens = \(contextTokens)\n"
+            }
+            result += "grokbuild_supports_reasoning_effort = \(model.supportsReasoningEffort)\n"
+            result += "grokbuild_supports_vision = \(model.supportsVision)\n"
+            result += "grokbuild_supports_thinking = \(model.supportsThinkingDisplay)\n"
         }
 
         // Re-establish [models].default. Reuse an existing [models] table if present.
@@ -728,6 +760,20 @@ enum CustomModelStore {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\""
+    }
+
+    private static func parseBool(_ value: String?) -> Bool? {
+        guard let value else { return nil }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true": return true
+        case "false": return false
+        default: return nil
+        }
+    }
+
+    private static func parseInt(_ value: String?) -> Int? {
+        guard let value else { return nil }
+        return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Returns a TOML table-key segment for `[model.<key>]`.

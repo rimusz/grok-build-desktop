@@ -247,12 +247,16 @@ struct GrokSessionInfo: Identifiable, Hashable, Sendable {
             let rest = trimmed.dropFirst(36).trimmingCharacters(in: .whitespaces)
             let pieces = rest.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
             guard pieces.count >= 3 else { return nil }
+            // The CLI prints a literal "(no summary)" placeholder; normalize it to empty so
+            // callers can treat "has a summary" as a simple non-empty check.
+            let rawSummary = pieces.count > 3 ? String(pieces[3]).trimmingCharacters(in: .whitespaces) : ""
+            let summary = rawSummary.caseInsensitiveCompare("(no summary)") == .orderedSame ? "" : rawSummary
             return GrokSessionInfo(
                 id: sessionID,
                 created: String(pieces[0]),
                 updated: String(pieces[1]),
                 status: String(pieces[2]),
-                summary: pieces.count > 3 ? String(pieces[3]) : ""
+                summary: summary
             )
         }
     }
@@ -342,6 +346,33 @@ enum GrokSettingsKeys {
     static let noSubagents = "grokbuild.noSubagents"
     static let allowRules = "grokbuild.allowRules"
     static let denyRules = "grokbuild.denyRules"
+}
+
+/// Best-effort sign-in detection used only at launch, before any grok process runs.
+/// Sign-in is defined solely by the grok CLI's own cached credentials in
+/// ~/.grok/auth.json (written by `grok login`, cleared by `grok logout`); the app
+/// deliberately does NOT treat environment API keys as being signed in. A running
+/// session's `.grokStatusChanged` remains authoritative and overrides this hint.
+enum GrokAuthProbe {
+    static var cachedCredentialsURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok/auth.json")
+    }
+
+    /// True when auth.json exists and holds a non-empty JSON object. Testable via injected URL.
+    /// An unreadable or malformed file is treated conservatively as "no credentials"
+    /// so the UI falls back to the authoritative `.grokStatusChanged` notification.
+    static func hasCachedCredentials(at url: URL = cachedCredentialsURL,
+                                     fileManager: FileManager = .default) -> Bool {
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return !obj.isEmpty
+    }
+
+    /// Best-effort launch hint: signed in iff the grok CLI has cached credentials.
+    static func isLikelyAuthenticated() -> Bool {
+        hasCachedCredentials()
+    }
 }
 
 final class GrokCLIService {

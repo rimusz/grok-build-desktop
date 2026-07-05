@@ -12,6 +12,20 @@ enum GrokProcessState: Sendable, Equatable {
         if case .failed(let message) = self { return message }
         return nil
     }
+
+    /// Status string for `.grokStatusChanged` (`error` / `busy` / `ready` / `idle`).
+    static func statusString(for state: GrokProcessState) -> String {
+        switch state {
+        case .failed:
+            return "error"
+        case .busy:
+            return "busy"
+        case .ready:
+            return "ready"
+        case .idle, .starting:
+            return "idle"
+        }
+    }
 }
 
 struct GrokLaunchOptions: Sendable {
@@ -1007,18 +1021,12 @@ final class GrokProcess: @unchecked Sendable {
     }
 
     private func notifyStatus() {
-        let s: String
-        if case .failed = state {
-            s = "error"
-        } else if state == .busy {
-            s = "busy"
-        } else if state == .ready {
-            s = "ready"
-        } else {
-            s = "idle"
-        }
+        let s = GrokProcessState.statusString(for: state)
         let authenticated = !needsAuthentication
-        NotificationCenter.default.post(name: .grokStatusChanged, object: nil, userInfo: ["status": s, "authenticated": authenticated])
+        let userInfo: [String: Any] = ["status": s, "authenticated": authenticated]
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .grokStatusChanged, object: nil, userInfo: userInfo)
+        }
     }
 }
 

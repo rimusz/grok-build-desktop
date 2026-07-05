@@ -130,6 +130,7 @@ struct ContentView: View {
                         onSelectSession: { selectSession($0) },
                         onBrowseSessions: { showSessions = true },
                         onNewSession: { startNewSessionForCurrentProject() },
+                        onAddProject: { showPicker = true },
                         onOpenProjectIn: { openCurrentProject(in: $0) },
                         onToggleBrowserTools: { toggleBrowserToolsFromChat() },
                         onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
@@ -241,6 +242,10 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
             startNewSessionForCurrentProject()
         }
+        .modifier(StatusMenuNotificationHandlers(
+            activeStore: activeStore,
+            openSettings: openSettings
+        ))
         .onChange(of: activeStore.grokSessionId) { _, _ in
             persistSessionLayout()
         }
@@ -1141,4 +1146,22 @@ extension Notification.Name {
     static let grokBuildCLIUpdated = Notification.Name("grokBuildCLIUpdated")
     static let grokBuildRestartSessionsRequested = Notification.Name("grokBuildRestartSessionsRequested")
     static let grokBuildPrepareForShutdown = Notification.Name("grokBuildPrepareForShutdown")
+    static let retryConnectionRequested = Notification.Name("retryConnectionRequested")
+    static let openSettingsRequested = Notification.Name("openSettingsRequested")
+}
+
+private struct StatusMenuNotificationHandlers: ViewModifier {
+    let activeStore: ChatStore
+    let openSettings: (SettingsTab) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .retryConnectionRequested)) { _ in
+                Task { await activeStore.retryConnection() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openSettingsRequested)) { _ in
+                let tab: SettingsTab = UpdateScheduler.hasAnyActionableUpdate ? .app : .hooks
+                openSettings(tab)
+            }
+    }
 }

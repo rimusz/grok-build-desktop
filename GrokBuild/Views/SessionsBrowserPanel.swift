@@ -25,6 +25,16 @@ struct SessionsBrowserPanel: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var searchTask: Task<Void, Never>?
+    @State private var isMutating = false
+    @State private var pendingDeletion: SessionDeletion?
+    @State private var showClearEmptyConfirm = false
+
+    /// A session queued for confirmed, permanent deletion (bound to `.alert(item:)`).
+    private struct SessionDeletion: Identifiable {
+        let session: GrokSessionInfo
+        let workspace: Workspace
+        var id: String { session.id }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,6 +81,15 @@ struct SessionsBrowserPanel: View {
                     query = ""
                     Task { await loadSessions() }
                 }
+                if cleanableCount > 0 {
+                    Button(role: .destructive) {
+                        showClearEmptyConfirm = true
+                    } label: {
+                        Label("Clear Empty (\(cleanableCount))", systemImage: "trash")
+                    }
+                    .help("Delete unnamed sessions with no summary that are not open or active")
+                    .disabled(isMutating)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, showsHeader ? 12 : 8)
@@ -113,6 +132,50 @@ struct SessionsBrowserPanel: View {
             }
         }
         .task { await loadSessions() }
+        .alert(item: $pendingDeletion) { deletion in
+            Alert(
+                title: Text("Delete Session?"),
+                message: Text("“\(displayName(for: deletion.session))” will be permanently removed from Grok history. This cannot be undone."),
+                primaryButton: .destructive(Text("Delete")) {
+                    Task { await deleteSession(deletion.session, workspace: deletion.workspace) }
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .confirmationDialog(
+            "Delete \(cleanableCount) empty \(cleanableCount == 1 ? "session" : "sessions")?",
+            isPresented: $showClearEmptyConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(cleanableCount) \(cleanableCount == 1 ? "Session" : "Sessions")", role: .destructive) {
+                Task { await clearEmptySessions() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Unnamed sessions with no summary that are not open or active will be permanently removed from Grok history.")
+        }
+    }
+
+    /// A session is "empty" (safe to bulk-clear) when it has no custom name, no summary,
+    /// and is neither the active session nor open as a live tab.
+    private func isCleanable(_ session: GrokSessionInfo) -> Bool {
+        Self.isCleanableSession(
+            summary: session.summary,
+            hasCustomName: SessionNameStore.name(for: session.id) != nil,
+            isActive: selectedGrokSessionID == session.id,
+            isLive: liveSessionsByGrokID[session.id] != nil
+        )
+    }
+
+    /// Pure predicate for the bulk "Clear Empty" action. A session is cleanable only when
+    /// it carries no user-facing identity (no custom name, no summary) and is not in use.
+    static func isCleanableSession(summary: String, hasCustomName: Bool, isActive: Bool, isLive: Bool) -> Bool {
+        let hasSummary = !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !hasCustomName && !hasSummary && !isActive && !isLive
+    }
+
+    private var cleanableCount: Int {
+        groups.reduce(0) { $0 + $1.sessions.filter(isCleanable).count }
     }
 
     private var emptyDescription: String {
@@ -174,6 +237,16 @@ struct SessionsBrowserPanel: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .disabled(isOpenLive && isActive)
+
+                Button(role: .destructive) {
+                    pendingDeletion = SessionDeletion(session: session, workspace: workspace)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .disabled(isMutating || isOpenLive || isActive)
+                .help(isOpenLive ? "Close this session before deleting it" : isActive ? "Switch away from this session before deleting it" : "Delete this session permanently")
             }
 
             HStack(spacing: 10) {
@@ -231,6 +304,50 @@ struct SessionsBrowserPanel: View {
         } catch {
             errorMessage = error.localizedDescription
             groups = []
+        }
+    }
+
+    @MainActor
+    private func deleteSession(_ session: GrokSessionInfo, workspace: Workspace) async {
+        isMutating = true
+        errorMessage = nil
+        defer { isMutating = false }
+        do {
+            try await service.deleteSession(id: session.id, cwd: workspace.path)
+            SessionNameStore.removeName(for: session.id)
+            removeFromGroups(session.id)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func clearEmptySessions() async {
+        isMutating = true
+        errorMessage = nil
+        defer { isMutating = false }
+
+        // Snapshot the targets first so mutations during iteration stay consistent.
+        let targets: [(GrokSessionInfo, Workspace)] = groups.flatMap { group in
+            group.sessions.filter(isCleanable).map { ($0, group.workspace) }
+        }
+        for (session, workspace) in targets {
+            do {
+                try await service.deleteSession(id: session.id, cwd: workspace.path)
+                SessionNameStore.removeName(for: session.id)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+        await loadSessions()
+    }
+
+    /// Drops a deleted session from the in-memory groups and prunes now-empty groups,
+    /// avoiding a full reload for a single deletion.
+    private func removeFromGroups(_ sessionID: String) {
+        groups = groups.compactMap { group in
+            let remaining = group.sessions.filter { $0.id != sessionID }
+            return remaining.isEmpty ? nil : ProjectSessionsGroup(workspace: group.workspace, sessions: remaining)
         }
     }
 }

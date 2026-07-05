@@ -97,7 +97,7 @@ grok-deck2/
 
 1. **Single instance** — advisory `flock` on `~/Library/Application Support/GrokBuild/instance.pid`. Second launch posts `com.grokbuild.showMainWindow` and exits.
 2. **Activation policy** — `.regular` (Dock icon + menu bar item).
-3. **Status bar** — `StatusBarController()` (menu: About, updates, sessions, quit).
+3. **Status bar** — `StatusBarController()` (actions-first menu: open/new session, settings, updates, auth recovery when signed out, quit). At launch, `GrokAuthProbe` (`GrokCLIService.swift`) best-effort checks `~/.grok/auth.json` size (the grok CLI's own cached credentials — env API keys are deliberately not treated as signed in); runtime `.grokStatusChanged` from a live process remains authoritative and overrides this hint.
 4. **Update scheduler** — `UpdateScheduler.start()` (background checks).
 5. **Main window** — `openMainWindow()` hosts `ContentView` in `NSHostingController`.
 
@@ -111,10 +111,14 @@ grok-deck2/
 
 | Menu | Location | Purpose |
 |------|----------|---------|
-| **App menu bar** (top of screen) | `AppDelegate.setupMainMenu()` | Edit, Project, Session shortcuts |
-| **Status item menu** | `StatusBarController` | Quick actions, updates, quit |
+| **App menu bar** (top of screen) | `AppDelegate.setupMainMenu()` | App (About, Settings ⌘,, Hide ⌘H, Quit), Edit, Project, Session, Window |
+| **Status item menu** | `StatusBarController` | Actions-first quick actions, settings, updates, auth recovery, quit |
 
-Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`) that `ContentView` handles.
+**Status item menu order:** auth header (+ **Run `grok login` in Terminal…** / **Retry Connection** when signed out) → **Open GrokBuild** → **New Session** → **Browse Sessions…** → **Add Project…** → **Settings…** (⌘,) → **Check for Updates…** / **Upgrade Available…** → **View Usage on grok.com…** → **About GrokBuild** → **Quit GrokBuild**. DEBUG builds add **Simulate Updates** after the updates item.
+
+Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles.
+
+**Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
 ---
 
@@ -173,7 +177,7 @@ flowchart TB
 3. Homebrew paths
 4. `PATH`
 
-User must run `grok login` for authenticated sessions. Auth failures surface in `ChatStore.authRequiredMessage` and menu bar indicator.
+User must run `grok login` for authenticated sessions. Auth failures surface in `ChatStore.authRequiredMessage` and menu bar indicator. **Launch hint:** `GrokAuthProbe` checks the grok CLI's cached credentials (non-empty `~/.grok/auth.json`) for the status menu header before any session starts — env API keys are not treated as signed in; once a `GrokProcess` runs, `.grokStatusChanged` `authenticated` wins.
 
 ---
 
@@ -294,6 +298,8 @@ Model + reasoning effort are **per workspace**, not global:
 - Changing model in chat writes back to `SessionLayoutStore`
 - Sibling sessions in same project sync via `.workspaceAgentSettingsChanged`
 
+**Reasoning effort — one authoritative surface.** The composer's model-menu picker is the per-project value used at launch (`restartProcess` reads `workspaceReasoningEffort`, never the global key directly). The global `grokbuild.reasoningEffort` (Settings → Permissions → "Default reasoning effort") is only a **seed for new/untouched projects**: `loadWorkspaceAgentSettings()` resolves `ChatStore.resolveReasoningEffort(saved:globalDefault:)` = saved per-project value (incl. explicit "Default") if present, else the global default. Do not add a second effort editor elsewhere — the Models pane no longer has one.
+
 ### Session selection persistence
 
 `grokbuild.sessionSelections.v1` — per **grok session id**: saved mode (model is project-level now).
@@ -399,7 +405,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
-| `grokbuild.customModels.v1` | `CustomModelStore` | Provider definitions (UserDefaults) |
+| `grokbuild.customModelProviders` | `ProviderStore` | Reusable custom model providers (UserDefaults) |
 | `grokbuild.updates.autoCheckEnabled` | `UpdateSettingsStore` | Background update checks |
 | `grokbuild.updates.dismissedVersion` | | Skipped GrokBuild version |
 | `grokbuild.updates.dismissedCLIVersion` | | Skipped grok CLI version |
@@ -409,7 +415,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 
 | Path | Purpose |
 |------|---------|
-| `~/.grok/config.toml` | Custom model providers (`CustomModelStore` writes here) |
+| `~/.grok/config.toml` | Custom model tables plus `[models].default`; GrokBuild-owned `grokbuild_*` model metadata keys |
 | `~/.grok/skills/` | Installed skills (bundled skills copied by installers) |
 | `~/.grokbuild/computer-use/` | Cursor MCP helper binaries |
 | `~/Library/Application Support/GrokBuild/Updates/` | Downloaded app update zips |
@@ -457,9 +463,10 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 |-------|----------|
 | Settings | `SettingsView` → `.models`; `CustomModelStore`, `CustomModelSettings` |
 | Persistence | Providers in UserDefaults; model entries written to **`~/.grok/config.toml`** |
+| Metadata | GrokBuild-owned TOML keys (`grokbuild_context_tokens`, `grokbuild_supports_*`) drive UI hints only |
 | Chat | Merged into `ChatStore.availableModels` via `mergeCustomModels()` |
 
-OpenAI-compatible provider URLs; not a replacement for grok-native models.
+OpenAI-compatible provider URLs; not a replacement for grok-native models. Custom model metadata is a UI fallback: ACP-reported model names/context limits stay authoritative when the CLI provides them. Reasoning-effort support is **opt-out** — `grokbuild_supports_reasoning_effort` defaults to `true` for new models and for existing config.toml entries missing the key, so the effort control keeps showing until the user disables it. Models explicitly marked as not supporting reasoning effort do not receive `--reasoning-effort` at launch, and the composer hides the effort picker for them.
 
 ### Bundled desktop skill
 
@@ -502,6 +509,8 @@ OpenAI-compatible provider URLs; not a replacement for grok-native models.
 Changing settings that affect MCP → call `ChatStore.reloadConfiguration()` (restarts process).
 
 Permissions tab (`GrokSettingsKeys`) apply on next `restartProcess` (no separate applied copy).
+
+Each settings pane puts its own "Refresh"/action buttons **inline in the pane header**, not in a `.toolbar { }` modifier — a window-level `.toolbar` item declared on one tab's view leaks into the shared title bar and can persist after switching to a tab that declares no toolbar of its own (observed and fixed on `PluginsSettingsPane`). Don't reintroduce `.toolbar` on settings pane views; use an inline header button instead.
 
 ---
 
@@ -566,7 +575,7 @@ sequenceDiagram
 
 ### UI surfaces
 
-- **Menu:** **Upgrade Available…** / **Check for Updates…** — refresh checks; if updates exist, show the main-window banner only; if up to date, open the panel with status
+- **Menu:** **Upgrade Available…** / **Check for Updates…** — refresh checks, then open `UpdatePanel` directly (whether or not updates are available)
 - **Banner:** `UpdatesBanner` in `ContentView` — **Updates Available** opens `UpdatePanel`
 - **Panel:** dual sections; mutual busy lock during install
 
@@ -597,11 +606,11 @@ Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make 
 | File | Role |
 |------|------|
 | `SidebarView.swift` | Project list, session list, pins, settings entry |
-| `ChatView.swift` | Composer, messages, model/effort popover, feature pills |
+| `ChatView.swift` | Composer, messages, model/effort popover, feature pills, empty/welcome state (quick-start chips + no-project CTA) |
 | `GrokChatChrome.swift` | Shared session chrome |
-| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions |
+| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. `RichMessageView` parses mermaid/LaTeX blocks; WKWebView embeds reload only when source changes, report a fixed height after load (avoids lazy-list layout loops), and inline `$…$` spans require math signals (not currency/`$PATH`). |
 | `PreviewPane.swift` | Diff detection from assistant messages; apply/commit |
-| `SessionBrowserView.swift` | Resume historical grok sessions |
+| `SessionBrowserView.swift` | Resume historical grok sessions; per-row **delete** + **Clear Empty** bulk cleanup (`GrokCLIService.deleteSession` + `SessionNameStore.removeName`) |
 | `GitCheckoutSheet.swift` | Branch switch / worktree create |
 | `WorkspacePicker.swift` | Add project folder |
 
@@ -632,8 +641,12 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.sessionsRequested` | Browse sessions | Session browser sheet |
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
+| `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
+| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.hooks`) |
 | `.workspaceAgentSettingsChanged` | Model/effort saved | Sync sibling sessions in project |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
+
+`GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
 
 ### Updates
 
@@ -647,7 +660,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.grokBuildRestartSessionsRequested` | Reconnect after CLI update |
 | `.grokBuildCLIUpdated` | CLI update succeeded |
 
-**Convention:** post `.grokStatusChanged` with `userInfo: ["status": "ready"|"busy"|"error"|"idle", "authenticated": Bool]`.
+**Convention:** post `.grokStatusChanged` with `userInfo: ["status": "ready"|"busy"|"error"|"starting"|"idle", "authenticated": Bool]`.
 
 ---
 
@@ -698,6 +711,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | Task | Start here |
 |------|------------|
 | **Composer, send, streaming** | `ChatView.swift`, `ChatStore.send`, `consumeOutput` |
+| **Empty/welcome state, quick starts** | `ChatView.swift` (`welcomeState`, `noProjectState`, `QuickStartChip`), `QuickStartPrompt` in `ComposerModels.swift` |
 | **ACP events / tool cards** | `GrokProcess` (`AcpEvent`), `RichMessageView` |
 | **Permissions UI** | `ChatStore.pendingPermissions`, `MessageBubble` |
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
@@ -713,7 +727,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **MCP injection** | `ChatStore.restartProcess` → `browserMCPConfig` / `computerUseMCPConfig` |
 | **Skill install** | `BrowserSkillInstaller`, `ComputerUseSkillInstaller` |
 | **Diff review / apply** | `PreviewPane`, `ChatStore` diff detection on `Message.hasDiff` |
-| **Menu bar / auth** | `StatusBarController`, `ChatStore.authRequiredMessage` |
+| **Menu bar / auth** | `StatusBarController`, `GrokAuthProbe`, `ChatStore.authRequiredMessage` |
 | **Main window / single instance** | `AppDelegate` |
 | **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel` |
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
@@ -734,8 +748,12 @@ make test    # Tests/GrokBuildTests/
 | `SessionPersistenceTests.swift` | Layout/workspace persistence |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip |
 | `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions |
+| `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
+| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers |
+| `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
+| `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.
 

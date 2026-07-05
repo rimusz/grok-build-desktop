@@ -11,7 +11,8 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 ### Chat & sessions
 - Native macOS SwiftUI interface for `grok agent stdio`.
 - Streaming chat with Markdown rendering, thinking blocks, live tool activity, permission prompts, and question cards.
-- Resumable sessions with a session browser for reopening existing Grok sessions in the current project.
+- Guided empty state — a new session offers one-tap quick-start prompts (explain the project, find a bug, add tests, review changes), and a first launch with no projects shows an **Add Project** call-to-action.
+- Resumable sessions with a session browser for reopening existing Grok sessions in the current project, including per-session delete and a one-click **Clear Empty** cleanup for unnamed, empty sessions.
 - Diff review of file changes proposed during a session.
 - Multi-tab sessions with lazy restore and an LRU cap on live Grok processes (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 
@@ -31,7 +32,8 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - Add custom OpenAI-compatible models from your own providers (e.g. MiniMax and other OpenAI-compatible endpoints).
 - Define reusable providers (base URL + shared API key) and fetch their available models directly in the app.
 - Models are written to `~/.grok/config.toml` and become usable via `/model <id>`; supports setting a default model (up to 28 custom models).
-- **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the same composer model menu; each project remembers its own model and effort and restores them when you switch workspaces.
+- Add GrokBuild-only metadata for custom models: context-window size, image/thinking hints, and whether reasoning effort should appear for that model.
+- **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the composer model menu; it stays available for custom models unless you turn it off in their settings. Effort is saved **per project**; set the starting default for new projects in **Settings → Permissions → Default reasoning effort**.
 
 ### Browser control
 Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click, type, wait, screenshot, run JS) via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev).
@@ -59,12 +61,15 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
 
 ### App experience
-- Menu bar item plus main window (Dock icon); single-instance app with status bar quick actions.
-- Built-in update checks for **GrokBuild** and the **`grok` CLI** (background on launch + daily; manual via **Check for Updates…**).
+- Menu bar item plus main window (Dock icon); single-instance app with status bar quick actions (open/new session, settings ⌘,, updates, sign-in recovery).
+- Status menu header shows grok CLI sign-in state at launch (based on `~/.grok/auth.json` from `grok login`); when signed out, **Run `grok login` in Terminal…** and **Retry Connection** appear in the menu. A running session's `.grokStatusChanged` updates override the launch hint.
+- Menu bar icon shows a colored status dot (ready / working / starting / error) with accessibility labels; the grok mark still adapts to light/dark menu bars.
+- **Settings…** (⌘,) in the status menu and App menu opens Settings in the main window.
+- Built-in update checks for **GrokBuild** and the **`grok` CLI** (background on launch + daily; manual via **Check for Updates…** — opens the updates panel directly).
 - **In-app GrokBuild updates** — for signed + **notarized** releases only: background check shows a main-window banner; click **Updates Available** to open the panel, download `GrokBuild-{tag}.app.zip`, verify signature, **Install and Restart** (via bundled install helper).
 - **In-app grok CLI updates** — banner → updates panel → **Update grok CLI** runs `grok update`; live sessions stop during the upgrade and can be restarted afterward.
 - **Settings → App** — installed versions, auto-check toggle, pending update status.
-- Login-state detection with a helpful `grok login` banner.
+- Login-state detection with a helpful `grok login` banner and menu-bar sign-in recovery actions.
 - Dark-mode-first visual design.
 
 ## Install

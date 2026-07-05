@@ -1017,11 +1017,6 @@ private struct PluginsSettingsPane: View {
             statusOverlay
         }
         .task { await refresh() }
-        .toolbar {
-            Button("Refresh") {
-                Task { await refresh() }
-            }
-        }
     }
 
     private var statusOverlay: some View {
@@ -2214,9 +2209,9 @@ private struct ComputerUseSettingsPane: View {
 private struct CustomModelsSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
-    @AppStorage(GrokSettingsKeys.reasoningEffort) private var reasoningEffort = GrokPermissionSettings.defaults.reasoningEffort
     @State private var providers: [Provider] = []
     @State private var models: [CustomModel] = []
+    @State private var defaultModelID = ""
     @State private var editingID: String?
     @State private var draft = CustomModel(id: "", model: "", baseURL: "")
     @State private var revealKey = false
@@ -2248,12 +2243,64 @@ private struct CustomModelsSettingsPane: View {
     @State private var showProviderRemovalConfirmation = false
     @State private var providerPendingRemoval: Provider?
 
+    private struct DefaultModelOption: Identifiable {
+        var id: String
+        var label: String
+    }
+
+    private struct ContextTokenPreset: Identifiable {
+        var label: String
+        var value: Int
+        var id: Int { value }
+    }
+
+    private let builtInDefaultModels: [DefaultModelOption] = [
+        DefaultModelOption(id: "", label: "No default override"),
+        DefaultModelOption(id: "grok-composer-2.5-fast", label: "Composer 2.5 Fast"),
+        DefaultModelOption(id: "grok-build", label: "Grok Build")
+    ]
+
+    private let contextTokenPresets: [ContextTokenPreset] = [
+        ContextTokenPreset(label: "128K", value: 128_000),
+        ContextTokenPreset(label: "200K", value: 200_000),
+        ContextTokenPreset(label: "512K", value: 512_000),
+        ContextTokenPreset(label: "1M", value: 1_000_000)
+    ]
+
     private var isEditing: Bool { editingID != nil }
     private var isEditingProvider: Bool { editingProviderID != nil }
     /// While any editor (provider or model) is open we lock the list cards so the user
     /// finishes or cancels the current edit before starting another action.
     private var isAnyEditorOpen: Bool { showingProviderEditor || showingModelEditor }
     private var isAtModelLimit: Bool { models.count >= CustomModelStore.maxModels }
+
+    private var defaultModelOptions: [DefaultModelOption] {
+        var options = builtInDefaultModels
+        for model in models {
+            let label = model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? model.id
+                : "\(model.name) (\(model.id))"
+            if !options.contains(where: { $0.id == model.id }) {
+                options.append(DefaultModelOption(id: model.id, label: label))
+            }
+        }
+        if !defaultModelID.isEmpty, !options.contains(where: { $0.id == defaultModelID }) {
+            options.append(DefaultModelOption(id: defaultModelID, label: "\(defaultModelID) (current)"))
+        }
+        return options
+    }
+
+    private var contextTokensBinding: Binding<String> {
+        Binding(
+            get: {
+                draft.contextTokens.map(String.init) ?? ""
+            },
+            set: { value in
+                let digits = value.filter(\.isNumber)
+                draft.contextTokens = digits.isEmpty ? nil : Int(digits)
+            }
+        )
+    }
 
     private func selectableModels(for provider: Provider) -> [FetchedModel] {
         if provider.usesCatalogModels { return provider.catalogModels }
@@ -2281,7 +2328,7 @@ private struct CustomModelsSettingsPane: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     header
-                    reasoningEffortCard
+                    defaultModelCard
                     providerTemplatesCard
                     if showingProviderEditor {
                         providerEditorCard
@@ -2309,8 +2356,15 @@ private struct CustomModelsSettingsPane: View {
             .background(Color(nsColor: .windowBackgroundColor))
             .onChange(of: scrollTarget) { _, target in
                 guard let target else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(target, anchor: .top)
+                // The editor/provider card this targets is only inserted into the
+                // hierarchy by the `showingModelEditor`/`showingProviderEditor` toggle
+                // that triggers this same change, so scrolling in this tick would race
+                // its layout and silently no-op. Defer one runloop turn so the card
+                // exists before `scrollTo` looks it up.
+                DispatchQueue.main.async {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        proxy.scrollTo(target, anchor: .top)
+                    }
                 }
                 scrollTarget = nil
             }
@@ -2371,26 +2425,26 @@ private struct CustomModelsSettingsPane: View {
         }
     }
 
-    private var reasoningEffortCard: some View {
-        settingsCard(title: "Reasoning Effort", systemImage: "brain.head.profile", tint: .purple) {
+    private var defaultModelCard: some View {
+        settingsCard(title: "Default Model", systemImage: "star", tint: .purple) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Controls how much “thinking” reasoning models use — higher effort can be slower and use more tokens. In chat, model and effort are saved per project.")
+                Text("Writes `[models].default` in ~/.grok/config.toml. Existing sessions still keep their per-project model until restarted or changed.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 14) {
-                    Picker("Reasoning effort", selection: $reasoningEffort) {
-                        ForEach(ReasoningEffortLevel.menuCases) { level in
-                            Text(level.displayName).tag(level.rawValue)
+                    Picker("Default model", selection: $defaultModelID) {
+                        ForEach(defaultModelOptions, id: \.id) { option in
+                            Text(option.label).tag(option.id)
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 280)
 
                     Spacer()
 
-                    Button("Apply to Session") {
-                        onConfigurationChanged()
+                    Button("Save Default") {
+                        persist()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -2899,6 +2953,9 @@ private struct CustomModelsSettingsPane: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                Text(modelMetadataSummary(model))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
             HStack(spacing: 6) {
@@ -2912,6 +2969,33 @@ private struct CustomModelsSettingsPane: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func modelMetadataSummary(_ model: CustomModel) -> String {
+        var pieces: [String] = []
+        if let tokens = model.contextTokens {
+            pieces.append("\(compactTokenCount(tokens)) context")
+        } else {
+            pieces.append("context unknown")
+        }
+        pieces.append(model.supportsReasoningEffort ? "reasoning effort on" : "reasoning effort off")
+        if model.supportsVision {
+            pieces.append("vision")
+        }
+        if model.supportsThinkingDisplay {
+            pieces.append("thinking")
+        }
+        return pieces.joined(separator: " · ")
+    }
+
+    private func compactTokenCount(_ tokens: Int) -> String {
+        if tokens >= 1_000_000 {
+            return "\(tokens / 1_000_000)M"
+        }
+        if tokens >= 1_000 {
+            return "\(tokens / 1_000)K"
+        }
+        return "\(tokens)"
     }
 
     private func badge(_ text: String, color: Color, systemImage: String) -> some View {
@@ -3058,6 +3142,46 @@ private struct CustomModelsSettingsPane: View {
                     }
                 }
 
+                Divider()
+
+                Text("Model metadata")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                settingRow("Context window") {
+                    HStack(spacing: 8) {
+                        TextField("Unknown", text: contextTokensBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 120)
+                        Text("tokens")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(contextTokenPresets) { preset in
+                            Button(preset.label) {
+                                draft.contextTokens = preset.value
+                            }
+                            .controlSize(.small)
+                        }
+                        Button("Clear") {
+                            draft.contextTokens = nil
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
+                settingRow("Capabilities") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Supports reasoning effort", isOn: $draft.supportsReasoningEffort)
+                        Toggle("Supports image input", isOn: $draft.supportsVision)
+                        Toggle("Shows thinking blocks", isOn: $draft.supportsThinkingDisplay)
+                    }
+                    .frame(maxWidth: 280, alignment: .leading)
+                }
+
+                Text("These GrokBuild-only hints control the model picker, context badge, and reasoning-effort UI. They do not change grok's provider routing or tool harness.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 HStack(spacing: 10) {
                     Button(isEditing ? "Save Changes" : "Add Model") { saveDraft() }
                         .buttonStyle(.borderedProminent)
@@ -3175,6 +3299,7 @@ private struct CustomModelsSettingsPane: View {
     private func reload() {
         providers = ProviderStore.load()
         let snapshot = CustomModelStore.load()
+        defaultModelID = snapshot.defaultModelID ?? ""
         // Re-attach providerID to parsed models by matching their base_url to a known provider,
         // since config.toml itself doesn't store the provider link. Then re-resolve the
         // endpoint/credential from the provider so a model reflects a key added to its provider
@@ -3438,6 +3563,9 @@ private struct CustomModelsSettingsPane: View {
 
     private func remove(_ model: CustomModel) {
         models.removeAll { $0.id == model.id }
+        if defaultModelID == model.id {
+            defaultModelID = ""
+        }
         if editingID == model.id { resetDraft() }
         persist()
     }
@@ -3445,11 +3573,11 @@ private struct CustomModelsSettingsPane: View {
     private func persist() {
         do {
             let resolvedModels = models.map { $0.resolved(using: providers) }
-            // The default model is owned by grok itself (it rewrites [models].default
-            // when you switch models in a session), so we never set it here — we just
-            // preserve whatever is already in config.toml.
-            let snapshot = CustomModelStore.load()
-            try CustomModelStore.save(models: resolvedModels, defaultModelID: snapshot.defaultModelID)
+            let selectedDefault = defaultModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+            try CustomModelStore.save(
+                models: resolvedModels,
+                defaultModelID: selectedDefault.isEmpty ? nil : selectedDefault
+            )
             statusMessage = "Saved to ~/.grok/config.toml."
             errorMessage = nil
             onConfigurationChanged()
@@ -3774,7 +3902,7 @@ private struct PermissionsSettingsPane: View {
                     .frame(width: 220)
                 }
 
-                settingRow("Reasoning effort", description: "Chooses the reasoning budget passed to `grok agent`.") {
+                settingRow("Default reasoning effort", description: "Reasoning budget for new projects. Each project keeps its own effort — change the current chat from the composer's model menu.") {
                     Picker("", selection: $reasoningEffort) {
                         ForEach(ReasoningEffortLevel.menuCases) { level in
                             Text(level.displayName).tag(level.rawValue)
