@@ -38,6 +38,90 @@ enum SlashMenuEntry: Identifiable, Hashable {
     }
 }
 
+/// Curated workflow slash commands shown as composer chips when advertised by the CLI.
+enum WorkflowSlashCommands {
+    static let curatedOrder = [
+        "design",
+        "implement",
+        "execute-plan",
+        "review",
+        "pr-babysit",
+        "code-review",
+    ]
+
+    /// Returns advertised commands in curated order; omits names the CLI did not expose.
+    static func filter(_ available: [SlashCommand]) -> [SlashCommand] {
+        let byName = Dictionary(uniqueKeysWithValues: available.map { ($0.name, $0) })
+        return curatedOrder.compactMap { byName[$0] }
+    }
+
+    static func slashText(for command: SlashCommand) -> String {
+        "/\(command.name)"
+    }
+}
+
+struct SessionGoalState: Equatable, Sendable {
+    var objective: String
+    var isPaused: Bool = false
+
+    var statusLabel: String {
+        isPaused ? "Paused" : "Active"
+    }
+}
+
+enum GoalCommand: Equatable, Sendable {
+    case set(objective: String)
+    case status
+    case pause
+    case resume
+    case clear
+
+    static func parse(from text: String) -> GoalCommand? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/goal") else { return nil }
+        let afterName = trimmed.dropFirst("/goal".count)
+        if !afterName.isEmpty, let first = afterName.first, !first.isWhitespace {
+            return nil
+        }
+        let rest = afterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rest.isEmpty else { return nil }
+        switch rest.lowercased() {
+        case "status": return .status
+        case "pause": return .pause
+        case "resume": return .resume
+        case "clear": return .clear
+        default: return .set(objective: String(rest))
+        }
+    }
+
+    var sendText: String {
+        switch self {
+        case .set(let objective): return "/goal \(objective)"
+        case .status: return "/goal status"
+        case .pause: return "/goal pause"
+        case .resume: return "/goal resume"
+        case .clear: return "/goal clear"
+        }
+    }
+}
+
+enum SessionGoalStateMutation {
+    static func apply(_ command: GoalCommand, to state: inout SessionGoalState?) {
+        switch command {
+        case .set(let objective):
+            state = SessionGoalState(objective: objective, isPaused: false)
+        case .pause:
+            state?.isPaused = true
+        case .resume:
+            state?.isPaused = false
+        case .clear:
+            state = nil
+        case .status:
+            break
+        }
+    }
+}
+
 enum SlashAutocompleteGroups {
     static let previewLimit = 3
     private static let skillPriority = ["code-review", "review", "check-work"]

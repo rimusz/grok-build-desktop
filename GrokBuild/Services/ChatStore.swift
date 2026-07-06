@@ -14,6 +14,13 @@ final class ChatStore {
     private var workspaceReasoningEffort: String = ""
 
     private(set) var messages: [Message] = []
+    /// Grok session id restored from disk before a live process is started (lazy restore).
+    private(set) var savedGrokSessionID: String?
+
+    /// True when this tab resumes an existing grok session rather than a fresh chat.
+    var isResumedSessionTab: Bool {
+        grokSessionId != nil || savedGrokSessionID != nil
+    }
 
     func clearMessages() {
         messages.removeAll()
@@ -53,6 +60,8 @@ final class ChatStore {
     private(set) var pendingExitPlan: ExitPlanRequest?
     private(set) var pendingQuestions: [QuestionRequest] = []
     private(set) var availableSlashCommands: [SlashCommand] = []
+    /// Local goal state updated when the user sends `/goal …`; cleared on new session.
+    private(set) var goalState: SessionGoalState?
     private(set) var fileAttachments: [FileAttachment] = []
     private(set) var isYolo: Bool = false
 
@@ -80,6 +89,10 @@ final class ChatStore {
     private let defaults = UserDefaults.standard
     private var sessionSelections: [String: SessionSelection] = [:]
 
+    /// Stable GrokBuild tab id (`LiveSession.id`) for per-tab model persistence.
+    private(set) var tabSessionID: UUID?
+    private var tabHasExplicitModel = false
+
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
 
@@ -87,7 +100,7 @@ final class ChatStore {
     private(set) var currentWorkspace: Workspace?
     // (removed Agent personas - see AGENTS.md + sub-agents in Grok Build CLI)
 
-    private var streamingMessageID: UUID?
+    private(set) var streamingMessageID: UUID?
     private var connectionWatchdogTask: Task<Void, Never>?
 
     init(process: GrokProcess? = nil) {
@@ -119,21 +132,40 @@ final class ChatStore {
         await start(workspace: workspace)
     }
 
-    func prepare(workspace: Workspace) {
+    func prepare(workspace: Workspace, savedGrokSessionID: String? = nil) {
         resetSessionUI()
+        self.savedGrokSessionID = savedGrokSessionID
         currentWorkspace = workspace
         mergeCustomModels()
-        loadWorkspaceAgentSettings()
+        loadWorkspaceReasoningEffort()
     }
 
-    /// Reload model + effort from project storage (e.g. when switching sessions).
+    /// Bind this store to a sidebar tab and apply its saved model when present.
+    func bindTabSession(_ id: UUID, savedModel: String?) {
+        tabSessionID = id
+        tabHasExplicitModel = false
+        guard let savedModel = savedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !savedModel.isEmpty else { return }
+        tabHasExplicitModel = true
+        applyTabModel(savedModel)
+    }
+
+    /// Reload per-project reasoning effort only (model stays per tab).
+    func syncWorkspaceReasoningEffortFromStorage() {
+        loadWorkspaceReasoningEffort()
+    }
+
+    /// @deprecated Use `syncWorkspaceReasoningEffortFromStorage()` — model is per tab now.
     func syncWorkspaceAgentSettingsFromStorage() {
-        loadWorkspaceAgentSettings()
-        if connectionState != .idle,
-           availableModels.contains(currentModel),
-           process.currentModelId != currentModel {
-            process.setModel(currentModel)
-        }
+        syncWorkspaceReasoningEffortFromStorage()
+    }
+
+    /// Apply the tab's `currentModel` to a live grok process when switching tabs.
+    func syncTabModelToLiveProcessIfNeeded() {
+        guard connectionState != .idle,
+              availableModels.contains(currentModel),
+              process.currentModelId != currentModel else { return }
+        process.setModel(currentModel)
     }
 
     func clearProject() {
@@ -149,6 +181,7 @@ final class ChatStore {
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
+        goalState = nil
         clearTurnState()
         connectionState = .idle
         lastError = nil
@@ -158,21 +191,55 @@ final class ChatStore {
         messages.contains { $0.role == .user }
     }
 
-    func start(workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async {
+    func start(workspace: Workspace, resumeSession: GrokSessionInfo? = nil, preserveMessages: Bool = false) async {
         currentWorkspace = workspace
         mergeCustomModels()
-        loadWorkspaceAgentSettings()
-        messages.removeAll()
-        streamingMessageID = nil
-        authRequiredMessage = nil
-        pendingPermissions.removeAll()
-        pendingExitPlan = nil
-        pendingQuestions.removeAll()
-        fileAttachments.removeAll()
-        await restartProcess(resumeSessionID: resumeSession?.id)
-        if let resumeSession {
-            appendSystemNote("Resumed session \(resumeSession.id).")
+        loadWorkspaceReasoningEffort()
+        if !preserveMessages {
+            clearTransientSessionState()
+        } else {
+            clearTurnState()
         }
+        await restartProcess(resumeSessionID: resumeSession?.id)
+    }
+
+    /// Restore a previously saved transcript when reopening a session tab.
+    func restorePersistedMessages(_ saved: [Message]) {
+        messages = filteredPersistedMessages(saved)
+        streamingMessageID = nil
+    }
+
+    /// Load persisted (and optionally grok on-disk) transcript for a tab.
+    func restorePersistedMessages(
+        for sessionID: UUID,
+        grokSessionID: String?,
+        workspace: Workspace
+    ) {
+        let saved = SessionMessageStore.messages(for: sessionID)
+        let recovered = SessionTranscriptRecovery.recoverIfNeeded(
+            sessionID: sessionID,
+            grokSessionID: grokSessionID,
+            workspacePath: workspace.path,
+            currentMessages: saved
+        )
+        restorePersistedMessages(recovered ?? saved)
+    }
+
+    /// Merge disk transcript into memory without dropping messages already loaded.
+    func mergePersistedMessages(_ saved: [Message]) {
+        let filtered = filteredPersistedMessages(saved)
+        guard !filtered.isEmpty else { return }
+        if messages.isEmpty {
+            messages = filtered
+            streamingMessageID = nil
+            return
+        }
+        var seen = Set(messages.map(\.id))
+        for message in filtered where !seen.contains(message.id) {
+            messages.append(message)
+            seen.insert(message.id)
+        }
+        streamingMessageID = nil
     }
 
     // setAgent for personas removed - use CLI's AGENTS.md, skills, or --agent for custom profiles.
@@ -191,6 +258,7 @@ final class ChatStore {
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
+        goalState = nil
         if currentWorkspace != nil {
             await restartProcess()
         }
@@ -201,18 +269,26 @@ final class ChatStore {
             lastError = "Select a project first."
             return
         }
-        messages.removeAll()
+        clearTransientSessionState()
+        await restartProcess(resumeSessionID: session.id)
+    }
+
+    /// Clears in-flight turn UI and pending prompts without wiping the saved transcript.
+    private func clearTransientSessionState() {
         streamingMessageID = nil
+        authRequiredMessage = nil
         pendingPermissions.removeAll()
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
-        await restartProcess(resumeSessionID: session.id)
-        appendSystemNote("Resumed session \(session.id).")
+        goalState = nil
+        messages.removeAll()
+        clearTurnState()
     }
 
     private func restartProcess(resumeSessionID: String? = nil) async {
         guard let ws = currentWorkspace else { return }
+        clearTurnState()
         isStreaming = false
         streamingMessageID = nil
         connectionWatchdogTask?.cancel()
@@ -223,8 +299,8 @@ final class ChatStore {
         startConnectionWatchdog()
         let settings = loadPermissionSettings()
         let savedSelection = resumeSessionID.flatMap { sessionSelections[$0] }
-        let modelForLaunch = workspaceSavedModel() ?? savedSelection?.model ?? currentModel
-        let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? settings.reasoningEffort : ""
+        let modelForLaunch = modelForProcessLaunch(fallbackSelection: savedSelection)
+        let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? workspaceReasoningEffort : ""
         let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseSettings = ComputerUseSettingsStore.loadApplied()
         if browserSettings.enabled {
@@ -275,6 +351,23 @@ final class ChatStore {
         postStatusUpdate(statusName(for: connectionState))
         availableModes = process.availableModes
         syncModelsFromProcess()
+        if process.sessionLoadStartedFreshFallback {
+            let hasLocalTranscript = messages.contains {
+                $0.role == .user
+                    || ($0.role == .assistant
+                        && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if hasLocalTranscript {
+                appendSystemNote(
+                    "Previous grok session expired; started a fresh chat. Your saved transcript in this tab is still shown."
+                )
+            } else {
+                appendSystemNote(
+                    "Previous grok session expired; started a fresh chat. The prior transcript could not be restored."
+                )
+            }
+            notifyMessagesChanged()
+        }
         restoreSessionSelection(savedSelection)
         saveCurrentSessionSelection()
         availableSlashCommands = process.availableSlashCommands
@@ -308,11 +401,46 @@ final class ChatStore {
         await deliverPrompt(text, waitForCompletion: true)
     }
 
+    var hasGoalCommand: Bool {
+        availableSlashCommands.contains { $0.name == "goal" }
+    }
+
+    @discardableResult
+    func setGoal(_ objective: String) async -> Bool {
+        let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("/goal \(trimmed)")
+    }
+
+    @discardableResult
+    func refreshGoalStatus() async -> Bool {
+        await send("/goal status")
+    }
+
+    @discardableResult
+    func pauseGoal() async -> Bool {
+        await send("/goal pause")
+    }
+
+    @discardableResult
+    func resumeGoal() async -> Bool {
+        await send("/goal resume")
+    }
+
+    @discardableResult
+    func clearGoal() async -> Bool {
+        await send("/goal clear")
+    }
+
     private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || fileAttachments.contains(where: { !$0.isHidden }) else { return false }
         guard currentWorkspace != nil else {
             lastError = "Select a project first."
+            return false
+        }
+        if isStreaming {
+            lastError = "Wait for the current response to finish."
             return false
         }
         if connectionState != .ready {
@@ -341,11 +469,14 @@ final class ChatStore {
         if let attachmentBlock = AttachmentPromptBuilder.build(from: fileAttachments) {
             trimmed = trimmed.isEmpty ? attachmentBlock : "\(attachmentBlock)\n\n\(trimmed)"
         }
+        if let goalCommand = GoalCommand.parse(from: trimmed) {
+            SessionGoalStateMutation.apply(goalCommand, to: &goalState)
+        }
         fileAttachments.removeAll()
 
         let userMsg = Message(role: .user, content: trimmed)
         messages.append(userMsg)
-        NotificationCenter.default.post(name: .liveSessionMessagesChanged, object: self)
+        notifyMessagesChanged()
 
         let assistant = Message(role: .assistant, content: "")
         messages.append(assistant)
@@ -388,6 +519,7 @@ final class ChatStore {
         if ok {
             connectionState = .ready
             postStatusUpdate("ready")
+            notifyMessagesChanged()
             return
         }
 
@@ -398,6 +530,7 @@ final class ChatStore {
            messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             messages.remove(at: idx)
         }
+        notifyMessagesChanged()
     }
 
     func toggleThinkingExpanded() {
@@ -562,8 +695,9 @@ final class ChatStore {
         process.modelSwitchError = nil
         process.modelSwitchNeedsNewSession = false
         process.setModel(model)
-        saveWorkspaceAgentSettings()
+        tabHasExplicitModel = true
         saveCurrentSessionSelection()
+        notifyModelChanged()
 
         // Reconcile after the switch settles: if grok rejected/timed out the change,
         // restore the previous selection and surface the reason. Bounded so it can't hang.
@@ -923,6 +1057,21 @@ final class ChatStore {
         appendSystem(text)
     }
 
+    private func filteredPersistedMessages(_ saved: [Message]) -> [Message] {
+        saved.filter {
+            !SessionMessageStore.isLegacyResumeNote($0)
+                && !SessionMessageStore.isStaleSessionFallbackNote($0)
+        }
+    }
+
+    private func notifyMessagesChanged() {
+        NotificationCenter.default.post(name: .liveSessionMessagesChanged, object: self)
+    }
+
+    private func notifyModelChanged() {
+        NotificationCenter.default.post(name: .liveSessionModelChanged, object: self)
+    }
+
     private func loadPermissionSettings() -> GrokPermissionSettings {
         GrokPermissionSettings(
             permissionMode: defaults.string(forKey: GrokSettingsKeys.permissionMode) ?? GrokPermissionSettings.defaults.permissionMode,
@@ -987,7 +1136,7 @@ final class ChatStore {
         }
     }
 
-    private func workspaceSavedModel() -> String? {
+    private func workspaceDefaultModel() -> String? {
         guard let workspace = currentWorkspace else { return nil }
         let model = SessionLayoutStore.agentSettings(for: workspace.id).model?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -995,17 +1144,44 @@ final class ChatStore {
         return model
     }
 
-    private func loadWorkspaceAgentSettings() {
+    private func loadWorkspaceReasoningEffort() {
         guard let workspace = currentWorkspace else { return }
         let saved = SessionLayoutStore.agentSettings(for: workspace.id)
-        if let model = saved.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
-            currentModel = model
-        }
         // A workspace with no saved effort inherits the global default (Settings →
         // Permissions → "Default reasoning effort"); the composer picker then overrides
         // it per project.
         let globalDefault = defaults.string(forKey: GrokSettingsKeys.reasoningEffort) ?? ""
         workspaceReasoningEffort = Self.resolveReasoningEffort(saved: saved.reasoningEffort, globalDefault: globalDefault)
+    }
+
+    private func applyTabModel(_ model: String) {
+        guard availableModels.contains(model) else { return }
+        currentModel = model
+        tabHasExplicitModel = true
+    }
+
+    private func modelForProcessLaunch(fallbackSelection: SessionSelection?) -> String {
+        if tabHasExplicitModel, availableModels.contains(currentModel) {
+            return currentModel
+        }
+        if let model = fallbackSelection?.model,
+           availableModels.contains(model) {
+            currentModel = model
+            tabHasExplicitModel = true
+            return model
+        }
+        if let model = workspaceDefaultModel(), availableModels.contains(model) {
+            currentModel = model
+            return model
+        }
+        if availableModels.contains(currentModel) {
+            return currentModel
+        }
+        if let first = availableModels.first {
+            currentModel = first
+            return first
+        }
+        return currentModel
     }
 
     /// Resolves the effective per-project reasoning effort: an explicitly saved value
@@ -1017,10 +1193,9 @@ final class ChatStore {
 
     private func saveWorkspaceAgentSettings() {
         guard let workspace = currentWorkspace else { return }
-        SessionLayoutStore.saveAgentSettings(
-            WorkspaceAgentSettings(model: currentModel, reasoningEffort: workspaceReasoningEffort),
-            for: workspace.id
-        )
+        var existing = SessionLayoutStore.agentSettings(for: workspace.id)
+        existing.reasoningEffort = workspaceReasoningEffort
+        SessionLayoutStore.saveAgentSettings(existing, for: workspace.id)
         NotificationCenter.default.post(
             name: .workspaceAgentSettingsChanged,
             object: nil,
@@ -1031,12 +1206,20 @@ final class ChatStore {
     private func restoreSessionSelection(_ fallbackSelection: SessionSelection?) {
         let selection = process.sessionId.flatMap { sessionSelections[$0] } ?? fallbackSelection
 
-        if let model = workspaceSavedModel(), availableModels.contains(model) {
+        if tabHasExplicitModel, availableModels.contains(currentModel) {
+            if process.currentModelId != currentModel {
+                process.setModel(currentModel)
+            }
+        } else if let processModel = process.currentModelId, availableModels.contains(processModel) {
+            currentModel = processModel
+            tabHasExplicitModel = true
+        } else if let model = selection?.model, availableModels.contains(model) {
             currentModel = model
+            tabHasExplicitModel = true
             if process.currentModelId != model {
                 process.setModel(model)
             }
-        } else if let model = selection?.model, availableModels.contains(model) {
+        } else if let model = workspaceDefaultModel(), availableModels.contains(model) {
             currentModel = model
             if process.currentModelId != model {
                 process.setModel(model)
@@ -1045,8 +1228,6 @@ final class ChatStore {
             if process.currentModelId != currentModel {
                 process.setModel(currentModel)
             }
-        } else if let processModel = process.currentModelId, availableModels.contains(processModel) {
-            currentModel = processModel
         } else if !availableModels.contains(currentModel) {
             currentModel = availableModels.first ?? currentModel
         }
@@ -1067,7 +1248,7 @@ final class ChatStore {
         guard let sessionId = process.sessionId else { return }
         sessionSelections[sessionId] = SessionSelection(
             mode: currentMode.rawValue,
-            model: nil
+            model: currentModel
         )
         if let data = try? JSONEncoder().encode(sessionSelections) {
             defaults.set(data, forKey: sessionSelectionsKey)

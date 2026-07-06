@@ -3,11 +3,11 @@ description: Require documentation and test updates alongside code changes
 alwaysApply: true
 ---
 
-# Documentation & tests (required)
+# Documentation, tests & Computer Use (required)
 
-Any **code change** — new features, behavior changes, bug fixes, refactors that alter contracts, new persistence keys, notifications, build scripts, or CLI integration — must include **updated docs** and **tests** in the same work session. Do not leave documentation stale or ship untested logic.
+Any **code change** — new features, behavior changes, bug fixes, refactors that alter contracts, new persistence keys, notifications, build scripts, or CLI integration — must include **updated docs**, **tests**, and **Computer Use verification** in the same work session. Do not leave documentation stale, ship untested logic, or mark work done without driving the running app.
 
-## Tests
+## Tests (required for every code change)
 
 1. Run `make test` before finishing.
 2. Add or extend tests in `Tests/GrokBuildTests/` for behavior you changed or introduced.
@@ -15,30 +15,31 @@ Any **code change** — new features, behavior changes, bug fixes, refactors tha
 4. Test pure logic (parsing, persistence round-trips, settings, version compare) without requiring a live `grok` process when possible.
 5. Skip new tests only when the change is docs-only or a trivial comment/format with zero behavior change.
 
-### Live UI verification (Computer Use)
+## Computer Use (required for every code change)
 
-For **user-visible UI changes** (new/changed views, empty states, layout, controls, banners, panels), `make test` is not enough — also verify the running app with **Computer Use**. Any of these drivers works:
+`make test` alone is **not** enough. Every code change must also be verified in the **running GrokBuild app** via **Computer Use** — even when you did not edit SwiftUI views directly (services, persistence, restore flows, and CLI integration all surface in the live UI).
 
-- **`agent-desktop` directly** via Shell — leanest for this repo (`agent-desktop snapshot --app GrokBuild`, then `find` / `click` / `type` / `screenshot`; `@ref`-based). Binary at `/opt/homebrew/bin/agent-desktop`, also bundled at `~/.grokbuild/computer-use/`; run `agent-desktop skills get desktop` for the observe→act loop.
-- **`user-grokbuild-computer-use` MCP** — the GrokBuildComputerUseMCP helper **installed globally for Cursor** (Settings → Computer Use → "Enable Computer Use in Cursor globally"), registered in `~/.cursor/mcp.json` and running the copied helper + `agent-desktop` from `~/.grokbuild/computer-use/`. Available in any Cursor workspace, **independent of whether the GrokBuild app is running**. Same `@ref`/`snapshot` model, but a **curated subset** with gating from its `mcp.json` env (policy `deny` blocks click/type/press; screenshots off unless enabled; command timeout).
-- **Orca's `computer-use` CLI** (the `computer-use` skill) — a *separate* implementation (`orca computer get-app-state` + numeric `--element-index`), not an `agent-desktop` wrapper.
+Any of these drivers works:
 
-**Which to use (preference order):**
+- **`user-grokbuild-computer-use` MCP** — **default.** Already installed and permission-granted in Cursor; dogfoods GrokBuild's own Computer Use helper. Tools: `snapshot` / `click` / `type` / `press` / `get` / `wait` / `screenshot` / `list_*`.
+- **`agent-desktop` directly** via Shell — fallback when you need extra verbs (`find`, `scroll`, `drag`, `set-value`, `select`, `toggle`, `expand`) or MCP gating blocks an action. Binary at `/opt/homebrew/bin/agent-desktop` or `~/.grokbuild/computer-use/`; `agent-desktop skills get desktop` for the observe→act loop.
+- **Orca's `computer-use` CLI** — situational only (`get-app-state` + `--element-index`); different model, not an `agent-desktop` wrapper.
 
-1. **`user-grokbuild-computer-use` MCP — default.** Already installed and permission-granted in Cursor, and it *is* GrokBuild's own shipping helper, so verifying GrokBuild's UI with it **dogfoods the product's Computer Use surface** (catches regressions in the helper/wrapper too). Its curated toolset (`snapshot`/`click`/`type`/`press`/`get`/`wait`/`screenshot`/`list_*`) covers typical UI checks; native tool calls, no shell quoting.
-2. **Direct `agent-desktop` — fallback / power option.** Drop to it when you need a verb the MCP doesn't expose (`find`, `scroll`, `drag`, `set-value`, `select`, `toggle`, `expand`) or want to bypass gating (screenshots off, `policy=deny`).
-3. **Orca's `computer-use` CLI — situational.** Different model (`get-app-state` + `--element-index`); use only when already working inside an Orca worktree/flow.
+**Preference order:** MCP → direct `agent-desktop` → Orca CLI.
 
-Note: the MCP instance registered in Cursor is **not** the same process the grok agent uses at runtime inside a GrokBuild session — that runtime path is a separate helper spawned by the grok CLI with the app's *applied* Computer Use settings, and is only exercised by driving Computer Use from within a live session.
+**Steps (every change):**
 
-Steps:
+1. Rebuild and relaunch: quit any running instance, then `make run` (`make build` alone does **not** refresh the running `.app`).
+2. Snapshot the accessibility tree (`computer_snapshot` / `agent-desktop snapshot --app GrokBuild`).
+3. Navigate to the **exact state your change affects** (tab, settings panel, empty state, restored session, etc.) and confirm behavior via snapshot, click/type, and screenshot when helpful.
+4. For non-UI service changes, still reach the user-visible outcome (e.g. transcript recovery → switch tabs and confirm messages; per-tab model → switch tabs and confirm model picker).
+5. Check interactive elements expose meaningful names/roles in the accessibility tree.
+6. Prefer non-destructive states; if you cannot reach a state live, say so explicitly — do not skip Computer Use silently.
+7. Clean up temporary screenshots afterward.
 
-1. Rebuild and relaunch the bundle: quit any running instance, then `make run` (packaging + relaunch — `make build` alone does **not** refresh the running `.app`).
-2. Confirm Accessibility (+ Screen Recording for screenshots), then drive the app: snapshot the accessibility tree, click/type into controls, and screenshot the result.
-3. Reach the exact state you changed (e.g. open a new session for an empty-state change) and confirm the layout renders and interactions behave as designed.
-4. Check the accessibility tree — interactive elements should expose meaningful names/roles.
-5. Prefer non-destructive states; note any state you couldn't reach live (e.g. one requiring project removal) instead of skipping silently.
-6. Clean up temporary screenshots afterward.
+**Skip Computer Use only when:** docs-only, test-only harness changes with zero app behavior change, or trivial comment/format with zero behavior change.
+
+Note: the MCP registered in Cursor is **not** the same process the grok agent uses inside a GrokBuild session at runtime.
 
 ## Documentation — what to update
 
@@ -58,8 +59,8 @@ Steps:
 ## Definition of done
 
 - [ ] Code compiles (`make build` or `swift build`)
-- [ ] `make test` passes
-- [ ] User-visible UI changes verified live in the running app via Computer Use (`make run`, then `agent-desktop` directly, Orca's `computer-use` CLI, **or** the `user-grokbuild-computer-use` MCP)
+- [ ] `make test` passes; new/changed behavior covered in `Tests/GrokBuildTests/`
+- [ ] **Computer Use** verification in the running app (`make run`, then `user-grokbuild-computer-use` MCP, `agent-desktop`, or Orca `computer-use` CLI) — required for **every** code change, not only view edits
 - [ ] Relevant docs updated (at minimum `ARCHITECTURE.md` for non-trivial app changes)
 - [ ] User-facing changes reflected in `README.md` when applicable
 

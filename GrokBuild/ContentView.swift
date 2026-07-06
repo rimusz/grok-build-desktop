@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 struct ContentView: View {
-    private struct LiveSession: Identifiable {
+    fileprivate struct LiveSession: Identifiable {
         let id: UUID
         let store: ChatStore
         var workspace: Workspace
@@ -46,6 +46,15 @@ struct ContentView: View {
     @State private var showUpgradeBanner = false
     @State private var bannerAppVersion: String?
     @State private var bannerCLIVersion: String?
+
+    private var gitErrorAlertPresented: Binding<Bool> {
+        Binding(
+            get: { gitError != nil },
+            set: { isPresented in
+                if !isPresented { gitError = nil }
+            }
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -212,68 +221,26 @@ struct ContentView: View {
                 }
             )
         }
-        .alert("Git action failed", isPresented: Binding(
-            get: { gitError != nil },
-            set: { if !$0 { gitError = nil } }
-        )) {
+        .alert("Git action failed", isPresented: gitErrorAlertPresented) {
             Button("OK", role: .cancel) { gitError = nil }
         } message: {
-            Text(gitError ?? "")
+            if let gitError {
+                Text(gitError)
+            }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .chooseWorkspaceRequested)) { _ in
-            showPicker = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .sessionsRequested)) { _ in
-            showSessions = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .stopGenerationRequested)) { _ in
-            activeStore.stop()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .focusInputRequested)) { _ in
-            // handled inside ChatView via focus
-        }
-        .onChange(of: selectedWorkspaceID) { _, newID in
-            handleWorkspaceChange(newID)
-        }
-        .onChange(of: activeStore.messages) { _, _ in
-            autoSelectLatestDiffMessage()
-        }
-        // Menu bar quick actions
-        .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
-            startNewSessionForCurrentProject()
-        }
-        .modifier(StatusMenuNotificationHandlers(
+        .modifier(ContentViewNotificationHandlers(
             activeStore: activeStore,
+            liveSessions: liveSessions,
+            sessionListRevision: $sessionListRevision,
+            selectedWorkspaceID: $selectedWorkspaceID,
+            showPicker: $showPicker,
+            showSessions: $showSessions,
+            onWorkspaceChange: handleWorkspaceChange,
+            onAutoSelectLatestDiff: autoSelectLatestDiffMessage,
+            onNewSession: startNewSessionForCurrentProject,
+            onPersistSessionLayout: persistSessionLayout,
             openSettings: openSettings
         ))
-        .onChange(of: activeStore.grokSessionId) { _, _ in
-            persistSessionLayout()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { _ in
-            sessionListRevision &+= 1
-            persistSessionLayout()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .workspaceAgentSettingsChanged)) { note in
-            guard let workspaceID = note.userInfo?["workspaceID"] as? UUID else { return }
-            for session in liveSessions where session.workspace.id == workspaceID {
-                session.store.syncWorkspaceAgentSettingsFromStorage()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
-            Task {
-                for session in liveSessions {
-                    await session.store.shutdown()
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .grokBuildRestartSessionsRequested)) { _ in
-            Task {
-                for session in liveSessions {
-                    await session.store.retryConnection()
-                }
-                NotificationCenter.default.post(name: .grokStatusChanged, object: nil)
-            }
-        }
     }
 
     // MARK: - Subviews
@@ -443,17 +410,46 @@ struct ContentView: View {
         }
         sessionListRevision &+= 1
         persistSessionLayout()
+        SessionMessageStore.remove(for: id)
         Task {
             await store.shutdown()
         }
     }
 
+    private func sessionHasPersistedContent(_ sessionID: UUID) -> Bool {
+        SessionRestorePolicy.sessionHasPersistedContent(sessionID)
+    }
+
+    private func sessionHasContent(_ session: LiveSession) -> Bool {
+        SessionRestorePolicy.sessionHasContent(
+            hasUserMessages: session.store.hasUserMessages,
+            liveGrokSessionID: session.store.grokSessionId,
+            savedGrokSessionID: session.grokSessionID,
+            sessionID: session.id
+        )
+    }
+
     private func isSessionEmpty(_ session: LiveSession) -> Bool {
-        // A lazily-restored session has no loaded messages and no *live* process id yet, but it
-        // carries the saved grok id — it is NOT empty and must survive purges/persistence.
-        !session.store.hasUserMessages
-            && session.store.grokSessionId == nil
-            && session.grokSessionID == nil
+        !sessionHasContent(session)
+    }
+
+    private func preferredSessionID(for workspace: Workspace, saved: SessionLayoutSnapshot? = nil) -> UUID? {
+        let snapshot = saved ?? sessionLayout
+        let idsInWorkspace = liveSessions(for: workspace.id).map(\.id)
+        return SessionRestorePolicy.preferredSessionID(
+            for: workspace.id,
+            saved: snapshot,
+            liveSessionIDsInWorkspace: idsInWorkspace,
+            currentSelectedSessionID: selectedSessionID,
+            currentSelectedWorkspaceID: selectedWorkspaceID,
+            recentSessionOrder: recentSessionOrder,
+            hasContent: { id in
+                if let session = liveSessions.first(where: { $0.id == id }) {
+                    return sessionHasContent(session)
+                }
+                return sessionHasPersistedContent(id)
+            }
+        )
     }
 
     private func purgeEmptySessions(in workspaceID: Workspace.ID? = nil, keeping id: UUID? = nil) {
@@ -551,12 +547,15 @@ struct ContentView: View {
     }
 
     private func persistSessionLayout() {
+        for session in liveSessions {
+            SessionMessageStore.save(session.store.messages, for: session.id)
+        }
         var records: [SavedSessionRecord] = []
         for session in liveSessions {
             // Prefer the live process id, but fall back to the known/saved id so lazily-restored
             // (not-yet-started) and LRU-evicted sessions are still persisted and resumable.
             let grokSessionID = session.store.grokSessionId ?? session.grokSessionID
-            guard session.store.hasUserMessages || grokSessionID != nil else { continue }
+            guard sessionHasContent(session) else { continue }
             let existing = sessionLayout.records.first { $0.id == session.id }
             records.append(
                 SavedSessionRecord(
@@ -564,6 +563,7 @@ struct ContentView: View {
                     workspaceID: session.workspace.id,
                     grokSessionID: grokSessionID,
                     title: sessionTitle(for: session),
+                    model: session.store.currentModel,
                     lastAccessed: existing?.lastAccessed ?? Date()
                 )
             )
@@ -666,7 +666,14 @@ struct ContentView: View {
                 cache: &titleCacheByWorkspace,
                 cli: cli
             )
-            store.prepare(workspace: workspace)
+            store.prepare(workspace: workspace, savedGrokSessionID: record.grokSessionID)
+            let legacyModel = record.model ?? SessionLayoutStore.agentSettings(for: workspace.id).model
+            store.bindTabSession(record.id, savedModel: legacyModel)
+            store.restorePersistedMessages(
+                for: record.id,
+                grokSessionID: record.grokSessionID,
+                workspace: workspace
+            )
             liveSessions.append(
                 LiveSession(
                     id: record.id,
@@ -680,17 +687,46 @@ struct ContentView: View {
         }
 
         sessionListRevision &+= 1
+        recentSessionOrder = SessionRestorePolicy.recentSessionOrder(from: restorableRecords)
 
-        if let selected = saved.selectedSessionID,
-           liveSessions.contains(where: { $0.id == selected }) {
+        let hasContent: (UUID) -> Bool = { id in
+            if let session = liveSessions.first(where: { $0.id == id }) {
+                return sessionHasContent(session)
+            }
+            return sessionHasPersistedContent(id)
+        }
+
+        let hasTranscript: (UUID) -> Bool = { id in
+            if let session = liveSessions.first(where: { $0.id == id }) {
+                return SessionRestorePolicy.sessionHasRestorableTranscript(
+                    hasUserMessages: session.store.hasUserMessages,
+                    sessionID: id
+                )
+            }
+            return sessionHasPersistedContent(id)
+        }
+
+        let workspaceID = saved.selectedWorkspaceID
+            ?? restorableRecords.max(by: { $0.lastAccessed < $1.lastAccessed })?.workspaceID
+            ?? liveSessions.first?.workspace.id
+
+        if let workspaceID,
+           let selected = SessionRestorePolicy.restoreSelectedSessionID(
+               saved: saved,
+               workspaceID: workspaceID,
+               liveSessionIDsInWorkspace: liveSessions
+                   .filter { $0.workspace.id == workspaceID }
+                   .map(\.id),
+               hasTranscript: hasTranscript,
+               hasContent: hasContent,
+               preferredSessionID: { wsID in
+                   guard let workspace = workspaceStore.workspaces.first(where: { $0.id == wsID }) else {
+                       return nil
+                   }
+                   return preferredSessionID(for: workspace, saved: saved)
+               }
+           ) {
             selectSession(selected)
-        } else if let wsID = saved.selectedWorkspaceID,
-                  let selected = saved.selectedSessionIDByWorkspace[wsID],
-                  liveSessions.contains(where: { $0.id == selected }) {
-            selectSession(selected)
-        } else if let wsID = saved.selectedWorkspaceID,
-                  let session = liveSessions.last(where: { $0.workspace.id == wsID }) {
-            selectSession(session.id)
         } else if let first = liveSessions.first {
             selectSession(first.id)
         }
@@ -881,27 +917,33 @@ struct ContentView: View {
 
     private func selectProject(_ workspace: Workspace) {
         selectedWorkspaceID = workspace.id
-        if let remembered = rememberedSessionID(for: workspace.id) {
-            selectSession(remembered)
-        } else if let session = liveSessions.last(where: { $0.workspace.id == workspace.id }) {
-            selectSession(session.id)
+        if let active = activeSession, active.workspace.id == workspace.id {
+            return
+        }
+        if let preferred = preferredSessionID(for: workspace) {
+            selectSession(preferred)
         } else {
             Task { await createLiveSession(for: workspace) }
         }
     }
 
-    private func rememberedSessionID(for workspaceID: Workspace.ID) -> UUID? {
-        guard let sessionID = sessionLayout.selectedSessionIDByWorkspace[workspaceID],
-              liveSessions.contains(where: { $0.id == sessionID }) else {
-            return nil
-        }
-        return sessionID
-    }
-
     private func selectSession(_ id: UUID) {
         guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        if session.store.messages.isEmpty {
+            session.store.restorePersistedMessages(
+                for: id,
+                grokSessionID: session.grokSessionID,
+                workspace: session.workspace
+            )
+        } else {
+            session.store.mergePersistedMessages(SessionMessageStore.messages(for: id))
+        }
         purgeEmptySessions(in: session.workspace.id, keeping: id)
-        session.store.syncWorkspaceAgentSettingsFromStorage()
+        let savedModel = sessionLayout.records.first(where: { $0.id == id })?.model
+            ?? SessionLayoutStore.agentSettings(for: session.workspace.id).model
+        session.store.bindTabSession(id, savedModel: savedModel)
+        session.store.syncWorkspaceReasoningEffortFromStorage()
+        session.store.syncTabModelToLiveProcessIfNeeded()
         selectedSessionID = id
         selectedWorkspaceID = session.workspace.id
         previewMessageID = nil
@@ -938,7 +980,14 @@ struct ContentView: View {
             status: "",
             summary: session.title == SessionTitle.defaultTitle ? "" : session.title
         )
-        await session.store.start(workspace: session.workspace, resumeSession: info)
+        await session.store.start(
+            workspace: session.workspace,
+            resumeSession: info,
+            preserveMessages: true
+        )
+        if let idx = liveSessions.firstIndex(where: { $0.id == id }) {
+            liveSessions[idx].grokSessionID = session.store.grokSessionId ?? liveSessions[idx].grokSessionID
+        }
         persistSessionLayout()
     }
 
@@ -984,9 +1033,15 @@ struct ContentView: View {
         sessionListRevision &+= 1
         persistSessionLayout()
         if let resumeSession {
+            store.prepare(workspace: workspace, savedGrokSessionID: resumeSession.id)
+            store.bindTabSession(id, savedModel: nil)
             await store.start(workspace: workspace, resumeSession: resumeSession)
         } else {
             store.prepare(workspace: workspace)
+            store.bindTabSession(
+                id,
+                savedModel: SessionLayoutStore.agentSettings(for: workspace.id).model
+            )
         }
         await enforceConnectionCap()
         return id
@@ -1138,6 +1193,7 @@ extension Notification.Name {
     static let newSessionRequested = Notification.Name("newSessionRequested")
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
     static let liveSessionMessagesChanged = Notification.Name("liveSessionMessagesChanged")
+    static let liveSessionModelChanged = Notification.Name("liveSessionModelChanged")
     static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
     static let grokBuildUpdateAvailable = Notification.Name("grokBuildUpdateAvailable")
     static let grokBuildUpdateStateChanged = Notification.Name("grokBuildUpdateStateChanged")
@@ -1148,6 +1204,101 @@ extension Notification.Name {
     static let grokBuildPrepareForShutdown = Notification.Name("grokBuildPrepareForShutdown")
     static let retryConnectionRequested = Notification.Name("retryConnectionRequested")
     static let openSettingsRequested = Notification.Name("openSettingsRequested")
+}
+
+private struct ContentViewNotificationHandlers: ViewModifier {
+    let activeStore: ChatStore
+    let liveSessions: [ContentView.LiveSession]
+    @Binding var sessionListRevision: Int
+    @Binding var selectedWorkspaceID: Workspace.ID?
+    @Binding var showPicker: Bool
+    @Binding var showSessions: Bool
+    let onWorkspaceChange: (Workspace.ID?) -> Void
+    let onAutoSelectLatestDiff: () -> Void
+    let onNewSession: () -> Void
+    let onPersistSessionLayout: () -> Void
+    let openSettings: (SettingsTab) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .chooseWorkspaceRequested)) { _ in
+                showPicker = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sessionsRequested)) { _ in
+                showSessions = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .stopGenerationRequested)) { _ in
+                activeStore.stop()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .focusInputRequested)) { _ in
+                // handled inside ChatView via focus
+            }
+            .onChange(of: selectedWorkspaceID) { _, newID in
+                onWorkspaceChange(newID)
+            }
+            .onChange(of: activeStore.messages) { _, _ in
+                onAutoSelectLatestDiff()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .newSessionRequested)) { _ in
+                onNewSession()
+            }
+            .modifier(StatusMenuNotificationHandlers(
+                activeStore: activeStore,
+                openSettings: openSettings
+            ))
+            .onChange(of: activeStore.grokSessionId) { _, _ in
+                onPersistSessionLayout()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { note in
+                handleLiveSessionMessagesChanged(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .workspaceAgentSettingsChanged)) { note in
+                handleWorkspaceAgentSettingsChanged(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .liveSessionModelChanged)) { _ in
+                onPersistSessionLayout()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
+                handlePrepareForShutdown()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .grokBuildRestartSessionsRequested)) { _ in
+                handleRestartSessionsRequested()
+            }
+    }
+
+    private func handleLiveSessionMessagesChanged(_ note: Notification) {
+        sessionListRevision &+= 1
+        if let store = note.object as? ChatStore,
+           let session = liveSessions.first(where: { $0.store === store }) {
+            SessionMessageStore.save(store.messages, for: session.id)
+        }
+        onPersistSessionLayout()
+    }
+
+    private func handleWorkspaceAgentSettingsChanged(_ note: Notification) {
+        guard let workspaceID = note.userInfo?["workspaceID"] as? UUID else { return }
+        for session in liveSessions where session.workspace.id == workspaceID {
+            session.store.syncWorkspaceReasoningEffortFromStorage()
+        }
+    }
+
+    private func handlePrepareForShutdown() {
+        onPersistSessionLayout()
+        Task {
+            for session in liveSessions {
+                await session.store.shutdown()
+            }
+        }
+    }
+
+    private func handleRestartSessionsRequested() {
+        Task {
+            for session in liveSessions {
+                await session.store.retryConnection()
+            }
+            NotificationCenter.default.post(name: .grokStatusChanged, object: nil)
+        }
+    }
 }
 
 private struct StatusMenuNotificationHandlers: ViewModifier {

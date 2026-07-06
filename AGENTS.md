@@ -30,15 +30,16 @@ When changing app behavior that touches the CLI:
 - Version strings: `VERSION` file, surfaced through `AppVersion`.
 - Build with `make run` or `swift build`; do not require an Xcode project.
 
-## Documentation & tests (required)
+## Documentation, tests & Computer Use (required)
 
-Every code change must ship with **updated documentation** and **tests** in the same session — not as a follow-up.
+Every code change must ship with **updated documentation**, **tests**, and **Computer Use verification** in the same session — not as a follow-up.
 
-1. **Tests** — run `make test`; add or extend `Tests/GrokBuildTests/` for new or changed behavior. For **user-visible UI changes**, also verify the running app live with **Computer Use** (`make run` to repackage/relaunch, then drive it via `agent-desktop` directly, GrokBuild's own `user-grokbuild-computer-use` MCP — a thin wrapper over the bundled `agent-desktop` — **or** Orca's separate `computer-use` CLI) — `make test` alone doesn't cover rendering/interaction.
-2. **ARCHITECTURE.md** — update for new services, persistence keys, notifications, subsystems, or flows (canonical app map).
-3. **README.md** — update for user-visible features or install/requirements changes.
-4. **BUILDING.md** / **scripts/README.md** — update for build, release, packaging, or script changes.
-5. **Skills / rules** — update `.cursor/skills/` or `.cursor/rules/` when workflows or integration contracts change.
-6. **Bundled skills** — update `GrokBuild/Resources/Skills/*/SKILL.md` when agent-facing skill behavior changes.
+1. **Tests** — run `make test`; add or extend `Tests/GrokBuildTests/` for new or changed behavior.
+2. **Computer Use** — required for **every** code change (not only view files). `make run` to repackage/relaunch, then drive the running app via **`user-grokbuild-computer-use` MCP** (default), `agent-desktop` directly, or Orca's `computer-use` CLI. Reach the state your change affects and confirm it in the live UI (e.g. restored transcripts, settings, tab switches).
+3. **ARCHITECTURE.md** — update for new services, persistence keys, notifications, subsystems, or flows (canonical app map).
+4. **README.md** — update for user-visible features or install/requirements changes.
+5. **BUILDING.md** / **scripts/README.md** — update for build, release, packaging, or script changes.
+6. **Skills / rules** — update `.cursor/skills/` or `.cursor/rules/` when workflows or integration contracts change.
+7. **Bundled skills** — update `GrokBuild/Resources/Skills/*/SKILL.md` when agent-facing skill behavior changes.
 
 See `.cursor/rules/docs-and-tests.mdc` for the full checklist.

@@ -15,18 +15,22 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - Resumable sessions with a session browser for reopening existing Grok sessions in the current project, including per-session delete and a one-click **Clear Empty** cleanup for unnamed, empty sessions.
 - Diff review of file changes proposed during a session.
 - Multi-tab sessions with lazy restore and an LRU cap on live Grok processes (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+- Empty or corrupted tab transcripts can be rebuilt from grok's on-disk `chat_history.jsonl` when a session id is still known.
 
 ### Projects & workspaces
 - Persistent project sidebar with pinned projects, per-project session lists, session rename/close, and recent-session collapsing.
-- Per-project **model** and **reasoning effort** — restored when you switch projects.
+- Per-tab **model** — each session tab remembers its own model (matches grok per-session `session/set_model`). New tabs inherit the project default from Settings when set.
+- Per-project **reasoning effort** — restored when you switch projects.
 - Git branch and worktree management from the chat status row.
 - `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
 
 ### Composer
 - Fixed two-line composer with command history and slash-command autocomplete.
+- Workflow chips — one-tap shortcuts for curated slash commands (`design`, `implement`, `execute-plan`, `review`, `pr-babysit`, `code-review`) when the grok CLI advertises them over ACP.
+- Session goal banner — when you set a goal with `/goal <objective>`, a banner above the composer shows the objective with **Status**, **Pause**/**Resume**, and **Clear** actions (`/goal status`, `/goal pause`, `/goal resume`, `/goal clear`).
 - File attachments as plain paths (grok chooses how to read each file; avoids forced whole-file reads and binary failures).
 - Voice control (dictation).
-- Model, mode, and context-usage controls inline in the composer.
+- Model, mode, and context-usage controls inline in the composer (model is per session tab).
 
 ### Models
 - Add custom OpenAI-compatible models from your own providers (e.g. MiniMax and other OpenAI-compatible endpoints).

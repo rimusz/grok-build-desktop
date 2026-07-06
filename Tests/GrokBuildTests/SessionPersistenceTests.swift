@@ -215,6 +215,256 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertNil(SessionNameStore.name(for: id))
     }
 
+    func testSessionMessageStoreRoundTripsTranscript() {
+        let sessionID = UUID()
+        let messages = [
+            Message(role: .user, content: "hello"),
+            Message(role: .assistant, content: "world")
+        ]
+
+        SessionMessageStore.save(messages, for: sessionID)
+        XCTAssertEqual(SessionMessageStore.messages(for: sessionID), messages)
+
+        SessionMessageStore.remove(for: sessionID)
+        XCTAssertTrue(SessionMessageStore.messages(for: sessionID).isEmpty)
+    }
+
+    func testSessionMessageStoreSkipsLegacyResumeNotes() {
+        let sessionID = UUID()
+        let messages = [
+            Message(role: .system, content: "Resumed session 019f281a-f002-7510-ab76-5244728404b6."),
+            Message(role: .user, content: "real message")
+        ]
+
+        SessionMessageStore.save(messages, for: sessionID)
+        let loaded = SessionMessageStore.messages(for: sessionID)
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(loaded.first?.content, "real message")
+
+        SessionMessageStore.remove(for: sessionID)
+    }
+
+    @MainActor
+    func testChatStoreMarksResumedSessionTabFromSavedGrokID() {
+        let store = ChatStore()
+        let workspace = Workspace(name: "demo", path: URL(fileURLWithPath: "/tmp/demo"))
+        store.prepare(workspace: workspace, savedGrokSessionID: "019eef73-aadb-7b92-90a2-eff8825b3a0b")
+        XCTAssertTrue(store.isResumedSessionTab)
+    }
+
+    // MARK: - Session restore selection
+
+    func testSessionHasContentIncludesPersistedTranscript() {
+        let sessionID = UUID()
+        SessionMessageStore.save([Message(role: .user, content: "hello")], for: sessionID)
+        defer { SessionMessageStore.remove(for: sessionID) }
+
+        XCTAssertTrue(
+            SessionRestorePolicy.sessionHasContent(
+                hasUserMessages: false,
+                liveGrokSessionID: nil,
+                savedGrokSessionID: nil,
+                sessionID: sessionID
+            )
+        )
+    }
+
+    func testRecentSessionOrderSortsByLastAccessedDescending() {
+        let older = UUID()
+        let newer = UUID()
+        let workspaceID = UUID()
+        let records = [
+            SavedSessionRecord(
+                id: older,
+                workspaceID: workspaceID,
+                grokSessionID: nil,
+                title: nil,
+                lastAccessed: Date(timeIntervalSince1970: 100)
+            ),
+            SavedSessionRecord(
+                id: newer,
+                workspaceID: workspaceID,
+                grokSessionID: nil,
+                title: nil,
+                lastAccessed: Date(timeIntervalSince1970: 200)
+            )
+        ]
+
+        XCTAssertEqual(SessionRestorePolicy.recentSessionOrder(from: records), [newer, older])
+    }
+
+    func testPreferredSessionIDHonorsSavedSelectionEvenWhenEmpty() {
+        let workspaceID = UUID()
+        let emptySession = UUID()
+        let contentSession = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [],
+            sessionOrderByWorkspace: [workspaceID: [emptySession, contentSession]],
+            selectedSessionID: emptySession,
+            selectedWorkspaceID: workspaceID,
+            selectedSessionIDByWorkspace: [workspaceID: emptySession]
+        )
+
+        let preferred = SessionRestorePolicy.preferredSessionID(
+            for: workspaceID,
+            saved: snapshot,
+            liveSessionIDsInWorkspace: [emptySession, contentSession],
+            currentSelectedSessionID: nil,
+            currentSelectedWorkspaceID: nil,
+            recentSessionOrder: [],
+            hasContent: { $0 == contentSession }
+        )
+
+        XCTAssertEqual(preferred, emptySession)
+    }
+
+    func testRestoreSelectedSessionIDSkipsEmptySavedSelection() {
+        let workspaceID = UUID()
+        let emptySession = UUID()
+        let contentSession = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [],
+            sessionOrderByWorkspace: [:],
+            selectedSessionID: emptySession,
+            selectedWorkspaceID: workspaceID
+        )
+
+        let restored = SessionRestorePolicy.restoreSelectedSessionID(
+            saved: snapshot,
+            workspaceID: workspaceID,
+            liveSessionIDsInWorkspace: [emptySession, contentSession],
+            hasTranscript: { $0 == contentSession },
+            hasContent: { $0 == contentSession },
+            preferredSessionID: { _ in contentSession }
+        )
+
+        XCTAssertEqual(restored, contentSession)
+    }
+
+    func testRestoreSelectedSessionIDPrefersTranscriptOverGrokOnlySavedTab() {
+        let workspaceID = UUID()
+        let grokOnlySession = UUID()
+        let transcriptSession = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [
+                SavedSessionRecord(
+                    id: grokOnlySession,
+                    workspaceID: workspaceID,
+                    grokSessionID: "019f28a8-4d84",
+                    title: "overview",
+                    lastAccessed: Date(timeIntervalSince1970: 300)
+                ),
+                SavedSessionRecord(
+                    id: transcriptSession,
+                    workspaceID: workspaceID,
+                    grokSessionID: "019f2896-700",
+                    title: "overview copy",
+                    lastAccessed: Date(timeIntervalSince1970: 100)
+                )
+            ],
+            sessionOrderByWorkspace: [workspaceID: [grokOnlySession, transcriptSession]],
+            selectedSessionID: grokOnlySession,
+            selectedWorkspaceID: workspaceID
+        )
+
+        let restored = SessionRestorePolicy.restoreSelectedSessionID(
+            saved: snapshot,
+            workspaceID: workspaceID,
+            liveSessionIDsInWorkspace: [grokOnlySession, transcriptSession],
+            hasTranscript: { $0 == transcriptSession },
+            hasContent: { $0 == grokOnlySession || $0 == transcriptSession },
+            preferredSessionID: { _ in grokOnlySession }
+        )
+
+        XCTAssertEqual(restored, transcriptSession)
+    }
+
+    func testRestoreSelectedSessionIDKeepsSavedSelectionWhenItHasContent() {
+        let workspaceID = UUID()
+        let savedSession = UUID()
+        let otherSession = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [],
+            sessionOrderByWorkspace: [:],
+            selectedSessionID: savedSession,
+            selectedWorkspaceID: workspaceID
+        )
+
+        let restored = SessionRestorePolicy.restoreSelectedSessionID(
+            saved: snapshot,
+            workspaceID: workspaceID,
+            liveSessionIDsInWorkspace: [savedSession, otherSession],
+            hasTranscript: { $0 == savedSession },
+            hasContent: { $0 == savedSession },
+            preferredSessionID: { _ in otherSession }
+        )
+
+        XCTAssertEqual(restored, savedSession)
+    }
+
+    func testPreferredSessionIDKeepsCurrentSessionInSameWorkspace() {
+        let workspaceID = UUID()
+        let current = UUID()
+        let other = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [],
+            sessionOrderByWorkspace: [:],
+            selectedSessionID: other,
+            selectedWorkspaceID: workspaceID
+        )
+
+        let preferred = SessionRestorePolicy.preferredSessionID(
+            for: workspaceID,
+            saved: snapshot,
+            liveSessionIDsInWorkspace: [current, other],
+            currentSelectedSessionID: current,
+            currentSelectedWorkspaceID: workspaceID,
+            recentSessionOrder: [other, current],
+            hasContent: { _ in true }
+        )
+
+        XCTAssertEqual(preferred, current)
+    }
+
+    func testSessionMessageStoreMergesOnPartialSave() {
+        let sessionID = UUID()
+        let original = [
+            Message(role: .user, content: "hello"),
+            Message(role: .assistant, content: "world")
+        ]
+        SessionMessageStore.save(original, for: sessionID)
+        SessionMessageStore.save([Message(role: .system, content: "note")], for: sessionID)
+
+        let loaded = SessionMessageStore.messages(for: sessionID)
+        XCTAssertEqual(loaded.count, 3)
+        XCTAssertEqual(loaded.filter { $0.role == .user }.first?.content, "hello")
+        XCTAssertEqual(loaded.filter { $0.role == .assistant }.first?.content, "world")
+        XCTAssertEqual(loaded.filter { $0.role == .system }.first?.content, "note")
+
+        SessionMessageStore.remove(for: sessionID)
+    }
+
+    // MARK: - Stale grok session load
+
+    func testStaleSessionLoadDetectsFSNotFound() {
+        let error = NSError(
+            domain: "ACP",
+            code: -1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Path not found.",
+                "acpErrorCode": "FS_NOT_FOUND"
+            ]
+        )
+        XCTAssertTrue(GrokSessionLoadError.isStaleSessionMissing(error))
+    }
+
+    func testStaleSessionLoadIgnoresUnrelatedErrors() {
+        let error = NSError(domain: "ACP", code: -1, userInfo: [
+            NSLocalizedDescriptionKey: "Connection refused"
+        ])
+        XCTAssertFalse(GrokSessionLoadError.isStaleSessionMissing(error))
+    }
+
     // MARK: - Session list parsing
 
     func testParseListOutputNormalizesNoSummaryPlaceholder() {
@@ -271,6 +521,65 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(ChatStore.resolveReasoningEffort(saved: "low", globalDefault: "high"), "low")
         // …including an explicit "Default" (empty string), which must not fall back.
         XCTAssertEqual(ChatStore.resolveReasoningEffort(saved: "", globalDefault: "high"), "")
+    }
+
+    // MARK: - Per-tab model
+
+    func testSavedSessionRecordDecodesWithoutModel() throws {
+        let record = SavedSessionRecord(
+            id: UUID(),
+            workspaceID: UUID(),
+            lastAccessed: Date()
+        )
+
+        let decoded = try JSONDecoder().decode(
+            SavedSessionRecord.self,
+            from: JSONEncoder().encode(record)
+        )
+
+        XCTAssertNil(decoded.model)
+    }
+
+    func testSavedSessionRecordRoundTripsModel() throws {
+        let record = SavedSessionRecord(
+            id: UUID(),
+            workspaceID: UUID(),
+            grokSessionID: "abc",
+            title: "Tab",
+            model: "grok-build",
+            lastAccessed: Date()
+        )
+
+        let decoded = try JSONDecoder().decode(SavedSessionRecord.self, from: JSONEncoder().encode(record))
+
+        XCTAssertEqual(decoded.model, "grok-build")
+    }
+
+    func testSessionTabModelPolicyPrefersTabOverWorkspaceDefault() {
+        XCTAssertEqual(
+            SessionTabModelPolicy.resolvedModel(
+                tabModel: "mini-max",
+                workspaceDefault: "grok-composer-2.5-fast",
+                appDefault: "grok-build"
+            ),
+            "mini-max"
+        )
+        XCTAssertEqual(
+            SessionTabModelPolicy.resolvedModel(
+                tabModel: nil,
+                workspaceDefault: "grok-composer-2.5-fast",
+                appDefault: "grok-build"
+            ),
+            "grok-composer-2.5-fast"
+        )
+        XCTAssertEqual(
+            SessionTabModelPolicy.resolvedModel(
+                tabModel: "  ",
+                workspaceDefault: nil,
+                appDefault: "grok-build"
+            ),
+            "grok-build"
+        )
     }
 
     private func restore(_ data: Data?, forKey key: String) {

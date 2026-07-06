@@ -44,6 +44,33 @@ struct GrokLaunchOptions: Sendable {
     var mcpServers: [MCPServerConfig] = []
 }
 
+/// Detects ACP `session/update` events replayed during `session/load`.
+enum GrokSessionReplay {
+    static func isReplaySessionUpdate(params: [String: Any], update: [String: Any]? = nil) -> Bool {
+        if let meta = params["_meta"] as? [String: Any],
+           meta["isReplay"] as? Bool == true {
+            return true
+        }
+        let updateDict = update ?? params["update"] as? [String: Any]
+        if let updateDict,
+           let meta = updateDict["_meta"] as? [String: Any],
+           meta["isReplay"] as? Bool == true {
+            return true
+        }
+        return false
+    }
+}
+
+/// Classifies ACP `session/load` failures from the grok CLI.
+enum GrokSessionLoadError {
+    /// On-disk grok session data is missing (cleared, moved project, or never fully written).
+    static func isStaleSessionMissing(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.userInfo["acpErrorCode"] as? String == "FS_NOT_FOUND" { return true }
+        return ns.localizedDescription.localizedCaseInsensitiveContains("path not found")
+    }
+}
+
 // MARK: - Typed ACP Models
 
 struct AgentMode: RawRepresentable, Sendable, Hashable, Equatable {
@@ -196,6 +223,9 @@ final class GrokProcess: @unchecked Sendable {
     }
     private var pendingRequests: [Int: PendingRequest] = [:]
     private(set) var sessionId: String?
+    /// Set when `session/load` failed with missing on-disk data and `session/new` was used instead.
+    private(set) var sessionLoadStartedFreshFallback = false
+    private(set) var staleResumeSessionID: String?
     private(set) var currentMode: AgentMode = .agent
     private(set) var availableModes: [AgentMode] = [.agent, .plan, .yolo]
     private(set) var currentModelId: String?
@@ -321,6 +351,8 @@ final class GrokProcess: @unchecked Sendable {
         currentWorkspace = workspace
         outputLines.removeAll()
         sessionId = nil
+        sessionLoadStartedFreshFallback = false
+        staleResumeSessionID = nil
         currentModelId = nil
         availableModelsInfo.removeAll()
 
@@ -387,7 +419,18 @@ final class GrokProcess: @unchecked Sendable {
         do {
             try await initializeACP()
             if let resumeSessionID = options.resumeSessionID, !resumeSessionID.isEmpty {
-                try await loadSession(id: resumeSessionID, workspace: workspace, mcpServers: options.mcpServers)
+                do {
+                    try await loadSession(
+                        id: resumeSessionID,
+                        workspace: workspace,
+                        mcpServers: options.mcpServers
+                    )
+                } catch {
+                    guard GrokSessionLoadError.isStaleSessionMissing(error) else { throw error }
+                    staleResumeSessionID = resumeSessionID
+                    try await createSession(workspace: workspace, mcpServers: options.mcpServers)
+                    sessionLoadStartedFreshFallback = true
+                }
             } else {
                 try await createSession(workspace: workspace, mcpServers: options.mcpServers)
             }
@@ -804,10 +847,14 @@ final class GrokProcess: @unchecked Sendable {
             let rid = j["id"]
 
             if method == "session/update" {
+                let update = params["update"] as? [String: Any]
                 if let total = totalTokens(from: params) {
                     acpEventContinuation?.yield(.contextUsage(totalTokens: total))
                 }
-                if let u = params["update"] as? [String: Any] { routeUpdate(u) }
+                if !GrokSessionReplay.isReplaySessionUpdate(params: params, update: update),
+                   let u = update {
+                    routeUpdate(u)
+                }
                 return
             }
 
