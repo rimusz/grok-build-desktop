@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var slashSkillsExpanded = false
     @State private var slashCommandsExpanded = false
     @State private var toolActivityExpanded = false
+    @State private var thinkingScrollTask: Task<Void, Never>?
     @State private var voiceInput = VoiceInputService()
     @State private var pendingReasoningEffortChange: String?
     @State private var isModelSelectorOpen = false
@@ -113,14 +114,19 @@ struct ChatView: View {
                                 noProjectState
                             } else if case .failed = store.connectionState {
                                 EmptyView()
+                            } else if store.isResumedSessionTab {
+                                EmptyView()
                             } else {
                                 welcomeState
                             }
                         }
 
                         ForEach(store.messages) { msg in
-                            MessageBubble(message: msg)
-                                .id(msg.id)
+                            MessageBubble(
+                                message: msg,
+                                isStreaming: store.isStreaming && msg.id == store.streamingMessageID
+                            )
+                            .id(msg.id)
                         }
 
                         if store.isGrokking {
@@ -179,13 +185,27 @@ struct ChatView: View {
                     scrollToBottom(proxy: proxy)
                 }
                 .onChange(of: store.thinkingText) { _, _ in
-                    scrollToBottom(proxy: proxy)
+                    thinkingScrollTask?.cancel()
+                    thinkingScrollTask = Task {
+                        try? await Task.sleep(for: .milliseconds(200))
+                        guard !Task.isCancelled else { return }
+                        scrollToBottom(proxy: proxy)
+                    }
                 }
+            }
+
+            if let goal = store.goalState {
+                GoalBanner(state: goal, store: store)
+                    .padding(.horizontal, 12)
             }
 
             composer
         }
         .onAppear { inputFocused = true }
+        .onDisappear {
+            thinkingScrollTask?.cancel()
+            thinkingScrollTask = nil
+        }
         .confirmationDialog(
             "Change reasoning effort?",
             isPresented: Binding(
@@ -440,6 +460,10 @@ struct ChatView: View {
         }
     }
 
+    private var workflowChips: [SlashCommand] {
+        WorkflowSlashCommands.filter(store.availableSlashCommands)
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
             if !store.fileAttachments.isEmpty {
@@ -448,6 +472,15 @@ struct ChatView: View {
                     onToggleHidden: { store.toggleFileAttachmentHidden(id: $0) },
                     onRemove: { store.removeFileAttachment(id: $0) }
                 )
+            }
+
+            if !workflowChips.isEmpty {
+                WorkflowChipBar(
+                    commands: workflowChips,
+                    isDisabled: store.isStreaming || store.currentWorkspace == nil
+                ) { command in
+                    Task { await sendWorkflowCommand(command) }
+                }
             }
 
             VStack(alignment: .leading, spacing: 16) {
@@ -977,6 +1010,11 @@ struct ChatView: View {
         }
     }
 
+    private func sendWorkflowCommand(_ command: SlashCommand) async {
+        _ = await store.send(WorkflowSlashCommands.slashText(for: command))
+        inputFocused = true
+    }
+
     private func submit() async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -1419,4 +1457,3 @@ struct DiffLinesView: View {
         }
     }
 }
-

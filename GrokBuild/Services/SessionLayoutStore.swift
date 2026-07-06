@@ -5,7 +5,61 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
     let workspaceID: UUID
     var grokSessionID: String?
     var title: String?
+    /// Per-tab model id; matches grok `session/set_model` for this tab's process.
+    var model: String?
     var lastAccessed: Date
+
+    init(
+        id: UUID,
+        workspaceID: UUID,
+        grokSessionID: String? = nil,
+        title: String? = nil,
+        model: String? = nil,
+        lastAccessed: Date
+    ) {
+        self.id = id
+        self.workspaceID = workspaceID
+        self.grokSessionID = grokSessionID
+        self.title = title
+        self.model = model
+        self.lastAccessed = lastAccessed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        workspaceID = try container.decode(UUID.self, forKey: .workspaceID)
+        grokSessionID = try container.decodeIfPresent(String.self, forKey: .grokSessionID)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        lastAccessed = try container.decode(Date.self, forKey: .lastAccessed)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case workspaceID
+        case grokSessionID
+        case title
+        case model
+        case lastAccessed
+    }
+}
+
+enum SessionTabModelPolicy {
+    /// Pick the model for a tab: saved tab value, then project default for new tabs, then app default.
+    static func resolvedModel(
+        tabModel: String?,
+        workspaceDefault: String?,
+        appDefault: String
+    ) -> String {
+        for candidate in [tabModel, workspaceDefault, appDefault] {
+            if let candidate = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !candidate.isEmpty {
+                return candidate
+            }
+        }
+        return appDefault
+    }
 }
 
 struct SessionLayoutSnapshot: Codable {

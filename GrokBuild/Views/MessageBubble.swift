@@ -2,6 +2,9 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: Message
+    /// When true, render assistant text plainly — `RichMessageView` re-parses the full
+    /// body on every chunk and can freeze the UI on long streaming turns.
+    var isStreaming: Bool = false
 
     var body: some View {
         switch message.role {
@@ -19,8 +22,15 @@ struct MessageBubble: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 0) {
                 if !message.content.isEmpty {
-                    RichMessageView(text: message.content)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if isStreaming {
+                        Text(message.content)
+                            .textSelection(.enabled)
+                            .font(.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        RichMessageView(text: message.content)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
         case .system:

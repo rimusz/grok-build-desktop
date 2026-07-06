@@ -2428,7 +2428,7 @@ private struct CustomModelsSettingsPane: View {
     private var defaultModelCard: some View {
         settingsCard(title: "Default Model", systemImage: "star", tint: .purple) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Writes `[models].default` in ~/.grok/config.toml. Existing sessions still keep their per-project model until restarted or changed.")
+                Text("Writes `[models].default` in ~/.grok/config.toml and seeds the model for new session tabs in each project. Existing tabs keep their own per-tab model.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

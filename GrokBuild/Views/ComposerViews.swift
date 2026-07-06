@@ -53,6 +53,126 @@ private struct FileChipView: View {
     }
 }
 
+// MARK: - Workflow chips
+
+struct WorkflowChipBar: View {
+    let commands: [SlashCommand]
+    var isDisabled: Bool = false
+    var onSelect: (SlashCommand) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(commands) { command in
+                    WorkflowChip(command: command, isDisabled: isDisabled) {
+                        onSelect(command)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct WorkflowChip: View {
+    let command: SlashCommand
+    var isDisabled: Bool
+    var onSelect: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            Text(displayName)
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Color.primary.opacity(isHovered && !isDisabled ? 0.10 : 0.06),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
+        .onHover { isHovered = $0 }
+        .help(command.description.isEmpty ? WorkflowSlashCommands.slashText(for: command) : command.description)
+    }
+
+    private var displayName: String {
+        command.name.replacingOccurrences(of: "-", with: " ")
+    }
+}
+
+// MARK: - Goal banner
+
+struct GoalBanner: View {
+    let state: SessionGoalState
+    @Bindable var store: ChatStore
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: state.isPaused ? "pause.circle" : "target")
+                .foregroundStyle(state.isPaused ? Color.secondary : Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Goal")
+                        .font(.caption.weight(.semibold))
+                    Text(state.statusLabel)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(state.isPaused ? Color.secondary : Color.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+                Text(state.objective)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                Button("Status") {
+                    Task { _ = await store.refreshGoalStatus() }
+                }
+                .controlSize(.small)
+                .disabled(store.isStreaming)
+
+                if state.isPaused {
+                    Button("Resume") {
+                        Task { _ = await store.resumeGoal() }
+                    }
+                    .controlSize(.small)
+                    .disabled(store.isStreaming)
+                } else {
+                    Button("Pause") {
+                        Task { _ = await store.pauseGoal() }
+                    }
+                    .controlSize(.small)
+                    .disabled(store.isStreaming)
+                }
+
+                Button("Clear") {
+                    Task { _ = await store.clearGoal() }
+                }
+                .controlSize(.small)
+                .disabled(store.isStreaming)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - Plan card
 
 struct PlanReviewCard: View {

@@ -38,7 +38,7 @@ GrokBuild is a **menu-bar macOS app** (SwiftUI + AppKit) that is a **UI shell ov
 |----------------|-----------------------------------------------|
 | Windows, sidebar, composer, settings panes | ACP session lifecycle, tool execution |
 | Multi-tab sessions, LRU process cap | MCP server wiring at runtime (GrokBuild only *injects* configs) |
-| Per-project model/effort, layout persistence | Skills, hooks, plugins, plan mode, subagents |
+| Per-tab model, per-project effort, layout persistence | Skills, hooks, plugins, plan mode, subagents |
 | Browser/Computer Use **enablement** + bundled skills | Agent reasoning, permissions policy enforcement |
 | In-app updates (app + CLI) | `grok update`, auth (`grok login`) |
 
@@ -166,7 +166,7 @@ flowchart TB
 4. `GrokProcess.send(prompt)` → ACP `session/prompt` JSON-RPC on stdin.
 5. `GrokProcess` reader parses stdout → `AcpEvent` stream.
 6. `ChatStore.consumeOutput()` maps events → message text, tool cards, permissions, thinking blocks.
-7. On completion → `isStreaming = false`, posts `.liveSessionMessagesChanged`, `.grokStatusChanged`.
+7. On completion → `isStreaming = false`, posts `.liveSessionMessagesChanged` (also on user send), `.grokStatusChanged`.
 
 ### CLI discovery (shared)
 
@@ -209,7 +209,7 @@ Built from `GrokLaunchOptions` in `ChatStore.restartProcess`. Working directory 
 ### ACP lifecycle
 
 1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake).
-2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming.
+2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming. When `session/load` fails with `FS_NOT_FOUND` / “Path not found” (stale on-disk grok session), GrokBuild falls back to `session/new`, sets `sessionLoadStartedFreshFallback`, and `ChatStore` adds a system note — local transcript is preserved. During load, the CLI replays prior turn history via `session/update` with `_meta.isReplay: true`; `GrokProcess` skips routing those to `ChatStore` (still applies `contextUsage` / `totalTokens`) so resume does not re-drive live tool/thinking UI.
 3. MCP servers from `MCPServerConfig` passed in `session/new` (browser, computer use when enabled).
 4. `send(_:)` — prompt during `.ready`/`.busy`.
 5. `stop()` — tear down process (LRU cap, settings reload, app shutdown).
@@ -287,22 +287,23 @@ On every (re)start, `ChatStore`:
 5. Builds MCP list:
    - `AgentBrowserService.browserMCPConfig(settings:)` → `grokbuild-browser`
    - `ComputerUseService.computerUseMCPConfig(settings:)` → `grokbuild-computer-use`
-6. Passes model from **per-project** `SessionLayoutStore.agentSettings` (fallback: saved session selection).
+6. Passes model from the **active tab** (`SavedSessionRecord.model`), with grok-session and project-default fallbacks.
 
-### Per-project agent settings
+### Per-tab model + per-project reasoning effort
 
-Model + reasoning effort are **per workspace**, not global:
+**Model** is **per session tab** (`SavedSessionRecord.model` in `GrokBuild.sessionLayout.v2`), matching grok's per-ACP-session `session/set_model`. Changing model in the composer updates only the active tab and posts `.liveSessionModelChanged` → `persistSessionLayout()`. Tab switch calls `bindTabSession` + `syncTabModelToLiveProcessIfNeeded()` — it does **not** overwrite from sibling tabs, and a missing saved model is ignored so workspace/app fallbacks still apply.
 
-- Stored in `SessionLayoutStore` → `WorkspaceLayoutSnapshot.agentSettingsByWorkspace`
-- Loaded via `loadWorkspaceAgentSettings()` on prepare/start/switch
-- Changing model in chat writes back to `SessionLayoutStore`
-- Sibling sessions in same project sync via `.workspaceAgentSettingsChanged`
+**Project default model** (`WorkspaceAgentSettings.model`) seeds **new** tabs only (and legacy tabs without a saved per-tab model). It is **not** updated when you change model in chat.
 
-**Reasoning effort — one authoritative surface.** The composer's model-menu picker is the per-project value used at launch (`restartProcess` reads `workspaceReasoningEffort`, never the global key directly). The global `grokbuild.reasoningEffort` (Settings → Permissions → "Default reasoning effort") is only a **seed for new/untouched projects**: `loadWorkspaceAgentSettings()` resolves `ChatStore.resolveReasoningEffort(saved:globalDefault:)` = saved per-project value (incl. explicit "Default") if present, else the global default. Do not add a second effort editor elsewhere — the Models pane no longer has one.
+**Reasoning effort** stays **per project** (`WorkspaceAgentSettings.reasoningEffort`):
+
+- Loaded via `loadWorkspaceReasoningEffort()` on prepare/start; tab switch syncs effort only via `syncWorkspaceReasoningEffortFromStorage()`
+- `restartProcess` reads `workspaceReasoningEffort` for `--reasoning-effort` (never the global key directly)
+- The global `grokbuild.reasoningEffort` (Settings → Permissions → "Default reasoning effort") is only a **seed for new/untouched projects**: `ChatStore.resolveReasoningEffort(saved:globalDefault:)` = saved per-project value (incl. explicit "Default") if present, else the global default. Do not add a second effort editor elsewhere — the Models pane no longer has one.
 
 ### Session selection persistence
 
-`grokbuild.sessionSelections.v1` — per **grok session id**: saved mode (model is project-level now).
+`grokbuild.sessionSelections.v1` — per **grok session id**: saved mode + model backup when resuming by grok id (e.g. Sessions browser).
 
 ---
 
@@ -329,7 +330,9 @@ ContentView.LiveSession {
 | `maxConnectedSessions` | 4 | Max live `grok agent stdio` processes |
 | `recentSessionOrder` | MRU list | Drives eviction |
 
-**Lazy restore at launch:** `restorePersistedSessions()` rebuilds `LiveSession` shells (titles, grok ids) but only **starts the selected session's process**. Others resume on first `selectSession` via `ensureSessionStarted`.
+**Lazy restore at launch:** `restorePersistedSessions()` rebuilds `LiveSession` shells (titles, grok ids, disk transcripts) but only **starts the selected session's process**. Others resume on first `selectSession` via `ensureSessionStarted`. Launch selection uses `SessionRestorePolicy`: prefer the saved `selectedSessionID` when it has a **restorable transcript** (in-memory or `SessionMessageStore` user/assistant rows — stale-fallback system notes alone do not count); otherwise pick the MRU tab in that workspace with a transcript, then fall back to grok-id-only tabs. `recentSessionOrder` is rebuilt from saved `lastAccessed` timestamps at launch. Resumed sessions with no local transcript yet skip the project welcome screen (`ChatStore.isResumedSessionTab`). Stale grok session ids fall back to `session/new` with a system note (`GrokSessionLoadError`); wording reflects whether a local transcript was preserved.
+
+**Transcript auto-repair:** When a tab's `SessionMessageStore` transcript is empty (or has no user/assistant rows) but the tab still has a `grokSessionID`, `SessionTranscriptRecovery` reads grok's on-disk `~/.grok/sessions/{encoded-cwd}/{grokSessionID}/chat_history.jsonl` via `GrokSessionTranscriptImporter` and persists imported user/assistant text. `encodeWorkspacePath` matches grok's layout: `%2FUsers%2F…%2Fproject` with **no** trailing `%2F`. Runs during `restorePersistedSessions` / `selectSession` (`ChatStore.restorePersistedMessages(for:grokSessionID:workspace:)`). Skips synthetic `<system-reminder>`-only rows and non-text session-update types. Stale-fallback-only tabs are not treated as restorable transcripts.
 
 **Eviction:** `enforceConnectionCap()` stops processes for sessions beyond MRU cap (keeps selected + busy sessions).
 
@@ -341,7 +344,7 @@ selectSession / send / close
     → SessionLayoutStore.saveSessions(SessionLayoutSnapshot)
 ```
 
-`SavedSessionRecord`: `id`, `workspaceID`, `grokSessionID`, `title`, `lastAccessed`.
+`SavedSessionRecord`: `id`, `workspaceID`, `grokSessionID`, `title`, `model`, `lastAccessed`.
 
 Sidebar shows max `SessionLayoutStore.maxSidebarSessions` (10) per project; older sessions in **Browse Sessions**.
 
@@ -356,8 +359,10 @@ Sidebar shows max `SessionLayoutStore.maxSidebarSessions` (10) per project; olde
 
 ```
 .onAppear → bootstrap() → restorePersistedSessions()
-    → rebuild LiveSession array from disk
-    → selectSession(saved selection)
+    → rebuild LiveSession array from disk (+ SessionMessageStore transcripts)
+    → rebuild recentSessionOrder from lastAccessed
+    → SessionRestorePolicy.restoreSelectedSessionID
+    → selectSession (reloads transcript if needed)
     → ensureSessionStarted (spawn process if grokSessionID set)
 ```
 
@@ -392,6 +397,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 |-----|-------|----------|
 | `GrokBuild.projects.v1` | `WorkspaceStore` | `[Workspace]` JSON |
 | `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden |
+| `GrokBuild.sessionMessages.v1` | `SessionMessageStore` | Per live-session-tab chat transcript (`[Message]` JSON by session UUID); saved on `.liveSessionMessagesChanged` (user send + turn complete) and during full `persistSessionLayout(saveMessages: true)` passes such as app quit via `.grokBuildPrepareForShutdown` |
 | `GrokBuild.workspaceLayout.v1` | `SessionLayoutStore` | Pin order, workspace order, **`agentSettingsByWorkspace`** |
 | `grokbuild.sessionSelections.v1` | `ChatStore` | Per grok session id: mode |
 | `grokbuild.permissionMode` | `GrokSettingsKeys` | CLI permission mode |
@@ -606,7 +612,8 @@ Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make 
 | File | Role |
 |------|------|
 | `SidebarView.swift` | Project list, session list, pins, settings entry |
-| `ChatView.swift` | Composer, messages, model/effort popover, feature pills, empty/welcome state (quick-start chips + no-project CTA) |
+| `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, feature pills, empty/welcome state (quick-start chips + no-project CTA) |
+| `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome |
 | `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. `RichMessageView` parses mermaid/LaTeX blocks; WKWebView embeds reload only when source changes, report a fixed height after load (avoids lazy-list layout loops), and inline `$…$` spans require math signals (not currency/`$PATH`). |
 | `PreviewPane.swift` | Diff detection from assistant messages; apply/commit |
@@ -643,7 +650,8 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
 | `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.hooks`) |
-| `.workspaceAgentSettingsChanged` | Model/effort saved | Sync sibling sessions in project |
+| `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
+| `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
@@ -711,14 +719,17 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | Task | Start here |
 |------|------------|
 | **Composer, send, streaming** | `ChatView.swift`, `ChatStore.send`, `consumeOutput` |
+| **Workflow slash chips** | `WorkflowSlashCommands` in `ComposerModels.swift`, `WorkflowChipBar` in `ComposerViews.swift`, `ChatView` composer |
+| **Session goal banner** | `GoalBanner` in `ComposerViews.swift`, `ChatStore.goalState` + `/goal` helpers, `GoalCommand` in `ComposerModels.swift` |
 | **Empty/welcome state, quick starts** | `ChatView.swift` (`welcomeState`, `noProjectState`, `QuickStartChip`), `QuickStartPrompt` in `ComposerModels.swift` |
 | **ACP events / tool cards** | `GrokProcess` (`AcpEvent`), `RichMessageView` |
 | **Permissions UI** | `ChatStore.pendingPermissions`, `MessageBubble` |
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
-| **Per-project model** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceAgentSettings` |
+| **Per-tab model** | `SavedSessionRecord.model`, `ChatStore.bindTabSession`, `.liveSessionModelChanged` |
+| **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
 | **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU) |
-| **Session restore at launch** | `ContentView.restorePersistedSessions`, `ensureSessionStarted` |
+| **Session restore at launch** | `ContentView.restorePersistedSessions`, `SessionRestorePolicy`, `SessionTranscriptRecovery`, `ensureSessionStarted` |
 | **Add/remove project** | `WorkspaceStore`, `WorkspacePicker` |
 | **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |

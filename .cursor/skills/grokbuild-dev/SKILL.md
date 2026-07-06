@@ -24,11 +24,12 @@ xed .             # open Package.swift in Xcode (optional)
 
 **Do not finish a task with code-only diffs.** Same session:
 
-1. **`make test`** — must pass; add tests in `Tests/GrokBuildTests/` for behavior you changed. For **user-visible UI changes**, also verify live with **Computer Use**: `make run` to repackage/relaunch (not just `make build`), then drive the app (snapshot → click/type → screenshot) to reach and confirm the changed UI state; clean up temp screenshots after. Drivers: `agent-desktop` directly via Shell (`agent-desktop snapshot --app GrokBuild`; `agent-desktop skills get desktop` for the loop), GrokBuild's `user-grokbuild-computer-use` MCP (thin wrapper over the bundled `agent-desktop`), or Orca's separate `computer-use` CLI.
-2. **`ARCHITECTURE.md`** — update source map, persistence, notifications, or common tasks → files when structure/flow changes.
-3. **`README.md`** — update when users would notice the change.
-4. **`BUILDING.md`** — update when build/packaging/scripts change.
-5. **Skills/rules** — update relevant `.cursor/skills/` or `.cursor/rules/` if workflow changed.
+1. **`make test`** — must pass; add tests in `Tests/GrokBuildTests/` for behavior you changed.
+2. **Computer Use** — required for **every** code change, not only SwiftUI view edits. `make run` to repackage/relaunch (not just `make build`), then drive the app (`snapshot` → navigate to affected state → `click`/`type` → `screenshot` when helpful). Default: **`user-grokbuild-computer-use` MCP**; fallback: `agent-desktop` directly or Orca `computer-use` CLI. Service/persistence changes still need a live check of the user-visible outcome.
+3. **`ARCHITECTURE.md`** — update source map, persistence, notifications, or common tasks → files when structure/flow changes.
+4. **`README.md`** — update when users would notice the change.
+5. **`BUILDING.md`** — update when build/packaging/scripts change.
+6. **Skills/rules** — update relevant `.cursor/skills/` or `.cursor/rules/` if workflow changed.
 
 Full checklist: `.cursor/rules/docs-and-tests.mdc`.
 

@@ -19,7 +19,7 @@ SwiftPM macOS menu-bar app — UI for `grok agent stdio`, not a replacement for 
 - Keep changes focused; reuse existing services and notification names.
 - Do not add an Xcode project; stay on SwiftPM + Makefile scripts.
 - Menu bar icon: `GrokBuild/Resources/Assets.xcassets/MenuBarIcon.imageset/`.
-- **Docs + tests required** with every code change — see `.cursor/rules/docs-and-tests.mdc`.
+- **Docs + tests + Computer Use required** with every code change — see `.cursor/rules/docs-and-tests.mdc`.
 - Only commit when the user explicitly asks.
 
 ## Key docs

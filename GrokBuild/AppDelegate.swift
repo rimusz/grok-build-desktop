@@ -68,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.post(name: .grokBuildPrepareForShutdown, object: nil)
         // Closing the fd releases the flock.
         // We also clean the PID file only if we are the owner.
         if lockFd != -1 {
