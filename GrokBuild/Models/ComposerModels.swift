@@ -51,7 +51,10 @@ enum WorkflowSlashCommands {
 
     /// Returns advertised commands in curated order; omits names the CLI did not expose.
     static func filter(_ available: [SlashCommand]) -> [SlashCommand] {
-        let byName = Dictionary(uniqueKeysWithValues: available.map { ($0.name, $0) })
+        var byName: [String: SlashCommand] = [:]
+        for command in available where byName[command.name] == nil {
+            byName[command.name] = command
+        }
         return curatedOrder.compactMap { byName[$0] }
     }
 

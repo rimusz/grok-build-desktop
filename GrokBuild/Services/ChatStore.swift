@@ -146,7 +146,6 @@ final class ChatStore {
         tabHasExplicitModel = false
         guard let savedModel = savedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedModel.isEmpty else { return }
-        tabHasExplicitModel = true
         applyTabModel(savedModel)
     }
 

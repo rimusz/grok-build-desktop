@@ -238,7 +238,7 @@ struct ContentView: View {
             onWorkspaceChange: handleWorkspaceChange,
             onAutoSelectLatestDiff: autoSelectLatestDiffMessage,
             onNewSession: startNewSessionForCurrentProject,
-            onPersistSessionLayout: persistSessionLayout,
+            onPersistSessionLayout: { persistSessionLayout(saveMessages: $0) },
             openSettings: openSettings
         ))
     }
@@ -546,9 +546,11 @@ struct ContentView: View {
         sessionListRevision &+= 1
     }
 
-    private func persistSessionLayout() {
-        for session in liveSessions {
-            SessionMessageStore.save(session.store.messages, for: session.id)
+    private func persistSessionLayout(saveMessages: Bool = true) {
+        if saveMessages {
+            for session in liveSessions {
+                SessionMessageStore.save(session.store.messages, for: session.id)
+            }
         }
         var records: [SavedSessionRecord] = []
         for session in liveSessions {
@@ -1216,7 +1218,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
     let onWorkspaceChange: (Workspace.ID?) -> Void
     let onAutoSelectLatestDiff: () -> Void
     let onNewSession: () -> Void
-    let onPersistSessionLayout: () -> Void
+    let onPersistSessionLayout: (Bool) -> Void
     let openSettings: (SettingsTab) -> Void
 
     func body(content: Content) -> some View {
@@ -1247,7 +1249,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
                 openSettings: openSettings
             ))
             .onChange(of: activeStore.grokSessionId) { _, _ in
-                onPersistSessionLayout()
+                onPersistSessionLayout(true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { note in
                 handleLiveSessionMessagesChanged(note)
@@ -1256,7 +1258,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
                 handleWorkspaceAgentSettingsChanged(note)
             }
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionModelChanged)) { _ in
-                onPersistSessionLayout()
+                onPersistSessionLayout(true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
                 handlePrepareForShutdown()
@@ -1272,7 +1274,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
            let session = liveSessions.first(where: { $0.store === store }) {
             SessionMessageStore.save(store.messages, for: session.id)
         }
-        onPersistSessionLayout()
+        onPersistSessionLayout(false)
     }
 
     private func handleWorkspaceAgentSettingsChanged(_ note: Notification) {
@@ -1283,7 +1285,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
     }
 
     private func handlePrepareForShutdown() {
-        onPersistSessionLayout()
+        onPersistSessionLayout(true)
         Task {
             for session in liveSessions {
                 await session.store.shutdown()

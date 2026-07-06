@@ -25,6 +25,18 @@ final class ComposerWorkflowTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.name), ["design"])
     }
 
+    func testWorkflowSlashCommandsIgnoresDuplicateAdvertisedNames() {
+        let available = [
+            SlashCommand(name: "design", description: "Design"),
+            SlashCommand(name: "design", description: "Duplicate design"),
+            SlashCommand(name: "review", description: "Review")
+        ]
+
+        let filtered = WorkflowSlashCommands.filter(available)
+        XCTAssertEqual(filtered.map(\.name), ["design", "review"])
+        XCTAssertEqual(filtered.first?.description, "Design")
+    }
+
     func testWorkflowSlashCommandsReturnsEmptyWhenNoneMatch() {
         let available = [SlashCommand(name: "compact", description: "Compact")]
         XCTAssertTrue(WorkflowSlashCommands.filter(available).isEmpty)

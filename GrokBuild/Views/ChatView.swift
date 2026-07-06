@@ -202,6 +202,10 @@ struct ChatView: View {
             composer
         }
         .onAppear { inputFocused = true }
+        .onDisappear {
+            thinkingScrollTask?.cancel()
+            thinkingScrollTask = nil
+        }
         .confirmationDialog(
             "Change reasoning effort?",
             isPresented: Binding(
@@ -1453,4 +1457,3 @@ struct DiffLinesView: View {
         }
     }
 }
-
