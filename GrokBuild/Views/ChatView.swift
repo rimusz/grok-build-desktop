@@ -615,6 +615,7 @@ struct ChatView: View {
                 agentStatusPill
                 browserStatusPill
                 computerUseStatusPill
+                tasksStatusPill
             } else {
                 Label("No project selected", systemImage: "folder")
             }
@@ -680,6 +681,70 @@ struct ChatView: View {
         .help(overriding
             ? "Session agent (overrides the default). Changing it restarts this session's grok."
             : "Session agent (follows the Settings default). Changing it restarts this session's grok.")
+    }
+
+    private var tasksStatusPill: some View {
+        let tasks = store.scheduledTasks
+        let count = tasks.count
+        let available = store.hasLoopCommand
+        let tint: Color = count > 0 ? .accentColor : .secondary
+        let title = count > 0 ? "Tasks (\(count))" : "Tasks"
+
+        return Menu {
+            if tasks.isEmpty {
+                Button("No scheduled tasks") {}
+                    .disabled(true)
+            } else {
+                Section("Scheduled tasks") {
+                    ForEach(tasks) { task in
+                        Menu(taskMenuTitle(task)) {
+                            Text(task.prompt.isEmpty ? "(no prompt)" : task.prompt)
+                            if let next = task.nextFireAt {
+                                Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                Task { await store.cancelScheduledTask(task.id) }
+                            } label: {
+                                Label("Cancel Task", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                Task { await store.refreshScheduledTasks() }
+            } label: {
+                Label("Refresh Tasks", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.isStreaming)
+
+            Button("Type /loop <interval> <prompt> to schedule") {}
+                .disabled(true)
+        } label: {
+            Label(title, systemImage: count > 0 ? "clock.badge.checkmark" : "clock")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(count > 0 ? 0.14 : 0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help(available
+            ? "Scheduled tasks grok is running for this session. Refresh queries grok; cancel removes a task."
+            : "Scheduling (grok /loop) — mirror of tasks observed in this session.")
+    }
+
+    private func taskMenuTitle(_ task: ScheduledTask) -> String {
+        let interval = task.intervalHuman.isEmpty ? "task" : task.intervalHuman
+        let prompt = task.prompt.isEmpty ? task.id : task.prompt
+        let shortPrompt = prompt.count > 32 ? String(prompt.prefix(32)) + "…" : prompt
+        return "\(interval): \(shortPrompt)"
     }
 
     private var browserStatusPill: some View {

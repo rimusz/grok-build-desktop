@@ -56,6 +56,44 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - Installs a `grokbuild-computer-use` skill; use Computer Use for macOS apps, Browser control for websites in Chromium.
 - Optional **Cursor integration** — **Install for Cursor** copies the MCP helper to `~/.grokbuild/computer-use/` and registers `grokbuild-computer-use` in `~/.cursor/mcp.json` so Cursor Agent gets the same tools globally.
 
+### Beyond coding — general-purpose use
+GrokBuild is a full Grok agent cockpit, not just a coding tool. With **Browser control** and **Computer Use** enabled you can run everyday, non-coding tasks. A session is always anchored to **a folder**, but it does **not** have to be a code repo — point it at any folder (e.g. `~/Documents` or a throwaway scratch folder); the folder is just the working directory and is ignored for browser/desktop tasks.
+
+**Browser control examples** (drives a real Chromium):
+- "Open `news.ycombinator.com`, read the top 5 stories, and summarize them."
+- "Go to my dashboard, wait for it to load, screenshot the charts, and describe any anomalies."
+- "Log in to `grok.com` (existing-Chrome preset), open Imagine, and generate an image from this prompt."
+- "Fill in this web form with the following values and submit it, then confirm the success message."
+
+**Computer Use examples** (drives native macOS apps):
+- "Open System Settings → Bluetooth and tell me which devices are connected."
+- "In Finder, find the largest files in my Downloads folder and list them."
+- "Read the frontmost dialog and click the button that dismisses it."
+- "Open Notes, create a new note titled 'Standup', and type today's agenda."
+
+**Combined browser + desktop:**
+- "Download the invoice PDF from this web page, then open it in Preview and read the total."
+- "Look up an address in the browser, then paste it into the Maps app."
+
+**Documents & spreadsheets** — grok ships dedicated document skills (`xlsx`, `docx`, `pptx`) that trigger automatically when an Office file is the input or output, so you can create, read, edit, and reformat them (drop a file into the workspace folder or give its path):
+- "Read `report.xlsx` and summarize the numbers, then add a summary sheet with totals and a chart."
+- "Clean up this messy CSV export and save it as a proper `.xlsx`."
+- "Build a simple financial model from `data.csv` using real Excel formulas (not hardcoded values)."
+- "Fix the formulas / recalculate this workbook and list any `#REF!` or `#DIV/0!` errors."
+- "Fill this Word template (`contract.docx`) with these values and export a copy."
+- "Turn these notes into a PowerPoint deck (`.pptx`) with one slide per section."
+
+  The Excel skill uses `pandas`/`openpyxl` and recalculates formulas via **LibreOffice**; the skill assumes LibreOffice and the Python libs are available (the agent installs them with your permission if missing).
+
+**Scheduling & background tasks** — grok has built-in recurring/background execution ([Background Tasks](https://docs.x.ai/build/features/background-tasks)); GrokBuild just forwards your prompt to the grok session, so you can drive it from chat:
+- **Recurring prompts** — ask in natural language (e.g. "every 5 minutes, run the test suite and report new failures") and the agent schedules it via its scheduler tools, or type grok's `/loop <interval> <prompt>` directly (intervals `Ns` ≥ 60s / `Nm` / `Nh` / `Nd`). Each fire is a new turn in that session.
+- **Tasks pill** — the chat status bar shows a **Tasks** pill that mirrors the schedules grok creates in that session. Open it to see each task (interval + prompt + next fire), **Cancel** one, or **Refresh Tasks** (asks grok to run `scheduler_list`). It's a best-effort mirror: it updates live when grok schedules via its tools (e.g. you ask in natural language), but the `/loop` slash command is handled by the CLI without emitting a tool call, so hit **Refresh Tasks** to pick those up. Tasks made in the grok TUI or another session also appear after a refresh.
+- **Background commands** — "start the dev server in the background and keep working"; the agent runs it non-blocking and reports when it's ready.
+- **Monitors** — "watch this log and tell me if anything errors" streams matching output lines back as they happen.
+- **Limits & caveats:** schedules only fire while **GrokBuild is open and that session is alive** (live grok processes are LRU-capped, and sessions stop on quit/restart); `durable` schedules re-register on resume but still need a running session to fire. grok caps recurring tasks at 50 and auto-expires them after 7 days. Cancel/refresh are driven by prompting grok, so they cost a turn in that session.
+
+Tips: enable each tool from the chat status-bar pills (**Browser Tools On/Off**, **Computer Use On/Off**); use **Browser control for websites** in Chromium and **Computer Use for native macOS apps**; and set the permission policy in **Settings → Permissions** / **Settings → Computer Use** (Auto / Ask / Deny) to control how much the agent can do without confirmation.
+
 ### Grok CLI integration
 - **Hooks** — inspect automation hooks discovered from Grok, Cursor, Claude, project, and plugin sources.
 - **Plugins** — manage installed Grok plugins and add trusted plugin sources.

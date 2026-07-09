@@ -177,6 +177,8 @@ enum AcpEvent: @unchecked Sendable {
     case modeChanged(mode: AgentMode)
     case contextUsage(totalTokens: Int)
     case availableCommands([SlashCommand])
+    /// A grok `scheduler_*` tool-call `session/update`, forwarded raw for the scheduled-tasks panel.
+    case schedulerActivity(payload: [String: Any])
     case rawLine(String)
     case error(String)
 }
@@ -969,9 +971,15 @@ final class GrokProcess: @unchecked Sendable {
             } else {
                 acpEventContinuation?.yield(.toolCall(ToolCall(id: UUID().uuidString, kind: "unknown", title: "Tool call", rawInput: nil)))
             }
+            if SchedulerToolParsing.schedulerName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.schedulerActivity(payload: u))
+            }
         case "tool_call_update":
             if let tc = parseToolCall(from: u) {
                 acpEventContinuation?.yield(.toolCallUpdate(tc))
+            }
+            if SchedulerToolParsing.schedulerName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.schedulerActivity(payload: u))
             }
         case "plan":
             acpEventContinuation?.yield(.plan(payload: u))

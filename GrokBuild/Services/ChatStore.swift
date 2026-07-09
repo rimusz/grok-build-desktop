@@ -104,6 +104,11 @@ final class ChatStore {
     private(set) var discoveredAgents: [GrokAgentInfo] = []
     private var didLoadDiscoveredAgents = false
 
+    // MARK: - Scheduled tasks (grok `scheduler_*` tools, mirrored by observing ACP tool calls)
+    /// Tasks grok has scheduled, mirrored from observed `scheduler_*` tool activity in this session.
+    private(set) var scheduledTasks: [ScheduledTask] = []
+    private var scheduledTaskTracker = ScheduledTaskTracker()
+
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
 
@@ -491,6 +496,37 @@ final class ChatStore {
     @discardableResult
     func clearGoal() async -> Bool {
         await send("/goal clear")
+    }
+
+    // MARK: - Scheduled tasks
+
+    /// True when grok advertises the `/loop` command (scheduling is available in this session).
+    var hasLoopCommand: Bool {
+        availableSlashCommands.contains { $0.name == "loop" }
+    }
+
+    /// Ask grok to enumerate its scheduled tasks (drives `scheduler_list`); the reply's tool
+    /// output refreshes ``scheduledTasks`` authoritatively.
+    @discardableResult
+    func refreshScheduledTasks() async -> Bool {
+        await send("List all my scheduled tasks (use scheduler_list) and do nothing else.")
+    }
+
+    /// Schedule a recurring prompt via grok's `/loop` command.
+    @discardableResult
+    func createScheduledTask(interval: String, prompt: String) async -> Bool {
+        let trimmedInterval = interval.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInterval.isEmpty, !trimmedPrompt.isEmpty else { return false }
+        return await send("/loop \(trimmedInterval) \(trimmedPrompt)")
+    }
+
+    /// Ask grok to cancel a scheduled task by id (drives `scheduler_delete`).
+    @discardableResult
+    func cancelScheduledTask(_ id: String) async -> Bool {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("Cancel the scheduled task with id \(trimmed) (use scheduler_delete) and do nothing else.")
     }
 
     private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
@@ -1016,6 +1052,9 @@ final class ChatStore {
             }
         case .availableCommands(let commands):
             availableSlashCommands = commands
+        case .schedulerActivity(let payload):
+            scheduledTaskTracker.apply(update: payload)
+            scheduledTasks = scheduledTaskTracker.tasks
         case .permissionRequest(let req):
             if isYolo {
                 // Auto-approve in YOLO mode (prefer allow_always or first allow)
