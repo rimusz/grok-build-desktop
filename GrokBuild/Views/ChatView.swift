@@ -26,6 +26,8 @@ struct ChatView: View {
     var onToggleComputerUse: () -> Void = {}
     var onOpenBrowserSettings: () -> Void = {}
     var onOpenComputerUseSettings: () -> Void = {}
+    var onOpenAgentSettings: () -> Void = {}
+    var onOpenMemorySettings: () -> Void = {}
     var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
@@ -41,6 +43,11 @@ struct ChatView: View {
     @FocusState private var inputFocused: Bool
     @AppStorage(BrowserSettingsKeys.appliedEnabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
     @AppStorage(ComputerUseSettingsKeys.appliedEnabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
+    @AppStorage(GrokSettingsKeys.memoryEnabled) private var memoryEnabled = GrokPermissionSettings.defaults.memoryEnabled
+
+    @State private var showMemoryBrowser = false
+    @State private var showRememberPrompt = false
+    @State private var memoryNoteText = ""
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -237,6 +244,12 @@ struct ChatView: View {
             if let effort = pendingReasoningEffortChange {
                 Text("Apply \(store.reasoningEffortDisplayName(effort)) when Grok restarts. Summarize & restart runs /compact first to preserve context.")
             }
+        }
+        .sheet(isPresented: $showMemoryBrowser) {
+            MemoryBrowserPanel()
+        }
+        .sheet(isPresented: $showRememberPrompt) {
+            rememberPromptSheet
         }
         .onChange(of: store.connectionState) { _, newState in
             if case .ready = newState {
@@ -611,8 +624,13 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Branches & worktrees")
+                agentStatusPill
                 browserStatusPill
                 computerUseStatusPill
+                tasksStatusPill
+                if memoryEnabled {
+                    memoryStatusPill
+                }
             } else {
                 Label("No project selected", systemImage: "folder")
             }
@@ -621,23 +639,210 @@ struct ChatView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+        .task(id: store.currentWorkspace?.id) {
+            await store.loadDiscoveredAgentsIfNeeded()
+        }
+    }
+
+    private var agentStatusPill: some View {
+        let effective = store.effectiveAgentSelection
+        let title = store.effectiveAgentDisplayName
+        let overriding = store.hasExplicitAgent
+        let tint: Color = overriding ? .teal : .secondary
+
+        return Menu {
+            Section("This session's agent") {
+                ForEach(GrokAgentProfiles.builtInOptions) { option in
+                    Button {
+                        Task { await store.setSessionAgent(option.id) }
+                    } label: {
+                        Label(option.title, systemImage: effective == option.id ? "checkmark" : "person")
+                    }
+                }
+            }
+
+            let discovered = store.discoveredAgents.map(\.name)
+                .filter { name in !GrokAgentProfiles.builtInOptions.contains { $0.id == name } }
+            if !discovered.isEmpty {
+                Section("Discovered") {
+                    ForEach(discovered, id: \.self) { name in
+                        Button {
+                            Task { await store.setSessionAgent(name) }
+                        } label: {
+                            Label(name, systemImage: effective == name ? "checkmark" : "person.crop.square")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                onOpenAgentSettings()
+            } label: {
+                Label("Open Agent Settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label(title, systemImage: "person.2.badge.gearshape")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(overriding ? 0.14 : 0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help(overriding
+            ? "Session agent (overrides the default). Changing it restarts this session's grok."
+            : "Session agent (follows the Settings default). Changing it restarts this session's grok.")
+    }
+
+    private var tasksStatusPill: some View {
+        let tasks = store.scheduledTasks
+        let count = tasks.count
+        let available = store.hasLoopCommand
+        let tint: Color = count > 0 ? .accentColor : .secondary
+        let title = count > 0 ? "Tasks (\(count))" : "Tasks"
+
+        return Menu {
+            if tasks.isEmpty {
+                Button("No scheduled tasks") {}
+                    .disabled(true)
+            } else {
+                Section("Scheduled tasks") {
+                    ForEach(tasks) { task in
+                        Menu(taskMenuTitle(task)) {
+                            Text(task.prompt.isEmpty ? "(no prompt)" : task.prompt)
+                            if let next = task.nextFireAt {
+                                Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                Task { await store.cancelScheduledTask(task.id) }
+                            } label: {
+                                Label("Cancel Task", systemImage: "trash")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                Task { await store.refreshScheduledTasks() }
+            } label: {
+                Label("Refresh Tasks", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.isStreaming)
+
+            Button("Type /loop <interval> <prompt> to schedule") {}
+                .disabled(true)
+        } label: {
+            Label(title, systemImage: count > 0 ? "clock.badge.checkmark" : "clock")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(count > 0 ? 0.14 : 0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help(available
+            ? "Scheduled tasks grok is running for this session. Refresh queries grok; cancel removes a task."
+            : "Scheduling (grok /loop) — mirror of tasks observed in this session.")
+    }
+
+    private func taskMenuTitle(_ task: ScheduledTask) -> String {
+        let interval = task.intervalHuman.isEmpty ? "task" : task.intervalHuman
+        let prompt = task.prompt.isEmpty ? task.id : task.prompt
+        let shortPrompt = prompt.count > 32 ? String(prompt.prefix(32)) + "…" : prompt
+        return "\(interval): \(shortPrompt)"
+    }
+
+    // Only shown while cross-session memory is enabled (see `projectStatusRow`); the pill label
+    // is just "Memory" — an off state isn't surfaced because the pill is hidden when disabled.
+    private var memoryStatusPill: some View {
+        Menu {
+            Button {
+                showMemoryBrowser = true
+            } label: {
+                Label("Browse Memory Files…", systemImage: "folder")
+            }
+
+            Button {
+                memoryNoteText = ""
+                showRememberPrompt = true
+            } label: {
+                Label("Remember…", systemImage: "text.badge.plus")
+            }
+
+            Divider()
+
+            Button {
+                onOpenMemorySettings()
+            } label: {
+                Label("Open Memory Settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label("Memory", systemImage: "brain.head.profile")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.pink.opacity(0.14)))
+                .foregroundStyle(Color.pink)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help("Cross-session memory is on. Browse files, save a note, or open Memory settings.")
+    }
+
+    private var rememberPromptSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Remember a Note")
+                .font(.headline)
+            Text("Saved to your global memory so Grok can recall it in future sessions.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $memoryNoteText)
+                .font(.body)
+                .frame(minWidth: 380, minHeight: 120)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
+            HStack {
+                Spacer()
+                Button("Cancel") { showRememberPrompt = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    _ = store.remember(memoryNoteText)
+                    showRememberPrompt = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(memoryNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 
     private var browserStatusPill: some View {
         let settings = BrowserSettingsStore.load()
         let configurationIssue = AgentBrowserService.browserToolsConfigurationIssue(settings: settings)
-        let browserBaseReady = settings.backend == .agentBrowser
-            && AgentBrowserService.bridgeScriptURL() != nil
+        let browserBaseReady = AgentBrowserService.bridgeScriptURL() != nil
             && AgentBrowserService.executableURL() != nil
         let managedRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .managed) == nil
         let externalRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .external) == nil
         let canChooseRuntime = browserBaseReady && (managedRuntimeReady || externalRuntimeReady)
         let isConfigured = configurationIssue == nil
-        let title = browserToolsEnabled
-            ? (isConfigured ? "Browser Tools On" : "Browser Setup Needed")
-            : "Browser Tools Off"
+        let needsSetup = browserToolsEnabled && !isConfigured
+        let title = needsSetup ? "Browser Setup Needed" : "Browser Tools"
         let icon = browserToolsEnabled && isConfigured ? "globe.badge.chevron.backward" : "globe"
-        let tint: Color = browserToolsEnabled ? (isConfigured ? .accentColor : .orange) : .secondary
+        // Enabled → white (primary); disabled → greyed out; needs-setup keeps the orange warning.
+        let tint: Color = needsSetup ? .orange : (browserToolsEnabled ? .primary : .secondary)
 
         return Menu {
             if browserToolsEnabled || isConfigured {
@@ -699,11 +904,11 @@ struct ChatView: View {
         let settings = ComputerUseSettingsStore.load()
         let configurationIssue = ComputerUseService.configurationIssue(settings: settings)
         let isConfigured = configurationIssue == nil
-        let title = computerUseEnabled
-            ? (isConfigured ? "Computer Use On" : "Computer Use Setup Needed")
-            : "Computer Use Off"
+        let needsSetup = computerUseEnabled && !isConfigured
+        let title = needsSetup ? "Computer Use Setup Needed" : "Computer Use"
         let icon = computerUseEnabled && isConfigured ? "desktopcomputer.badge.checkmark" : "desktopcomputer"
-        let tint: Color = computerUseEnabled ? (isConfigured ? .purple : .orange) : .secondary
+        // Enabled → white (primary); disabled → greyed out; needs-setup keeps the orange warning.
+        let tint: Color = needsSetup ? .orange : (computerUseEnabled ? .primary : .secondary)
 
         return Menu {
             if computerUseEnabled || isConfigured {

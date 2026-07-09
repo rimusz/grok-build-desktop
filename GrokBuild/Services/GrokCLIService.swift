@@ -160,6 +160,26 @@ struct GrokSkillInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+struct GrokAgentInfo: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let description: String
+    let sourceType: String
+    let sourcePath: String
+    let pluginName: String
+
+    init(dictionary: [String: Any]) {
+        name = dictionary["name"] as? String ?? "Unknown"
+        description = dictionary["description"] as? String ?? ""
+
+        let source = dictionary["source"] as? [String: Any] ?? [:]
+        sourceType = source["type"] as? String ?? ""
+        sourcePath = source["path"] as? String ?? ""
+        pluginName = source["plugin_name"] as? String ?? source["pluginName"] as? String ?? ""
+        id = [name, sourceType, pluginName, sourcePath].joined(separator: "|")
+    }
+}
+
 struct GrokMCPServerInfo: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
@@ -266,21 +286,27 @@ struct GrokPermissionSettings: Sendable {
     var permissionMode: String
     var sandboxProfile: String
     var reasoningEffort: String
-    var noMemory: Bool
     var disableWebSearch: Bool
     var noSubagents: Bool
     var allowRules: String
     var denyRules: String
+    /// Session agent selection passed to `grok --agent`. Empty = grok's default agent;
+    /// any other value is a discovered agent name (see `GrokAgentProfiles`).
+    var selectedAgent: String
+    /// Opt-in cross-session memory (experimental). `true` → `--experimental-memory`,
+    /// `false` → `--no-memory` (memory is disabled by default; see `MemoryStore`).
+    var memoryEnabled: Bool
 
     static let defaults = GrokPermissionSettings(
         permissionMode: "default",
         sandboxProfile: "",
         reasoningEffort: "",
-        noMemory: false,
         disableWebSearch: false,
         noSubagents: false,
         allowRules: "",
-        denyRules: ""
+        denyRules: "",
+        selectedAgent: "",
+        memoryEnabled: false
     )
 }
 
@@ -346,6 +372,8 @@ enum GrokSettingsKeys {
     static let noSubagents = "grokbuild.noSubagents"
     static let allowRules = "grokbuild.allowRules"
     static let denyRules = "grokbuild.denyRules"
+    static let selectedAgent = "grokbuild.selectedAgent"
+    static let memoryEnabled = "grokbuild.memoryEnabled"
 }
 
 /// Best-effort sign-in detection used only at launch, before any grok process runs.
@@ -467,6 +495,12 @@ final class GrokCLIService {
         let json = try await jsonValue(["inspect", "--json"], cwd: cwd)
         let dictionary = json as? [String: Any] ?? [:]
         return (dictionary["skills"] as? [[String: Any]] ?? []).map(GrokSkillInfo.init(dictionary:))
+    }
+
+    func listAgents(cwd: URL? = nil) async throws -> [GrokAgentInfo] {
+        let json = try await jsonValue(["inspect", "--json"], cwd: cwd)
+        let dictionary = json as? [String: Any] ?? [:]
+        return (dictionary["agents"] as? [[String: Any]] ?? []).map(GrokAgentInfo.init(dictionary:))
     }
 
     func pluginDetails(name: String) async throws -> String {

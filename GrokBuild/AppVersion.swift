@@ -1,11 +1,14 @@
 import Foundation
 
 enum AppVersion {
-    static var short: String {
-        repositoryValue(named: "VERSION")
-            ?? bundleValue("CFBundleShortVersionString")
-            ?? "0.0.0"
-    }
+  /// Version baked into the app at build time (`Info.plist`). Do not read the repo
+  /// `VERSION` file at runtime — that path is compile-time `#filePath` and would show
+  /// whatever is currently in the dev tree, not what was actually released.
+  static var short: String {
+    bundleValue("CFBundleShortVersionString")
+      ?? repositoryValue(named: "VERSION")
+      ?? "0.0.0"
+  }
 
     static var display: String {
         short

@@ -229,6 +229,7 @@ Consumed by `ChatStore.consumeOutput()`:
 | `.modeChanged` | Agent / Plan / Yolo selector |
 | `.contextUsage` | Token usage indicator |
 | `.availableCommands` | Slash command autocomplete |
+| `.schedulerActivity` | Update the scheduled-tasks mirror (`ChatStore.scheduledTasks`) |
 | `.error` | Error banner |
 
 ### Agent modes
@@ -287,13 +288,16 @@ On every (re)start, `ChatStore`:
 5. Builds MCP list:
    - `AgentBrowserService.browserMCPConfig(settings:)` → `grokbuild-browser`
    - `ComputerUseService.computerUseMCPConfig(settings:)` → `grokbuild-computer-use`
-6. Passes model from the **active tab** (`SavedSessionRecord.model`), with grok-session and project-default fallbacks.
+6. Resolves the **session agent** via `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` (`--agent`).
+7. Passes model from the **active tab** (`SavedSessionRecord.model`), with grok-session and project-default fallbacks.
 
 ### Per-tab model + per-project reasoning effort
 
 **Model** is **per session tab** (`SavedSessionRecord.model` in `GrokBuild.sessionLayout.v2`), matching grok's per-ACP-session `session/set_model`. Changing model in the composer updates only the active tab and posts `.liveSessionModelChanged` → `persistSessionLayout()`. Tab switch calls `bindTabSession` + `syncTabModelToLiveProcessIfNeeded()` — it does **not** overwrite from sibling tabs, and a missing saved model is ignored so workspace/app fallbacks still apply.
 
 **Project default model** (`WorkspaceAgentSettings.model`) seeds **new** tabs only (and legacy tabs without a saved per-tab model). It is **not** updated when you change model in chat.
+
+**Session agent** is also **per session tab** (`SavedSessionRecord.agent`). Each tab launches with its own `--agent` (`ChatStore.effectiveAgentSelection`): an explicit per-tab override when set, otherwise the global default `grokbuild.selectedAgent` (Settings → Agents). The chat status bar shows an **agent pill** (`ChatView.agentStatusPill`) whose menu lists the built-in Default option (`GrokAgentProfiles.builtInOptions`) plus agents discovered for the workspace; picking one calls `ChatStore.setSessionAgent` → **restarts that tab's grok** (agents can only change at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`. A tab that has not been overridden follows the global default live (so changing the default and restarting adopts it); overridden tabs keep their choice. Only overridden tabs persist a value (`ChatStore.persistedAgentSelection`).
 
 **Reasoning effort** stays **per project** (`WorkspaceAgentSettings.reasoningEffort`):
 
@@ -403,11 +407,13 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.permissionMode` | `GrokSettingsKeys` | CLI permission mode |
 | `grokbuild.sandboxProfile` | | Sandbox profile string |
 | `grokbuild.reasoningEffort` | | Default reasoning effort (settings UI) |
-| `grokbuild.noMemory` | | `--no-memory` flag |
+| `grokbuild.noMemory` | | Legacy `--no-memory` flag key (superseded by `grokbuild.memoryEnabled`; no longer written by the UI) |
+| `grokbuild.memoryEnabled` | `GrokSettingsKeys` | Cross-session memory toggle (Settings → **Memory**). `true` → `--experimental-memory`, `false` → `--no-memory`. Default off |
 | `grokbuild.disableWebSearch` | | `--disable-web-search` |
 | `grokbuild.noSubagents` | | `--no-subagents` |
 | `grokbuild.allowRules` / `denyRules` | | Newline-separated `--allow` / `--deny` rules |
-| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings |
+| `grokbuild.selectedAgent` | `GrokSettingsKeys` | **Default** session agent for **new** tabs (empty = grok default; otherwise a discovered agent name). Per-tab overrides live in `SavedSessionRecord.agent`. |
+| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
@@ -440,13 +446,56 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
 | Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
 | Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
-| Chat UI | Status pill in `ChatView`; toggle from composer chrome |
+| Chat UI | Status pill in `ChatView` (composer chrome). Menu offers on/off toggle, **runtime choice** (managed ↔ existing Chromium), and Open Browser Settings |
 
-**Runtime modes:** managed Chromium vs external browser (Safari/Chrome/Arc) via CDP URL.
+**Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
 
-**Tools (via MCP):** `browser_open_url`, `browser_snapshot`, `browser_click_ref`, etc.
+**agent-browser tools (via MCP):** `browser_open_url`, `browser_snapshot`, `browser_click_ref`, etc.
 
 **grok.com web:** drive grok.com via browser tools to reach web-only features (Imagine, skills, connectors), then continue locally with Computer Use — see `grokbuild-grok-web` skill.
+
+### Agents
+
+| Piece | Location |
+|-------|----------|
+| Default (new sessions) | `SettingsView` → `.agents` tab (viewer + "Default agent for new sessions" picker → `grokbuild.selectedAgent`) |
+| Per-session override | `ChatView.agentStatusPill` → `ChatStore.setSessionAgent` (persisted in `SavedSessionRecord.agent`) |
+| Discovery | `GrokCLIService.listAgents(cwd:)` → `GrokAgentInfo` (parses `agents` from `grok inspect --json`); loaded lazily by `ChatStore.loadDiscoveredAgentsIfNeeded` for the pill |
+| Built-in options | `GrokAgentProfiles.builtInOptions` (Default only) — shared by Settings + pill |
+| Selection → launch | `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
+
+The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the status-bar pill, which restarts that session's grok.
+
+### Scheduled tasks
+
+grok owns scheduling (`scheduler_create` / `scheduler_list` / `scheduler_delete`, surfaced to users via the `/loop` slash command). GrokBuild does **not** call these tools directly — the ACP surface is prompt-only — so it **mirrors** them by observing tool-call activity.
+
+| Piece | Location |
+|-------|----------|
+| Model + parsing | `ScheduledTaskStore.swift` — `ScheduledTask`, `SchedulerToolParsing` (detect/parse scheduler `session/update` payloads), `ScheduledTaskTracker` (accumulates list, correlating `tool_call` rawInput with completing `tool_call_update` rawOutput) |
+| ACP event | `GrokProcess` yields `AcpEvent.schedulerActivity(payload:)` for any `tool_call`/`tool_call_update` whose `_meta."x.ai/tool".name` starts `scheduler_` (or rawOutput `type` starts `scheduler`) |
+| Store | `ChatStore.scheduledTasks` (updated from `schedulerActivity`); actions `refreshScheduledTasks()` (drives `scheduler_list`), `createScheduledTask(interval:prompt:)` (sends `/loop`), `cancelScheduledTask(_:)` (drives `scheduler_delete`) — all via prompts, so they cost a turn |
+| Chat UI | `ChatView.tasksStatusPill` — lists tasks (interval + prompt + next fire), Cancel per task, Refresh Tasks |
+
+`scheduler_list` output is authoritative (replaces the mirror); create/delete update it incrementally. It only reflects activity seen in the live session — tasks made in the grok TUI or another session appear after a refresh. Schedules fire only while the session's grok process is alive (LRU-capped).
+
+**Wire caveats (verified live, grok 0.2.93):** the completing `tool_call_update` carries `rawOutput` but no `_meta`, and `rawOutput.type` is CamelCase (`SchedulerList`), so detection matches `_meta` name **or** a case-insensitive `rawOutput.type` prefix. The `/loop` slash command is handled by the CLI and emits **no** scheduler tool call, so the pill updates on **Refresh** (or when grok schedules via its tool, e.g. natural-language requests).
+
+### Memory (cross-session)
+
+grok owns memory storage, indexing, search, and first-turn injection ([`13-memory.md`](https://docs.x.ai/build/features/memory)). GrokBuild stays thin: it flips the launch flag, browses the files read-only, and appends "Remember" notes.
+
+| Piece | Location |
+|-------|----------|
+| Toggle | `SettingsView` → `.memory` tab (`MemorySettingsPane`), key `grokbuild.memoryEnabled` |
+| Launch flag | `GrokLaunchOptions.experimentalMemory`; `GrokMemoryFlag.argument(noMemory:experimentalMemory:)` resolves the single flag; `ChatStore.restartProcess` sets `experimentalMemory: memoryEnabled`, `noMemory: !memoryEnabled` |
+| Files | `MemoryStore.swift` — enumerate `~/.grok/memory/` (global `MEMORY.md`, `<slug-hash>/MEMORY.md`, `<slug-hash>/sessions/*.md` newest-first); `readContents`, `deleteSessionFile` (session-only guard), `appendGlobalNote` (+ pure `appendingNote`), `revealInFinder` |
+| Browser UI | `MemoryBrowserPanel.swift` — grouped list + read-only preview; copy path / reveal / delete session log (with confirm) |
+| Chat UI | `ChatView.memoryStatusPill` — **shown only while memory is enabled** (hidden when off; label is just "Memory"): Browse Memory Files…, Remember… (writes global note via `ChatStore.remember`), Open Memory Settings |
+
+**Enable/disable is a launch flag, app-scoped** (not `config.toml`), so the grok TUI is unaffected. `--no-memory` has absolute priority in grok, so the app never emits both flags.
+
+**ACP limitation (verified live, grok 0.2.93):** enabling memory registers the read tools `memory_search`/`memory_get` and automatic first-turn recall, but `/remember`, `/flush`, `/dream`, `/memory` are **TUI pager builtins** and are **not** exposed over `grok agent stdio`. So the app writes "Remember" notes by appending directly to global `MEMORY.md` (grok's file watcher reindexes them); flush/dream run **automatically** (session end / pre-compaction / dream gates) or in the grok TUI — the app does not surface buttons for them.
 
 ### Computer Use
 
@@ -490,17 +539,21 @@ OpenAI-compatible provider URLs; not a replacement for grok-native models. Custo
 
 ### Tabs (`SettingsTab`)
 
+Ordered config-first (session config → capabilities → grok ecosystem/inspection → app). `.agents` is the default landing tab (generic Settings gear + initial state; `.app` when an update is pending).
+
 | Tab | Pane | Data source |
 |-----|------|-------------|
-| `.hooks` | Hooks list | `GrokCLIService.listHooks` |
-| `.plugins` | Installed plugins | `listPlugins` |
-| `.marketplace` | Marketplace sources | `listMarketplaceSources` |
-| `.skills` | Discovered skills | `listSkills` |
-| `.mcpServers` | External MCP + health | `listMCPServers` |
-| `.browser` | Browser tools | `BrowserSettingsStore` draft keys |
-| `.computerUse` | Desktop automation | `ComputerUseSettingsStore` draft keys |
+| `.agents` | Discovered agents + **default** session-agent picker (new sessions) | `listAgents`, `grokbuild.selectedAgent` |
 | `.models` | Custom providers | `CustomModelStore` |
 | `.permissions` | Session safety toggles | `GrokSettingsKeys` |
+| `.memory` | Cross-session memory toggle + browser | `grokbuild.memoryEnabled`, `MemoryStore` |
+| `.browser` | Browser tools | `BrowserSettingsStore` draft keys |
+| `.computerUse` | Desktop automation | `ComputerUseSettingsStore` draft keys |
+| `.mcpServers` | External MCP + health | `listMCPServers` |
+| `.skills` | Discovered skills | `listSkills` |
+| `.plugins` | Installed plugins | `listPlugins` |
+| `.marketplace` | Marketplace sources | `listMarketplaceSources` |
+| `.hooks` | Hooks list | `GrokCLIService.listHooks` |
 | `.app` | App + CLI updates | `UpdateScheduler`, `UpdateSettingsStore` |
 
 ### Draft vs applied pattern
@@ -649,9 +702,10 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
-| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.hooks`) |
+| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`) |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
+| `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
@@ -726,12 +780,16 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Permissions UI** | `ChatStore.pendingPermissions`, `MessageBubble` |
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
 | **Per-tab model** | `SavedSessionRecord.model`, `ChatStore.bindTabSession`, `.liveSessionModelChanged` |
+| **Per-tab session agent** | `SavedSessionRecord.agent`, `ChatStore.setSessionAgent` / `effectiveAgentSelection`, `ChatView.agentStatusPill`, `.liveSessionAgentChanged` |
 | **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
 | **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU) |
 | **Session restore at launch** | `ContentView.restorePersistedSessions`, `SessionRestorePolicy`, `SessionTranscriptRecovery`, `ensureSessionStarted` |
 | **Add/remove project** | `WorkspaceStore`, `WorkspacePicker` |
-| **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` |
+| **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
+| **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
+| **Scheduled tasks** | `ScheduledTaskStore.swift`, `ChatStore.scheduledTasks` + refresh/create/cancel, `ChatView.tasksStatusPill`, `AcpEvent.schedulerActivity` |
+| **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatView.memoryStatusPill`, `ChatStore.remember`/`isMemoryEnabled` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Custom models** | `CustomModelStore`, `~/.grok/config.toml` |
 | **Settings tab** | `SettingsView` — search pane struct by tab |
@@ -756,8 +814,11 @@ make test    # Tests/GrokBuildTests/
 
 | File | Covers |
 |------|--------|
-| `SessionPersistenceTests.swift` | Layout/workspace persistence |
-| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip |
+| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override) |
+| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
+| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing |
+| `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
+| `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |
 | `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions |
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |

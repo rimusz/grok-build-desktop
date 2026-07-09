@@ -87,7 +87,6 @@ enum AgentBrowserService {
 
     static func browserMCPConfig(settings: BrowserSettings = BrowserSettingsStore.load()) -> MCPServerConfig? {
         guard settings.enabled,
-              settings.backend == .agentBrowser,
               let bridgeScript = bridgeScriptURL() else {
             return nil
         }
@@ -117,9 +116,6 @@ enum AgentBrowserService {
     }
 
     static func browserToolsConfigurationIssue(settings: BrowserSettings = BrowserSettingsStore.load()) -> String? {
-        guard settings.backend == .agentBrowser else {
-            return "Browser backend is not configured."
-        }
         guard bridgeScriptURL() != nil else {
             return "Browser bridge script is missing."
         }

@@ -93,6 +93,24 @@ final class ChatStore {
     private(set) var tabSessionID: UUID?
     private var tabHasExplicitModel = false
 
+    // MARK: - Session agent (per tab, launched via `--agent`)
+    /// Explicit per-tab session-agent selection id. Empty string with `tabHasExplicitAgent`
+    /// means "grok default"; when `tabHasExplicitAgent` is false the tab follows the global
+    /// default (`grokbuild.selectedAgent`).
+    private(set) var currentAgent: String = ""
+    private var tabHasExplicitAgent = false
+    /// Agents discovered for the current workspace (`grok inspect --json`), loaded lazily for the
+    /// composer agent picker.
+    private(set) var discoveredAgents: [GrokAgentInfo] = []
+    /// ID of the workspace whose agents have been loaded; `nil` means not yet loaded.
+    /// Scoped per workspace so switching projects triggers a fresh load.
+    private var loadedAgentsWorkspaceID: UUID?
+
+    // MARK: - Scheduled tasks (grok `scheduler_*` tools, mirrored by observing ACP tool calls)
+    /// Tasks grok has scheduled, mirrored from observed `scheduler_*` tool activity in this session.
+    private(set) var scheduledTasks: [ScheduledTask] = []
+    private var scheduledTaskTracker = ScheduledTaskTracker()
+
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
 
@@ -140,13 +158,65 @@ final class ChatStore {
         loadWorkspaceReasoningEffort()
     }
 
-    /// Bind this store to a sidebar tab and apply its saved model when present.
-    func bindTabSession(_ id: UUID, savedModel: String?) {
+    /// Bind this store to a sidebar tab and apply its saved model + agent when present.
+    func bindTabSession(_ id: UUID, savedModel: String?, savedAgent: String? = nil) {
         tabSessionID = id
         tabHasExplicitModel = false
+        tabHasExplicitAgent = false
+        currentAgent = defaultAgentSelection
+        if let savedAgent {
+            currentAgent = savedAgent
+            tabHasExplicitAgent = true
+        }
         guard let savedModel = savedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedModel.isEmpty else { return }
         applyTabModel(savedModel)
+    }
+
+    /// Global default session agent from Settings → Agents (`grokbuild.selectedAgent`).
+    private var defaultAgentSelection: String {
+        defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
+    }
+
+    /// The agent this tab will actually launch with: an explicit per-tab override when set,
+    /// otherwise the global default.
+    var effectiveAgentSelection: String {
+        tabHasExplicitAgent ? currentAgent : defaultAgentSelection
+    }
+
+    /// `true` when this tab overrides the global default agent.
+    var hasExplicitAgent: Bool { tabHasExplicitAgent }
+
+    /// Display label for the tab's effective session agent.
+    var effectiveAgentDisplayName: String {
+        GrokAgentProfiles.displayName(for: effectiveAgentSelection)
+    }
+
+    /// The value to persist for this tab (nil when it follows the global default).
+    var persistedAgentSelection: String? {
+        tabHasExplicitAgent ? currentAgent : nil
+    }
+
+    /// Set this session's agent and restart its grok process (agents can only change at launch).
+    func setSessionAgent(_ selection: String) async {
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        // No-op when this tab already explicitly uses the chosen agent.
+        if tabHasExplicitAgent, trimmed == currentAgent { return }
+        currentAgent = trimmed
+        tabHasExplicitAgent = true
+        notifyAgentChanged()
+        guard currentWorkspace != nil else { return }
+        await restartProcess(resumeSessionID: grokSessionId ?? savedGrokSessionID)
+        appendSystemNote("Switched session agent to \(GrokAgentProfiles.displayName(for: trimmed)).")
+    }
+
+    /// Load agents discovered for the current workspace (reloads when the workspace changes).
+    func loadDiscoveredAgentsIfNeeded() async {
+        guard let workspaceID = currentWorkspace?.id,
+              loadedAgentsWorkspaceID != workspaceID else { return }
+        loadedAgentsWorkspaceID = workspaceID
+        let agents = (try? await GrokCLIService().listAgents(cwd: currentWorkspace?.path)) ?? []
+        discoveredAgents = agents
     }
 
     /// Reload per-project reasoning effort only (model stays per tab).
@@ -326,8 +396,10 @@ final class ChatStore {
             ComputerUseService.computerUseMCPConfig(settings: computerUseSettings)
         ].compactMap { $0 }
         let opts = GrokLaunchOptions(
-            agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
-            noMemory: settings.noMemory,
+            agent: GrokAgentProfiles.launchArgument(for: effectiveAgentSelection),
+            // Memory is a single app-scoped toggle: on → `--experimental-memory`, off → `--no-memory`.
+            noMemory: !settings.memoryEnabled,
+            experimentalMemory: settings.memoryEnabled,
             permissionMode: settings.permissionMode,
             reasoningEffort: reasoningEffortForLaunch,
             model: modelForLaunch.isEmpty ? nil : modelForLaunch,
@@ -429,6 +501,58 @@ final class ChatStore {
     @discardableResult
     func clearGoal() async -> Bool {
         await send("/goal clear")
+    }
+
+    // MARK: - Scheduled tasks
+
+    /// True when grok advertises the `/loop` command (scheduling is available in this session).
+    var hasLoopCommand: Bool {
+        availableSlashCommands.contains { $0.name == "loop" }
+    }
+
+    /// Ask grok to enumerate its scheduled tasks (drives `scheduler_list`); the reply's tool
+    /// output refreshes ``scheduledTasks`` authoritatively.
+    @discardableResult
+    func refreshScheduledTasks() async -> Bool {
+        await send("List all my scheduled tasks (use scheduler_list) and do nothing else.")
+    }
+
+    /// Schedule a recurring prompt via grok's `/loop` command.
+    @discardableResult
+    func createScheduledTask(interval: String, prompt: String) async -> Bool {
+        let trimmedInterval = interval.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInterval.isEmpty, !trimmedPrompt.isEmpty else { return false }
+        return await send("/loop \(trimmedInterval) \(trimmedPrompt)")
+    }
+
+    /// Ask grok to cancel a scheduled task by id (drives `scheduler_delete`).
+    @discardableResult
+    func cancelScheduledTask(_ id: String) async -> Bool {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("Cancel the scheduled task with id \(trimmed) (use scheduler_delete) and do nothing else.")
+    }
+
+    // MARK: - Memory
+
+    /// Save a note to grok's global memory (`~/.grok/memory/MEMORY.md`). grok's file watcher
+    /// reindexes it on the next memory search, so it becomes recallable in future sessions.
+    ///
+    /// This writes the file directly rather than sending `/remember`: that slash command is a
+    /// TUI-only pager builtin and is not exposed over `grok agent stdio` (ACP).
+    @discardableResult
+    func remember(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            let url = try MemoryStore.appendGlobalNote(trimmed)
+            appendSystemNote("Remembered — saved to \(url.path).")
+            return true
+        } catch {
+            lastError = "Couldn't save memory note: \(error.localizedDescription)"
+            return false
+        }
     }
 
     private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
@@ -954,6 +1078,9 @@ final class ChatStore {
             }
         case .availableCommands(let commands):
             availableSlashCommands = commands
+        case .schedulerActivity(let payload):
+            scheduledTaskTracker.apply(update: payload)
+            scheduledTasks = scheduledTaskTracker.tasks
         case .permissionRequest(let req):
             if isYolo {
                 // Auto-approve in YOLO mode (prefer allow_always or first allow)
@@ -1071,17 +1198,27 @@ final class ChatStore {
         NotificationCenter.default.post(name: .liveSessionModelChanged, object: self)
     }
 
+    private func notifyAgentChanged() {
+        NotificationCenter.default.post(name: .liveSessionAgentChanged, object: self)
+    }
+
     private func loadPermissionSettings() -> GrokPermissionSettings {
         GrokPermissionSettings(
             permissionMode: defaults.string(forKey: GrokSettingsKeys.permissionMode) ?? GrokPermissionSettings.defaults.permissionMode,
             sandboxProfile: defaults.string(forKey: GrokSettingsKeys.sandboxProfile) ?? "",
             reasoningEffort: workspaceReasoningEffort,
-            noMemory: defaults.bool(forKey: GrokSettingsKeys.noMemory),
             disableWebSearch: defaults.bool(forKey: GrokSettingsKeys.disableWebSearch),
             noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
             allowRules: defaults.string(forKey: GrokSettingsKeys.allowRules) ?? "",
-            denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? ""
+            denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? "",
+            selectedAgent: defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? "",
+            memoryEnabled: defaults.bool(forKey: GrokSettingsKeys.memoryEnabled)
         )
+    }
+
+    /// Whether cross-session memory is enabled for new/restarted sessions (Settings → Memory).
+    var isMemoryEnabled: Bool {
+        defaults.bool(forKey: GrokSettingsKeys.memoryEnabled)
     }
 
     private func lineList(_ text: String) -> [String] {

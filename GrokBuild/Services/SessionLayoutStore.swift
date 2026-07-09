@@ -7,6 +7,9 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
     var title: String?
     /// Per-tab model id; matches grok `session/set_model` for this tab's process.
     var model: String?
+    /// Per-tab session-agent selection id (see `GrokAgentProfiles`). `nil` means the tab has no
+    /// explicit override and follows the global default (`grokbuild.selectedAgent`).
+    var agent: String?
     var lastAccessed: Date
 
     init(
@@ -15,6 +18,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         grokSessionID: String? = nil,
         title: String? = nil,
         model: String? = nil,
+        agent: String? = nil,
         lastAccessed: Date
     ) {
         self.id = id
@@ -22,6 +26,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         self.grokSessionID = grokSessionID
         self.title = title
         self.model = model
+        self.agent = agent
         self.lastAccessed = lastAccessed
     }
 
@@ -32,6 +37,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         grokSessionID = try container.decodeIfPresent(String.self, forKey: .grokSessionID)
         title = try container.decodeIfPresent(String.self, forKey: .title)
         model = try container.decodeIfPresent(String.self, forKey: .model)
+        agent = try container.decodeIfPresent(String.self, forKey: .agent)
         lastAccessed = try container.decode(Date.self, forKey: .lastAccessed)
     }
 
@@ -41,6 +47,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         case grokSessionID
         case title
         case model
+        case agent
         case lastAccessed
     }
 }

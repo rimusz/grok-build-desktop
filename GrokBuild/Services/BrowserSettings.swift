@@ -1,17 +1,5 @@
 import Foundation
 
-enum BrowserBackendID: String, CaseIterable, Identifiable {
-    case agentBrowser = "agent-browser"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .agentBrowser: return "agent-browser"
-        }
-    }
-}
-
 enum ExternalBrowserAppID: String, CaseIterable, Identifiable {
     case chrome
     case brave
@@ -67,7 +55,7 @@ enum BrowserRuntimeMode: String, CaseIterable, Identifiable {
 
 /// Quick-setup presets for common browser-automation targets. Each preset returns
 /// settings tuned for that target (runtime mode, app, CDP URL, session name, visibility),
-/// leaving `enabled` and `backend` untouched so the toggle stays under user control.
+/// leaving `enabled` untouched so the toggle stays under user control.
 enum BrowserPreset: String, CaseIterable, Identifiable {
     case grokCom
 
@@ -92,7 +80,7 @@ enum BrowserPreset: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Applies the preset to `settings` without changing `enabled` or `backend`.
+    /// Applies the preset to `settings` without changing `enabled`.
     func applied(to settings: BrowserSettings) -> BrowserSettings {
         var updated = settings
         switch self {
@@ -111,7 +99,6 @@ enum BrowserPreset: String, CaseIterable, Identifiable {
 
 struct BrowserSettings: Sendable, Equatable {
     var enabled: Bool
-    var backend: BrowserBackendID
     var runtimeMode: BrowserRuntimeMode
     var cdpURL: String
     var profileName: String
@@ -122,7 +109,6 @@ struct BrowserSettings: Sendable, Equatable {
 
     init(
         enabled: Bool,
-        backend: BrowserBackendID,
         runtimeMode: BrowserRuntimeMode = .managed,
         cdpURL: String,
         profileName: String,
@@ -132,7 +118,6 @@ struct BrowserSettings: Sendable, Equatable {
         autoStartExternalBrowser: Bool = true
     ) {
         self.enabled = enabled
-        self.backend = backend
         self.runtimeMode = runtimeMode
         self.cdpURL = cdpURL
         self.profileName = profileName
@@ -144,7 +129,6 @@ struct BrowserSettings: Sendable, Equatable {
 
     static let defaults = BrowserSettings(
         enabled: false,
-        backend: .agentBrowser,
         runtimeMode: .managed,
         cdpURL: "",
         profileName: "",
@@ -157,7 +141,6 @@ struct BrowserSettings: Sendable, Equatable {
 
 enum BrowserSettingsKeys {
     static let enabled = "grokbuild.browser.enabled"
-    static let backend = "grokbuild.browser.backend"
     static let runtimeMode = "grokbuild.browser.runtimeMode"
     static let cdpURL = "grokbuild.browser.cdpURL"
     static let profileName = "grokbuild.browser.profileName"
@@ -166,7 +149,6 @@ enum BrowserSettingsKeys {
     static let externalBrowserAppPath = "grokbuild.browser.externalBrowserAppPath"
     static let autoStartExternalBrowser = "grokbuild.browser.autoStartExternalBrowser"
     static let appliedEnabled = "grokbuild.browser.applied.enabled"
-    static let appliedBackend = "grokbuild.browser.applied.backend"
     static let appliedRuntimeMode = "grokbuild.browser.applied.runtimeMode"
     static let appliedCDPURL = "grokbuild.browser.applied.cdpURL"
     static let appliedProfileName = "grokbuild.browser.applied.profileName"
@@ -179,8 +161,6 @@ enum BrowserSettingsKeys {
 enum BrowserSettingsStore {
     static func load() -> BrowserSettings {
         let defaults = UserDefaults.standard
-        let backendRaw = defaults.string(forKey: BrowserSettingsKeys.backend)
-            ?? BrowserSettings.defaults.backend.rawValue
         let runtimeModeRaw = defaults.string(forKey: BrowserSettingsKeys.runtimeMode)
             ?? BrowserSettings.defaults.runtimeMode.rawValue
         let externalBrowserRaw = defaults.string(forKey: BrowserSettingsKeys.externalBrowserAppID)
@@ -189,7 +169,6 @@ enum BrowserSettingsStore {
         return BrowserSettings(
             enabled: defaults.object(forKey: BrowserSettingsKeys.enabled) as? Bool
                 ?? BrowserSettings.defaults.enabled,
-            backend: BrowserBackendID(rawValue: backendRaw) ?? BrowserSettings.defaults.backend,
             runtimeMode: BrowserRuntimeMode(rawValue: runtimeModeRaw) ?? BrowserSettings.defaults.runtimeMode,
             cdpURL: defaults.string(forKey: BrowserSettingsKeys.cdpURL)
                 ?? BrowserSettings.defaults.cdpURL,
@@ -209,7 +188,6 @@ enum BrowserSettingsStore {
     static func save(_ settings: BrowserSettings) {
         let defaults = UserDefaults.standard
         defaults.set(settings.enabled, forKey: BrowserSettingsKeys.enabled)
-        defaults.set(settings.backend.rawValue, forKey: BrowserSettingsKeys.backend)
         defaults.set(settings.runtimeMode.rawValue, forKey: BrowserSettingsKeys.runtimeMode)
         defaults.set(settings.cdpURL, forKey: BrowserSettingsKeys.cdpURL)
         defaults.set(settings.profileName, forKey: BrowserSettingsKeys.profileName)
@@ -225,8 +203,6 @@ enum BrowserSettingsStore {
             return load()
         }
 
-        let backendRaw = defaults.string(forKey: BrowserSettingsKeys.appliedBackend)
-            ?? BrowserSettings.defaults.backend.rawValue
         let runtimeModeRaw = defaults.string(forKey: BrowserSettingsKeys.appliedRuntimeMode)
             ?? BrowserSettings.defaults.runtimeMode.rawValue
         let externalBrowserRaw = defaults.string(forKey: BrowserSettingsKeys.appliedExternalBrowserAppID)
@@ -235,7 +211,6 @@ enum BrowserSettingsStore {
         return BrowserSettings(
             enabled: defaults.object(forKey: BrowserSettingsKeys.appliedEnabled) as? Bool
                 ?? BrowserSettings.defaults.enabled,
-            backend: BrowserBackendID(rawValue: backendRaw) ?? BrowserSettings.defaults.backend,
             runtimeMode: BrowserRuntimeMode(rawValue: runtimeModeRaw) ?? BrowserSettings.defaults.runtimeMode,
             cdpURL: defaults.string(forKey: BrowserSettingsKeys.appliedCDPURL)
                 ?? BrowserSettings.defaults.cdpURL,
@@ -255,7 +230,6 @@ enum BrowserSettingsStore {
     static func saveApplied(_ settings: BrowserSettings) {
         let defaults = UserDefaults.standard
         defaults.set(settings.enabled, forKey: BrowserSettingsKeys.appliedEnabled)
-        defaults.set(settings.backend.rawValue, forKey: BrowserSettingsKeys.appliedBackend)
         defaults.set(settings.runtimeMode.rawValue, forKey: BrowserSettingsKeys.appliedRuntimeMode)
         defaults.set(settings.cdpURL, forKey: BrowserSettingsKeys.appliedCDPURL)
         defaults.set(settings.profileName, forKey: BrowserSettingsKeys.appliedProfileName)

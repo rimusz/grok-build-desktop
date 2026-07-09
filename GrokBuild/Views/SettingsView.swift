@@ -3,15 +3,17 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum SettingsTab: Hashable {
-    case hooks
-    case plugins
-    case marketplace
-    case skills
-    case mcpServers
-    case browser
-    case computerUse
+    case agents
     case models
     case permissions
+    case memory
+    case browser
+    case computerUse
+    case mcpServers
+    case skills
+    case plugins
+    case marketplace
+    case hooks
     case app
 }
 
@@ -39,12 +41,70 @@ struct SettingsView: View {
             Divider()
 
             TabView(selection: $selectedTab) {
-                HooksSettingsPane(workspace: store.currentWorkspace)
+                AgentsSettingsPane(workspace: store.currentWorkspace) {
+                    Task { await store.reloadConfiguration() }
+                }
+                .settingsPaneColumn()
+                .tabItem {
+                    Label("Agents", systemImage: "person.2.badge.gearshape")
+                }
+                .tag(SettingsTab.agents)
+
+                CustomModelsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Models", systemImage: "cpu")
+                }
+                .tag(SettingsTab.models)
+
+                PermissionsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Permissions", systemImage: "lock.shield")
+                }
+                .tag(SettingsTab.permissions)
+
+                MemorySettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Memory", systemImage: "brain")
+                }
+                .tag(SettingsTab.memory)
+
+                BrowserSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Browser", systemImage: "globe")
+                }
+                .tag(SettingsTab.browser)
+
+                ComputerUseSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Computer Use", systemImage: "desktopcomputer")
+                }
+                .tag(SettingsTab.computerUse)
+
+                MCPSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .settingsPaneColumn()
+                .tabItem {
+                    Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .tag(SettingsTab.mcpServers)
+
+                SkillsSettingsPane(workspace: store.currentWorkspace)
                     .settingsPaneColumn()
                     .tabItem {
-                        Label("Hooks", systemImage: "curlybraces")
+                        Label("Skills", systemImage: "wand.and.stars")
                     }
-                    .tag(SettingsTab.hooks)
+                    .tag(SettingsTab.skills)
 
                 PluginsSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -64,53 +124,12 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.marketplace)
 
-                SkillsSettingsPane(workspace: store.currentWorkspace)
+                HooksSettingsPane(workspace: store.currentWorkspace)
                     .settingsPaneColumn()
                     .tabItem {
-                        Label("Skills", systemImage: "wand.and.stars")
+                        Label("Hooks", systemImage: "curlybraces")
                     }
-                    .tag(SettingsTab.skills)
-
-                MCPSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-                .tag(SettingsTab.mcpServers)
-
-                BrowserSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Browser", systemImage: "globe")
-                }
-                .tag(SettingsTab.browser)
-
-                ComputerUseSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Computer Use", systemImage: "desktopcomputer")
-                }
-                .tag(SettingsTab.computerUse)
-
-                CustomModelsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Models", systemImage: "cpu")
-                }
-                .tag(SettingsTab.models)
-
-                PermissionsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Permissions", systemImage: "lock.shield")
-                }
-                .tag(SettingsTab.permissions)
+                    .tag(SettingsTab.hooks)
 
                 AppUpdatesSettingsPane()
                 .tabItem {
@@ -178,7 +197,6 @@ private struct BrowserSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
     @AppStorage(BrowserSettingsKeys.enabled) private var enabled = BrowserSettings.defaults.enabled
-    @AppStorage(BrowserSettingsKeys.backend) private var backend = BrowserSettings.defaults.backend.rawValue
     @AppStorage(BrowserSettingsKeys.runtimeMode) private var runtimeMode = BrowserSettings.defaults.runtimeMode.rawValue
     @AppStorage(BrowserSettingsKeys.cdpURL) private var cdpURL = BrowserSettings.defaults.cdpURL
     @AppStorage(BrowserSettingsKeys.profileName) private var profileName = BrowserSettings.defaults.profileName
@@ -265,13 +283,7 @@ private struct BrowserSettingsPane: View {
 
                 Divider()
 
-                settingRow("Backend") {
-                    Text(BrowserBackendID(rawValue: backend)?.displayName ?? backend)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 190, alignment: .leading)
-                }
-
-                Text("For the normal setup: install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
+                Text("Install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -758,7 +770,6 @@ private struct BrowserSettingsPane: View {
     private var currentSettings: BrowserSettings {
         BrowserSettings(
             enabled: enabled,
-            backend: BrowserBackendID(rawValue: backend) ?? BrowserSettings.defaults.backend,
             runtimeMode: selectedRuntimeMode,
             cdpURL: cdpURL,
             profileName: profileName,
@@ -1515,6 +1526,147 @@ private struct SkillsSettingsPane: View {
     private func sourceLabel(for skill: GrokSkillInfo) -> String {
         if !skill.pluginName.isEmpty { return "plugin: \(skill.pluginName)" }
         return skill.sourceType.isEmpty ? "unknown" : skill.sourceType
+    }
+}
+
+private struct AgentsSettingsPane: View {
+    let workspace: Workspace?
+    let onConfigurationChanged: () -> Void
+
+    private let service = GrokCLIService()
+    @AppStorage(GrokSettingsKeys.selectedAgent) private var selectedAgent = ""
+    @State private var appliedAgent = UserDefaults.standard.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
+    @State private var agents: [GrokAgentInfo] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private var hasPendingChanges: Bool { selectedAgent != appliedAgent }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Agents",
+                    subtitle: "Pick the agent grok uses for new sessions and browse the agents discovered for this project.",
+                    systemImage: "person.2.badge.gearshape",
+                    color: .teal
+                )
+                Button("Refresh") {
+                    Task { await refresh() }
+                }
+            }
+
+            sessionAgentCard
+
+            Text("Discovered agents (`grok inspect --json`)")
+                .font(.headline)
+
+            List {
+                ForEach(agents) { agent in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(agent.name)
+                                .font(.headline)
+                            Spacer()
+                            Text(sourceLabel(for: agent))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        if !agent.description.isEmpty {
+                            Text(agent.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(5)
+                        }
+                        if !agent.sourcePath.isEmpty {
+                            Text(agent.sourcePath)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .overlay {
+                if agents.isEmpty && !isLoading {
+                    ContentUnavailableView("No Agents", systemImage: "person.2.slash", description: Text("Grok did not report any agents for this project."))
+                }
+            }
+
+            if isLoading { ProgressView() }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .task { await refresh() }
+    }
+
+    private var sessionAgentCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Default agent for new sessions")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $selectedAgent) {
+                    ForEach(GrokAgentProfiles.builtInOptions) { option in
+                        Text(option.title).tag(option.id)
+                    }
+                    if !discoveredAgentNames.isEmpty {
+                        Section("Discovered") {
+                            ForEach(discoveredAgentNames, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 240)
+            }
+
+            Text("Passed to `grok --agent` when a **new** session starts. **Default** uses grok's standard agent; pick a discovered agent by name to run it as the main agent instead. Each open session also has its own agent picker in the chat status bar — switch it there to override this default per session. Discovered names are advanced (most are subagents meant to be spawned, not run as the main agent).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+                Button("Save Default & Apply to Current") {
+                    appliedAgent = selectedAgent
+                    onConfigurationChanged()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasPendingChanges)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.teal.opacity(hasPendingChanges ? 0.08 : 0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.teal.opacity(hasPendingChanges ? 0.18 : 0.10)))
+    }
+
+    /// Discovered names that are not already surfaced as the built-in options.
+    private var discoveredAgentNames: [String] {
+        agents.map(\.name).filter { name in !GrokAgentProfiles.builtInOptions.contains { $0.id == name } }
+    }
+
+    private func refresh() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            agents = try await service.listAgents(cwd: workspace?.path)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func sourceLabel(for agent: GrokAgentInfo) -> String {
+        if !agent.pluginName.isEmpty { return "plugin: \(agent.pluginName)" }
+        return agent.sourceType.isEmpty ? "unknown" : agent.sourceType
     }
 }
 
@@ -3826,7 +3978,6 @@ private struct PermissionsSettingsPane: View {
     @AppStorage(GrokSettingsKeys.permissionMode) private var permissionMode = GrokPermissionSettings.defaults.permissionMode
     @AppStorage(GrokSettingsKeys.sandboxProfile) private var sandboxProfile = GrokPermissionSettings.defaults.sandboxProfile
     @AppStorage(GrokSettingsKeys.reasoningEffort) private var reasoningEffort = GrokPermissionSettings.defaults.reasoningEffort
-    @AppStorage(GrokSettingsKeys.noMemory) private var noMemory = GrokPermissionSettings.defaults.noMemory
     @AppStorage(GrokSettingsKeys.disableWebSearch) private var disableWebSearch = GrokPermissionSettings.defaults.disableWebSearch
     @AppStorage(GrokSettingsKeys.noSubagents) private var noSubagents = GrokPermissionSettings.defaults.noSubagents
     @AppStorage(GrokSettingsKeys.allowRules) private var allowRules = GrokPermissionSettings.defaults.allowRules
@@ -3918,8 +4069,6 @@ private struct PermissionsSettingsPane: View {
     private var safetyTogglesCard: some View {
         settingsCard(title: "Session Capabilities", systemImage: "switch.2") {
             VStack(alignment: .leading, spacing: 12) {
-                permissionToggle("Disable memory for new sessions", subtitle: "Start new sessions without using saved Grok memory.", isOn: $noMemory)
-                Divider()
                 permissionToggle("Disable web search tools", subtitle: "Prevent Grok from using web search in new sessions.", isOn: $disableWebSearch)
                 Divider()
                 permissionToggle("Disable subagents", subtitle: "Keep work inside the main Grok agent only.", isOn: $noSubagents)
@@ -4040,6 +4189,201 @@ private struct PermissionsSettingsPane: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.25)))
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct MemorySettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    @AppStorage(GrokSettingsKeys.memoryEnabled) private var memoryEnabled = GrokPermissionSettings.defaults.memoryEnabled
+    @State private var appliedMemoryEnabled = UserDefaults.standard.bool(forKey: GrokSettingsKeys.memoryEnabled)
+    @State private var showBrowser = false
+    @State private var showRemember = false
+    @State private var rememberText = ""
+    @State private var statusMessage: String?
+
+    private var hasPendingChanges: Bool { memoryEnabled != appliedMemoryEnabled }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                enableCard
+                actionsCard
+                infoCard
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $showBrowser) {
+            MemoryBrowserPanel()
+        }
+        .sheet(isPresented: $showRemember) {
+            rememberSheet
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "brain")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.pink)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.pink.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Memory")
+                    .font(.title3.weight(.semibold))
+                Text("Let Grok recall facts, decisions, and patterns across sessions. Experimental and off by default.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(memoryEnabled ? "On" : "Off")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill((memoryEnabled ? Color.pink : Color.secondary).opacity(0.14)))
+                .foregroundStyle(memoryEnabled ? Color.pink : Color.secondary)
+        }
+    }
+
+    private var enableCard: some View {
+        settingsCard(title: "Cross-Session Memory", systemImage: "brain.head.profile") {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $memoryEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable memory (experimental)")
+                            .font(.callout.weight(.medium))
+                        Text("Launches new/restarted sessions with `--experimental-memory`; leaving it off passes `--no-memory`.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Text("Grok stores memory as Markdown under `\(MemoryStore.baseURL.path)` and searches it automatically on the first turn of a session. This is an app-scoped launch flag — it does not change your `~/.grok/config.toml`, so the grok TUI is unaffected.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Spacer()
+                    Button("Apply and Restart Grok") {
+                        appliedMemoryEnabled = memoryEnabled
+                        onConfigurationChanged()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!hasPendingChanges)
+                }
+            }
+        }
+    }
+
+    private var actionsCard: some View {
+        settingsCard(title: "Manage Memory", systemImage: "tray.full") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        showBrowser = true
+                    } label: {
+                        Label("Browse Memory Files…", systemImage: "folder")
+                    }
+                    Button {
+                        rememberText = ""
+                        showRemember = true
+                    } label: {
+                        Label("Remember…", systemImage: "text.badge.plus")
+                    }
+                    .disabled(!memoryEnabled)
+                    Spacer()
+                }
+
+                if let statusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+
+                Text("**Remember** appends a note to your global `MEMORY.md`; Grok reindexes it on the next memory search. Enable memory first so it becomes searchable.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var infoCard: some View {
+        settingsCard(title: "Flush & Consolidate", systemImage: "sparkles") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Rich capture (`/flush`) and consolidation (`/dream`) are grok TUI commands and are not exposed to this app over the agent protocol. They still run **automatically**: Grok saves a session summary when a session ends, flushes important context before compaction, and periodically consolidates logs (Dream) once enough sessions accumulate.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("To flush or consolidate on demand, run `/flush` or `/dream` in the grok TUI.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var rememberSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Remember a Note")
+                .font(.headline)
+            Text("Saved to your global memory (`\(MemoryStore.globalMemoryURL.path)`).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $rememberText)
+                .font(.body)
+                .frame(minWidth: 380, minHeight: 120)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
+            HStack {
+                Spacer()
+                Button("Cancel") { showRemember = false }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save") { saveRemember() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(rememberText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func saveRemember() {
+        let text = rememberText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        do {
+            let url = try MemoryStore.appendGlobalNote(text)
+            statusMessage = "Saved to \(url.path)."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+        showRemember = false
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.6)))
     }
 }
 

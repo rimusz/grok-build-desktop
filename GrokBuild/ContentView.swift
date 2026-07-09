@@ -27,7 +27,7 @@ struct ContentView: View {
 
     @State private var showPicker = false
     @State private var showSettings = false
-    @State private var selectedSettingsTab: SettingsTab = .hooks
+    @State private var selectedSettingsTab: SettingsTab = .agents
     @State private var showSessions = false
     @State private var showPreview = false
     @State private var gitCheckoutRequest: GitCheckoutRequest?
@@ -115,7 +115,7 @@ struct ContentView: View {
                 onSwitchBranch: { gitCheckoutRequest = GitCheckoutRequest(project: $0) },
                 onCreateWorktree: { gitCheckoutRequest = GitCheckoutRequest(project: $0, focusCreateWorktree: true) },
                 onSessionDisclosureChanged: { persistSessionLayout() },
-                onOpenSettings: { openSettings(tab: .hooks) },
+                onOpenSettings: { openSettings(tab: .agents) },
                 isSettingsSelected: showSettings
             )
             .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
@@ -146,6 +146,8 @@ struct ContentView: View {
                         onToggleComputerUse: { toggleComputerUseFromChat() },
                         onOpenBrowserSettings: { openSettings(tab: .browser) },
                         onOpenComputerUseSettings: { openSettings(tab: .computerUse) },
+                        onOpenAgentSettings: { openSettings(tab: .agents) },
+                        onOpenMemorySettings: { openSettings(tab: .memory) },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)
@@ -566,6 +568,7 @@ struct ContentView: View {
                     grokSessionID: grokSessionID,
                     title: sessionTitle(for: session),
                     model: session.store.currentModel,
+                    agent: session.store.persistedAgentSelection,
                     lastAccessed: existing?.lastAccessed ?? Date()
                 )
             )
@@ -670,7 +673,7 @@ struct ContentView: View {
             )
             store.prepare(workspace: workspace, savedGrokSessionID: record.grokSessionID)
             let legacyModel = record.model ?? SessionLayoutStore.agentSettings(for: workspace.id).model
-            store.bindTabSession(record.id, savedModel: legacyModel)
+            store.bindTabSession(record.id, savedModel: legacyModel, savedAgent: record.agent)
             store.restorePersistedMessages(
                 for: record.id,
                 grokSessionID: record.grokSessionID,
@@ -941,9 +944,10 @@ struct ContentView: View {
             session.store.mergePersistedMessages(SessionMessageStore.messages(for: id))
         }
         purgeEmptySessions(in: session.workspace.id, keeping: id)
-        let savedModel = sessionLayout.records.first(where: { $0.id == id })?.model
+        let savedRecord = sessionLayout.records.first(where: { $0.id == id })
+        let savedModel = savedRecord?.model
             ?? SessionLayoutStore.agentSettings(for: session.workspace.id).model
-        session.store.bindTabSession(id, savedModel: savedModel)
+        session.store.bindTabSession(id, savedModel: savedModel, savedAgent: savedRecord?.agent)
         session.store.syncWorkspaceReasoningEffortFromStorage()
         session.store.syncTabModelToLiveProcessIfNeeded()
         selectedSessionID = id
@@ -1196,6 +1200,7 @@ extension Notification.Name {
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
     static let liveSessionMessagesChanged = Notification.Name("liveSessionMessagesChanged")
     static let liveSessionModelChanged = Notification.Name("liveSessionModelChanged")
+    static let liveSessionAgentChanged = Notification.Name("liveSessionAgentChanged")
     static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
     static let grokBuildUpdateAvailable = Notification.Name("grokBuildUpdateAvailable")
     static let grokBuildUpdateStateChanged = Notification.Name("grokBuildUpdateStateChanged")
@@ -1260,6 +1265,9 @@ private struct ContentViewNotificationHandlers: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionModelChanged)) { _ in
                 onPersistSessionLayout(true)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .liveSessionAgentChanged)) { _ in
+                onPersistSessionLayout(true)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
                 handlePrepareForShutdown()
             }
@@ -1313,7 +1321,7 @@ private struct StatusMenuNotificationHandlers: ViewModifier {
                 Task { await activeStore.retryConnection() }
             }
             .onReceive(NotificationCenter.default.publisher(for: .openSettingsRequested)) { _ in
-                let tab: SettingsTab = UpdateScheduler.hasAnyActionableUpdate ? .app : .hooks
+                let tab: SettingsTab = UpdateScheduler.hasAnyActionableUpdate ? .app : .agents
                 openSettings(tab)
             }
     }

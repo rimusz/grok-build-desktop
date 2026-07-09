@@ -555,6 +555,59 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.model, "grok-build")
     }
 
+    // MARK: - Per-tab agent
+
+    func testSavedSessionRecordDecodesWithoutAgent() throws {
+        let record = SavedSessionRecord(id: UUID(), workspaceID: UUID(), lastAccessed: Date())
+        let decoded = try JSONDecoder().decode(
+            SavedSessionRecord.self,
+            from: JSONEncoder().encode(record)
+        )
+        XCTAssertNil(decoded.agent)
+    }
+
+    func testSavedSessionRecordRoundTripsAgent() throws {
+        let record = SavedSessionRecord(
+            id: UUID(),
+            workspaceID: UUID(),
+            grokSessionID: "abc",
+            title: "Tab",
+            model: "grok-build",
+            agent: "explore",
+            lastAccessed: Date()
+        )
+        let decoded = try JSONDecoder().decode(SavedSessionRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(decoded.agent, "explore")
+    }
+
+    @MainActor
+    func testChatStoreTabFollowsGlobalDefaultAgentUntilOverridden() {
+        let defaults = UserDefaults.standard
+        let previous = defaults.string(forKey: GrokSettingsKeys.selectedAgent)
+        defaults.set("explore", forKey: GrokSettingsKeys.selectedAgent)
+        defer {
+            if let previous { defaults.set(previous, forKey: GrokSettingsKeys.selectedAgent) }
+            else { defaults.removeObject(forKey: GrokSettingsKeys.selectedAgent) }
+        }
+
+        let store = ChatStore()
+        // New tab (no saved agent) follows the global default and persists nothing.
+        store.bindTabSession(UUID(), savedModel: nil, savedAgent: nil)
+        XCTAssertFalse(store.hasExplicitAgent)
+        XCTAssertEqual(store.effectiveAgentSelection, "explore")
+        XCTAssertNil(store.persistedAgentSelection)
+    }
+
+    @MainActor
+    func testChatStoreTabRestoresExplicitSavedAgent() {
+        let store = ChatStore()
+        store.bindTabSession(UUID(), savedModel: nil, savedAgent: "researcher")
+        XCTAssertTrue(store.hasExplicitAgent)
+        XCTAssertEqual(store.effectiveAgentSelection, "researcher")
+        XCTAssertEqual(store.persistedAgentSelection, "researcher")
+        XCTAssertEqual(store.effectiveAgentDisplayName, "researcher")
+    }
+
     func testSessionTabModelPolicyPrefersTabOverWorkspaceDefault() {
         XCTAssertEqual(
             SessionTabModelPolicy.resolvedModel(
