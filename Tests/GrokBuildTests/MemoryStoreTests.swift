@@ -121,7 +121,7 @@ final class MemoryStoreTests: XCTestCase {
         XCTAssertLessThan(newRange.lowerBound, otherRange.lowerBound, "new note should appear before ## Other Section")
     }
 
-
+    func testAppendGlobalNoteCreatesFileAndReindexablePath() throws {
         let url = tempBase.appendingPathComponent("MEMORY.md")
         let written = try MemoryStore.appendGlobalNote("staging uses eu-west", to: url)
         XCTAssertEqual(written, url)
