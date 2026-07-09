@@ -34,17 +34,17 @@ UpdateChecker.checkGrokCLI()      // grok update --check --json
 
 Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `permissionMode`, `selectedAgent`, etc. Passed to `GrokLaunchOptions` in `ChatStore`.
 
-## Session agent (`--agent`)
+## Session agent (`--agent`) — per tab
 
-- `grokbuild.selectedAgent` (Settings → **Agents**) → `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` → `grok --agent`.
-- `""` = grok default (no flag); `"grokbuild-web"` = bundled `Resources/Agents/grokbuild-web.md`; any other value = discovered agent name.
+- **Per session tab.** Each tab launches with `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` → `grok --agent`.
+- **Resolution:** explicit per-tab override (`SavedSessionRecord.agent`, set via `ChatStore.setSessionAgent`) when present, else the global default `grokbuild.selectedAgent` (Settings → **Agents** = default for **new** sessions). Non-overridden tabs adopt the default on next launch; overridden tabs keep their choice. Only overridden tabs persist a value (`persistedAgentSelection`).
+- **Values:** `""` = grok default (no flag); any other value = discovered agent name.
+- **UI:** `ChatView.agentStatusPill` menu (built-ins from `GrokAgentProfiles.builtInOptions` + discovered via `ChatStore.loadDiscoveredAgentsIfNeeded`). Picking one calls `setSessionAgent` → **restarts that tab's grok** (agents change only at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`.
 - Discover agents via `GrokCLIService.listAgents(cwd:)` (parses `agents` from `grok inspect --json`). Keep this thin — grok owns agents/personas.
 
 ## Browser backend
 
-`BrowserBackendID` in `BrowserSettings.swift`:
-- `grok-native` — grok's built-in `browser_tab` / `browser_network_details`; no MCP injected. `browserMCPConfig` returns nil; `nativeBrowserEnvOverrides` pins `CHROME_PATH` via `GrokLaunchOptions.envOverrides`. Version-gated by `GrokCapabilities.supportsNativeBrowserTools` (+ per-account `grok_build_access_gate`).
-- `agent-browser` — bundled `agent-browser` CLI as an stdio MCP server (`grokbuild-browser`); managed/external Chromium over CDP.
+Browser tools are provided by the bundled `agent-browser` CLI (`BrowserSettings.swift`), exposed to grok as an stdio MCP server (`grokbuild-browser`) via `AgentBrowserService.browserMCPConfig`; managed or external Chromium over CDP. (grok's native `browser_tab` was evaluated and removed — it wasn't exposed to sessions in practice.)
 
 ## Bundled skills
 

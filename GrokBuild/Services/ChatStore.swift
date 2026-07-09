@@ -93,6 +93,17 @@ final class ChatStore {
     private(set) var tabSessionID: UUID?
     private var tabHasExplicitModel = false
 
+    // MARK: - Session agent (per tab, launched via `--agent`)
+    /// Explicit per-tab session-agent selection id. Empty string with `tabHasExplicitAgent`
+    /// means "grok default"; when `tabHasExplicitAgent` is false the tab follows the global
+    /// default (`grokbuild.selectedAgent`).
+    private(set) var currentAgent: String = ""
+    private var tabHasExplicitAgent = false
+    /// Agents discovered for the current workspace (`grok inspect --json`), loaded lazily for the
+    /// composer agent picker.
+    private(set) var discoveredAgents: [GrokAgentInfo] = []
+    private var didLoadDiscoveredAgents = false
+
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
 
@@ -140,13 +151,64 @@ final class ChatStore {
         loadWorkspaceReasoningEffort()
     }
 
-    /// Bind this store to a sidebar tab and apply its saved model when present.
-    func bindTabSession(_ id: UUID, savedModel: String?) {
+    /// Bind this store to a sidebar tab and apply its saved model + agent when present.
+    func bindTabSession(_ id: UUID, savedModel: String?, savedAgent: String? = nil) {
         tabSessionID = id
         tabHasExplicitModel = false
+        tabHasExplicitAgent = false
+        currentAgent = defaultAgentSelection
+        if let savedAgent {
+            currentAgent = savedAgent
+            tabHasExplicitAgent = true
+        }
         guard let savedModel = savedModel?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedModel.isEmpty else { return }
         applyTabModel(savedModel)
+    }
+
+    /// Global default session agent from Settings → Agents (`grokbuild.selectedAgent`).
+    private var defaultAgentSelection: String {
+        defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
+    }
+
+    /// The agent this tab will actually launch with: an explicit per-tab override when set,
+    /// otherwise the global default.
+    var effectiveAgentSelection: String {
+        tabHasExplicitAgent ? currentAgent : defaultAgentSelection
+    }
+
+    /// `true` when this tab overrides the global default agent.
+    var hasExplicitAgent: Bool { tabHasExplicitAgent }
+
+    /// Display label for the tab's effective session agent.
+    var effectiveAgentDisplayName: String {
+        GrokAgentProfiles.displayName(for: effectiveAgentSelection)
+    }
+
+    /// The value to persist for this tab (nil when it follows the global default).
+    var persistedAgentSelection: String? {
+        tabHasExplicitAgent ? currentAgent : nil
+    }
+
+    /// Set this session's agent and restart its grok process (agents can only change at launch).
+    func setSessionAgent(_ selection: String) async {
+        let trimmed = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        // No-op when this tab already explicitly uses the chosen agent.
+        if tabHasExplicitAgent, trimmed == currentAgent { return }
+        currentAgent = trimmed
+        tabHasExplicitAgent = true
+        notifyAgentChanged()
+        guard currentWorkspace != nil else { return }
+        await restartProcess(resumeSessionID: grokSessionId ?? savedGrokSessionID)
+        appendSystemNote("Switched session agent to \(GrokAgentProfiles.displayName(for: trimmed)).")
+    }
+
+    /// Load agents discovered for the current workspace once (for the composer picker).
+    func loadDiscoveredAgentsIfNeeded() async {
+        guard !didLoadDiscoveredAgents else { return }
+        didLoadDiscoveredAgents = true
+        let agents = (try? await GrokCLIService().listAgents(cwd: currentWorkspace?.path)) ?? []
+        discoveredAgents = agents
     }
 
     /// Reload per-project reasoning effort only (model stays per tab).
@@ -302,9 +364,7 @@ final class ChatStore {
         let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? workspaceReasoningEffort : ""
         let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseSettings = ComputerUseSettingsStore.loadApplied()
-        // The agent-browser skill + external-browser auto-start only apply to the MCP backend.
-        // The native `browser_tab` backend launches its own Chrome and needs no local setup.
-        if browserSettings.enabled, browserSettings.backend == .agentBrowser {
+        if browserSettings.enabled {
             do {
                 try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
             } catch {
@@ -327,10 +387,8 @@ final class ChatStore {
             AgentBrowserService.browserMCPConfig(settings: browserSettings),
             ComputerUseService.computerUseMCPConfig(settings: computerUseSettings)
         ].compactMap { $0 }
-        // Native browser backend needs no MCP; pin CHROME_PATH when a specific Chromium is chosen.
-        let envOverrides = AgentBrowserService.nativeBrowserEnvOverrides(settings: browserSettings)
         let opts = GrokLaunchOptions(
-            agent: GrokAgentProfiles.launchArgument(for: settings.selectedAgent),
+            agent: GrokAgentProfiles.launchArgument(for: effectiveAgentSelection),
             noMemory: settings.noMemory,
             permissionMode: settings.permissionMode,
             reasoningEffort: reasoningEffortForLaunch,
@@ -341,8 +399,7 @@ final class ChatStore {
             allowRules: lineList(settings.allowRules),
             denyRules: lineList(settings.denyRules),
             resumeSessionID: resumeSessionID,
-            mcpServers: mcpServers,
-            envOverrides: envOverrides
+            mcpServers: mcpServers
         )
         await process.start(workspace: ws, options: opts)
         connectionWatchdogTask?.cancel()
@@ -1074,6 +1131,10 @@ final class ChatStore {
 
     private func notifyModelChanged() {
         NotificationCenter.default.post(name: .liveSessionModelChanged, object: self)
+    }
+
+    private func notifyAgentChanged() {
+        NotificationCenter.default.post(name: .liveSessionAgentChanged, object: self)
     }
 
     private func loadPermissionSettings() -> GrokPermissionSettings {

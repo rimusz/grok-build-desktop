@@ -282,12 +282,12 @@ On every (re)start, `ChatStore`:
 
 1. Loads **permission settings** from `GrokSettingsKeys` (UserDefaults).
 2. Loads **applied** browser + computer use settings.
-3. Installs bundled **skills** to `~/.grok/skills/` if features enabled (agent-browser backend only).
-4. Starts external browser if browser tools enabled **and** backend is `agent-browser` (CDP mode). The `grok-native` backend needs no skill/launch — grok drives its own Chrome.
+3. Installs bundled **skills** to `~/.grok/skills/` if features enabled.
+4. Starts external browser if browser tools enabled (CDP mode).
 5. Builds MCP list:
-   - `AgentBrowserService.browserMCPConfig(settings:)` → `grokbuild-browser` (nil for `grok-native`)
+   - `AgentBrowserService.browserMCPConfig(settings:)` → `grokbuild-browser`
    - `ComputerUseService.computerUseMCPConfig(settings:)` → `grokbuild-computer-use`
-6. Resolves the **session agent** via `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` (`--agent`); adds `AgentBrowserService.nativeBrowserEnvOverrides` (e.g. `CHROME_PATH`) to `GrokLaunchOptions.envOverrides` for the native browser backend.
+6. Resolves the **session agent** via `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` (`--agent`).
 7. Passes model from the **active tab** (`SavedSessionRecord.model`), with grok-session and project-default fallbacks.
 
 ### Per-tab model + per-project reasoning effort
@@ -295,6 +295,8 @@ On every (re)start, `ChatStore`:
 **Model** is **per session tab** (`SavedSessionRecord.model` in `GrokBuild.sessionLayout.v2`), matching grok's per-ACP-session `session/set_model`. Changing model in the composer updates only the active tab and posts `.liveSessionModelChanged` → `persistSessionLayout()`. Tab switch calls `bindTabSession` + `syncTabModelToLiveProcessIfNeeded()` — it does **not** overwrite from sibling tabs, and a missing saved model is ignored so workspace/app fallbacks still apply.
 
 **Project default model** (`WorkspaceAgentSettings.model`) seeds **new** tabs only (and legacy tabs without a saved per-tab model). It is **not** updated when you change model in chat.
+
+**Session agent** is also **per session tab** (`SavedSessionRecord.agent`). Each tab launches with its own `--agent` (`ChatStore.effectiveAgentSelection`): an explicit per-tab override when set, otherwise the global default `grokbuild.selectedAgent` (Settings → Agents). The chat status bar shows an **agent pill** (`ChatView.agentStatusPill`) whose menu lists the built-in Default option (`GrokAgentProfiles.builtInOptions`) plus agents discovered for the workspace; picking one calls `ChatStore.setSessionAgent` → **restarts that tab's grok** (agents can only change at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`. A tab that has not been overridden follows the global default live (so changing the default and restarting adopts it); overridden tabs keep their choice. Only overridden tabs persist a value (`ChatStore.persistedAgentSelection`).
 
 **Reasoning effort** stays **per project** (`WorkspaceAgentSettings.reasoningEffort`):
 
@@ -408,8 +410,8 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.disableWebSearch` | | `--disable-web-search` |
 | `grokbuild.noSubagents` | | `--no-subagents` |
 | `grokbuild.allowRules` / `denyRules` | | Newline-separated `--allow` / `--deny` rules |
-| `grokbuild.selectedAgent` | `GrokSettingsKeys` | Session agent for `--agent` (empty = default; `grokbuild-web` = bundled profile) |
-| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (incl. `backend`: `grok-native` / `agent-browser`) |
+| `grokbuild.selectedAgent` | `GrokSettingsKeys` | **Default** session agent for **new** tabs (empty = grok default; otherwise a discovered agent name). Per-tab overrides live in `SavedSessionRecord.agent`. |
+| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
@@ -438,16 +440,13 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Piece | Location |
 |-------|----------|
 | Settings | `SettingsView` → `.browser` tab; keys in `BrowserSettings.swift` |
-| Service | `AgentBrowserService.swift` — agent-browser CLI, CDP, external browser launch, `nativeBrowserEnvOverrides` |
-| MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` (agent-browser backend only) |
-| Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled, agent-browser backend) |
+| Service | `AgentBrowserService.swift` — agent-browser CLI, CDP, external browser launch |
+| MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
+| Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
 | Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
-| Chat UI | Status pill in `ChatView` (composer chrome). Menu offers on/off toggle, **backend switch** (`grok Built-in` ↔ `agent-browser`, via `onSelectBrowserBackend` → `ContentView.selectBrowserBackendFromChat`), runtime choice (agent-browser only), and Open Browser Settings |
+| Chat UI | Status pill in `ChatView` (composer chrome). Menu offers on/off toggle, **runtime choice** (managed ↔ existing Chromium), and Open Browser Settings |
 
-**Backends (`BrowserBackendID`):**
-
-- `grok-native` — grok's built-in `browser_tab` / `browser_network_details` tools (part of grok's default `grok_build` tool set). No MCP injected; grok launches/controls its own Chrome/Chromium over CDP and can reuse the user's logged-in profile. GrokBuild only pins `CHROME_PATH` when a specific Chromium is selected. Gated by CLI version (`GrokCapabilities.supportsNativeBrowserTools`, floor `minVersionForNativeBrowser`) and, per-account, by xAI's `grok_build_access_gate` — so it's best-effort with agent-browser as fallback.
-- `agent-browser` — the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
+**Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
 
 **agent-browser tools (via MCP):** `browser_open_url`, `browser_snapshot`, `browser_click_ref`, etc.
 
@@ -457,12 +456,13 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 
 | Piece | Location |
 |-------|----------|
-| Settings | `SettingsView` → `.agents` tab (viewer + "Session agent" picker) |
-| Discovery | `GrokCLIService.listAgents(cwd:)` → `GrokAgentInfo` (parses `agents` from `grok inspect --json`) |
-| Selection | `grokbuild.selectedAgent` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
-| Bundled profile | `Resources/Agents/grokbuild-web.md` (web-tuned; resolved by `GrokAgentProfiles.webProfileURL()`) |
+| Default (new sessions) | `SettingsView` → `.agents` tab (viewer + "Default agent for new sessions" picker → `grokbuild.selectedAgent`) |
+| Per-session override | `ChatView.agentStatusPill` → `ChatStore.setSessionAgent` (persisted in `SavedSessionRecord.agent`) |
+| Discovery | `GrokCLIService.listAgents(cwd:)` → `GrokAgentInfo` (parses `agents` from `grok inspect --json`); loaded lazily by `ChatStore.loadDiscoveredAgentsIfNeeded` for the pill |
+| Built-in options | `GrokAgentProfiles.builtInOptions` (Default only) — shared by Settings + pill |
+| Selection → launch | `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
 
-The app stays thin: grok owns agents/personas. GrokBuild ships one convenience profile (`grokbuild-web`, biased toward `browser_tab` / web tools), surfaces discovered agents read-only, and otherwise lets the user pick a discovered agent by name. `""` = grok's default agent (no `--agent`).
+The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the status-bar pill, which restarts that session's grok.
 
 ### Computer Use
 
@@ -506,18 +506,20 @@ OpenAI-compatible provider URLs; not a replacement for grok-native models. Custo
 
 ### Tabs (`SettingsTab`)
 
+Ordered config-first (session config → capabilities → grok ecosystem/inspection → app). `.agents` is the default landing tab (generic Settings gear + initial state; `.app` when an update is pending).
+
 | Tab | Pane | Data source |
 |-----|------|-------------|
-| `.hooks` | Hooks list | `GrokCLIService.listHooks` |
-| `.plugins` | Installed plugins | `listPlugins` |
-| `.marketplace` | Marketplace sources | `listMarketplaceSources` |
-| `.skills` | Discovered skills | `listSkills` |
-| `.agents` | Discovered agents + session-agent picker | `listAgents`, `grokbuild.selectedAgent` |
-| `.mcpServers` | External MCP + health | `listMCPServers` |
-| `.browser` | Browser tools | `BrowserSettingsStore` draft keys |
-| `.computerUse` | Desktop automation | `ComputerUseSettingsStore` draft keys |
+| `.agents` | Discovered agents + **default** session-agent picker (new sessions) | `listAgents`, `grokbuild.selectedAgent` |
 | `.models` | Custom providers | `CustomModelStore` |
 | `.permissions` | Session safety toggles | `GrokSettingsKeys` |
+| `.browser` | Browser tools | `BrowserSettingsStore` draft keys |
+| `.computerUse` | Desktop automation | `ComputerUseSettingsStore` draft keys |
+| `.mcpServers` | External MCP + health | `listMCPServers` |
+| `.skills` | Discovered skills | `listSkills` |
+| `.plugins` | Installed plugins | `listPlugins` |
+| `.marketplace` | Marketplace sources | `listMarketplaceSources` |
+| `.hooks` | Hooks list | `GrokCLIService.listHooks` |
 | `.app` | App + CLI updates | `UpdateScheduler`, `UpdateSettingsStore` |
 
 ### Draft vs applied pattern
@@ -666,9 +668,10 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
-| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.hooks`) |
+| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`) |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
+| `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
@@ -743,14 +746,14 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Permissions UI** | `ChatStore.pendingPermissions`, `MessageBubble` |
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
 | **Per-tab model** | `SavedSessionRecord.model`, `ChatStore.bindTabSession`, `.liveSessionModelChanged` |
+| **Per-tab session agent** | `SavedSessionRecord.agent`, `ChatStore.setSessionAgent` / `effectiveAgentSelection`, `ChatView.agentStatusPill`, `.liveSessionAgentChanged` |
 | **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
 | **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU) |
 | **Session restore at launch** | `ContentView.restorePersistedSessions`, `SessionRestorePolicy`, `SessionTranscriptRecovery`, `ensureSessionStarted` |
 | **Add/remove project** | `WorkspaceStore`, `WorkspacePicker` |
-| **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (backend: `grok-native` vs `agent-browser`) |
-| **Native browser capability** | `GrokCapabilities.supportsNativeBrowserTools`, `AgentBrowserService.nativeBrowserEnvOverrides` |
-| **Session agent / profiles** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, `Resources/Agents/grokbuild-web.md`, settings `.agents` |
+| **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
+| **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Custom models** | `CustomModelStore`, `~/.grok/config.toml` |
 | **Settings tab** | `SettingsView` — search pane struct by tab |
@@ -775,9 +778,9 @@ make test    # Tests/GrokBuildTests/
 
 | File | Covers |
 |------|--------|
-| `SessionPersistenceTests.swift` | Layout/workspace persistence |
-| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, native backend (no MCP, CHROME_PATH, config issues) |
-| `AgentsAndCapabilitiesTests.swift` | `GrokCapabilities` version parse/gate, `GrokAgentProfiles` launch-arg mapping, `GrokAgentInfo` parsing |
+| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override) |
+| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
+| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing |
 | `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions |
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |

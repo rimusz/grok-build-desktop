@@ -40,12 +40,10 @@ It gives Grok a project-focused chat UI with persistent workspaces, resumable se
 - **Reasoning effort** for reasoning-capable models — pick effort (Minimal through Max) from the composer model menu; it stays available for custom models unless you turn it off in their settings. Effort is saved **per project**; set the starting default for new projects in **Settings → Permissions → Default reasoning effort**.
 
 ### Browser control
-Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click, type, wait, screenshot, run JS). Pick a **backend** in **Settings → Browser**:
-- **grok built-in (`browser_tab`)** — uses grok's own native browser tools; GrokBuild injects no MCP and grok launches/controls Chrome itself (and can reuse your logged-in profile). Needs a recent grok CLI; native access may also be gated per-account by xAI, so agent-browser remains the fallback. Optionally pin which Chromium via `CHROME_PATH`.
-- **agent-browser (MCP)** — `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev):
-  - **Managed runtime (default)** — GrokBuild installs and uses a separate automation Chrome/Chromium profile (`agent-browser install`); no CDP URL required.
-  - **Existing browser** — attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP when you want Grok to use your own window.
-- Enable in **Settings → Browser**, then **Apply and Restart Grok**. The chat status bar pill gives a quick **Browser Tools On/Off** toggle plus a one-click **backend switch** (grok built-in ↔ agent-browser) that restarts Grok for you.
+Let Grok drive a **Chromium browser** for web tasks (navigate, read pages, click, type, wait, screenshot, run JS) via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev), configured in **Settings → Browser**:
+- **Managed runtime (default)** — GrokBuild installs and uses a separate automation Chrome/Chromium profile (`agent-browser install`); no CDP URL required.
+- **Existing browser** — attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP when you want Grok to use your own window.
+- Enable in **Settings → Browser**, then **Apply and Restart Grok**. The chat status bar pill gives a quick **Browser Tools On/Off** toggle plus a one-click **runtime switch** (managed ↔ existing Chromium) that restarts Grok for you.
 - **Quick Presets** — one-click setups for common targets, e.g. **grok.com (existing Chrome)** configures external Chrome with a dedicated `grok-com` session name and a visible window so you can log in once and let the agent drive grok.com web features (Imagine, web-only skills/connectors) that the CLI doesn't expose.
 - Installs `grokbuild-browser-control` and `grokbuild-grok-web` skills into your Grok skills folder so the agent knows the workflow (snapshot → ref-based click/type) and how to combine grok.com web with local Computer Use.
 
@@ -63,7 +61,7 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - **Plugins** — manage installed Grok plugins and add trusted plugin sources.
 - **Marketplace** — browse available plugins and manage marketplace sources.
 - **Skills** — view user, project, compatibility, and plugin skills available to Grok.
-- **Agents** — browse the agents Grok discovers for the project and choose the **session agent** used for new sessions (grok's default, GrokBuild's bundled **web-browsing** profile, or a discovered agent by name). Passed through as `grok --agent`.
+- **Agents** — browse the agents Grok discovers for the project and choose the **default agent for new sessions** (grok's default, or a discovered agent by name), passed through as `grok --agent`. Each open session also has its **own** agent picker in the chat status bar — switch it there to run a different agent per session; changing it restarts that session's Grok.
 - **MCP servers** — configure external Model Context Protocol servers and run health checks.
 - **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
 

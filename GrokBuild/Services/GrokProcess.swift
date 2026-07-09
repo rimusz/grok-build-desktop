@@ -42,9 +42,6 @@ struct GrokLaunchOptions: Sendable {
     var denyRules: [String] = []
     var resumeSessionID: String? = nil
     var mcpServers: [MCPServerConfig] = []
-    /// Extra environment variables merged into the grok process env (e.g. `CHROME_PATH`
-    /// for the native browser backend). Overrides inherited values on key collision.
-    var envOverrides: [String: String] = [:]
 }
 
 /// Detects ACP `session/update` events replayed during `session/load`.
@@ -367,9 +364,7 @@ final class GrokProcess: @unchecked Sendable {
         let proc = Process()
         proc.executableURL = cli
         proc.currentDirectoryURL = workspace.path
-        var environment = ProcessInfo.processInfo.environment
-        for (key, value) in options.envOverrides { environment[key] = value }
-        proc.environment = environment
+        proc.environment = ProcessInfo.processInfo.environment
 
         // ACP: grok [top-level flags] agent [agent flags] stdio
         var args: [String] = []

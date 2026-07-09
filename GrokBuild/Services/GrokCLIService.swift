@@ -291,8 +291,8 @@ struct GrokPermissionSettings: Sendable {
     var noSubagents: Bool
     var allowRules: String
     var denyRules: String
-    /// Session agent selection passed to `grok --agent`. Empty = grok's default agent.
-    /// `"grokbuild-web"` resolves to the bundled web profile (see `GrokAgentProfiles`).
+    /// Session agent selection passed to `grok --agent`. Empty = grok's default agent;
+    /// any other value is a discovered agent name (see `GrokAgentProfiles`).
     var selectedAgent: String
 
     static let defaults = GrokPermissionSettings(

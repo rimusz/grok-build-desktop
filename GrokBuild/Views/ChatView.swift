@@ -22,11 +22,11 @@ struct ChatView: View {
     var onAddProject: () -> Void = {}
     var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
     var onToggleBrowserTools: () -> Void = {}
-    var onSelectBrowserBackend: (BrowserBackendID) -> Void = { _ in }
     var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
     var onToggleComputerUse: () -> Void = {}
     var onOpenBrowserSettings: () -> Void = {}
     var onOpenComputerUseSettings: () -> Void = {}
+    var onOpenAgentSettings: () -> Void = {}
     var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
@@ -612,6 +612,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Branches & worktrees")
+                agentStatusPill
                 browserStatusPill
                 computerUseStatusPill
             } else {
@@ -622,13 +623,69 @@ struct ChatView: View {
         .font(.caption.weight(.medium))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 4)
+        .task(id: store.currentWorkspace?.id) {
+            await store.loadDiscoveredAgentsIfNeeded()
+        }
+    }
+
+    private var agentStatusPill: some View {
+        let effective = store.effectiveAgentSelection
+        let title = store.effectiveAgentDisplayName
+        let overriding = store.hasExplicitAgent
+        let tint: Color = overriding ? .teal : .secondary
+
+        return Menu {
+            Section("This session's agent") {
+                ForEach(GrokAgentProfiles.builtInOptions) { option in
+                    Button {
+                        Task { await store.setSessionAgent(option.id) }
+                    } label: {
+                        Label(option.title, systemImage: effective == option.id ? "checkmark" : "person")
+                    }
+                }
+            }
+
+            let discovered = store.discoveredAgents.map(\.name)
+                .filter { name in !GrokAgentProfiles.builtInOptions.contains { $0.id == name } }
+            if !discovered.isEmpty {
+                Section("Discovered") {
+                    ForEach(discovered, id: \.self) { name in
+                        Button {
+                            Task { await store.setSessionAgent(name) }
+                        } label: {
+                            Label(name, systemImage: effective == name ? "checkmark" : "person.crop.square")
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                onOpenAgentSettings()
+            } label: {
+                Label("Open Agent Settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label(title, systemImage: "person.2.badge.gearshape")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(overriding ? 0.14 : 0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help(overriding
+            ? "Session agent (overrides the default). Changing it restarts this session's grok."
+            : "Session agent (follows the Settings default). Changing it restarts this session's grok.")
     }
 
     private var browserStatusPill: some View {
         let settings = BrowserSettingsStore.load()
         let configurationIssue = AgentBrowserService.browserToolsConfigurationIssue(settings: settings)
-        let browserBaseReady = settings.backend == .agentBrowser
-            && AgentBrowserService.bridgeScriptURL() != nil
+        let browserBaseReady = AgentBrowserService.bridgeScriptURL() != nil
             && AgentBrowserService.executableURL() != nil
         let managedRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .managed) == nil
         let externalRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .external) == nil
@@ -645,20 +702,6 @@ struct ChatView: View {
                 Button(browserToolsEnabled ? "Turn Browser Tools Off" : "Turn Browser Tools On") {
                     onToggleBrowserTools()
                 }
-            }
-
-            Divider()
-
-            Button {
-                onSelectBrowserBackend(.grokNative)
-            } label: {
-                Label("grok Built-in (browser_tab)", systemImage: settings.backend == .grokNative ? "checkmark" : "sparkles")
-            }
-
-            Button {
-                onSelectBrowserBackend(.agentBrowser)
-            } label: {
-                Label("agent-browser (MCP)", systemImage: settings.backend == .agentBrowser ? "checkmark" : "puzzlepiece.extension")
             }
 
             if canChooseRuntime {

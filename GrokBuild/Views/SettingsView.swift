@@ -3,16 +3,16 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum SettingsTab: Hashable {
-    case hooks
-    case plugins
-    case marketplace
-    case skills
     case agents
-    case mcpServers
-    case browser
-    case computerUse
     case models
     case permissions
+    case browser
+    case computerUse
+    case mcpServers
+    case skills
+    case plugins
+    case marketplace
+    case hooks
     case app
 }
 
@@ -40,12 +40,62 @@ struct SettingsView: View {
             Divider()
 
             TabView(selection: $selectedTab) {
-                HooksSettingsPane(workspace: store.currentWorkspace)
+                AgentsSettingsPane(workspace: store.currentWorkspace) {
+                    Task { await store.reloadConfiguration() }
+                }
+                .settingsPaneColumn()
+                .tabItem {
+                    Label("Agents", systemImage: "person.2.badge.gearshape")
+                }
+                .tag(SettingsTab.agents)
+
+                CustomModelsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Models", systemImage: "cpu")
+                }
+                .tag(SettingsTab.models)
+
+                PermissionsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Permissions", systemImage: "lock.shield")
+                }
+                .tag(SettingsTab.permissions)
+
+                BrowserSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Browser", systemImage: "globe")
+                }
+                .tag(SettingsTab.browser)
+
+                ComputerUseSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Computer Use", systemImage: "desktopcomputer")
+                }
+                .tag(SettingsTab.computerUse)
+
+                MCPSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .settingsPaneColumn()
+                .tabItem {
+                    Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .tag(SettingsTab.mcpServers)
+
+                SkillsSettingsPane(workspace: store.currentWorkspace)
                     .settingsPaneColumn()
                     .tabItem {
-                        Label("Hooks", systemImage: "curlybraces")
+                        Label("Skills", systemImage: "wand.and.stars")
                     }
-                    .tag(SettingsTab.hooks)
+                    .tag(SettingsTab.skills)
 
                 PluginsSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -65,62 +115,12 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.marketplace)
 
-                SkillsSettingsPane(workspace: store.currentWorkspace)
+                HooksSettingsPane(workspace: store.currentWorkspace)
                     .settingsPaneColumn()
                     .tabItem {
-                        Label("Skills", systemImage: "wand.and.stars")
+                        Label("Hooks", systemImage: "curlybraces")
                     }
-                    .tag(SettingsTab.skills)
-
-                AgentsSettingsPane(workspace: store.currentWorkspace) {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("Agents", systemImage: "person.2.badge.gearshape")
-                }
-                .tag(SettingsTab.agents)
-
-                MCPSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-                .tag(SettingsTab.mcpServers)
-
-                BrowserSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Browser", systemImage: "globe")
-                }
-                .tag(SettingsTab.browser)
-
-                ComputerUseSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Computer Use", systemImage: "desktopcomputer")
-                }
-                .tag(SettingsTab.computerUse)
-
-                CustomModelsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Models", systemImage: "cpu")
-                }
-                .tag(SettingsTab.models)
-
-                PermissionsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Permissions", systemImage: "lock.shield")
-                }
-                .tag(SettingsTab.permissions)
+                    .tag(SettingsTab.hooks)
 
                 AppUpdatesSettingsPane()
                 .tabItem {
@@ -188,7 +188,6 @@ private struct BrowserSettingsPane: View {
     let onConfigurationChanged: () -> Void
 
     @AppStorage(BrowserSettingsKeys.enabled) private var enabled = BrowserSettings.defaults.enabled
-    @AppStorage(BrowserSettingsKeys.backend) private var backend = BrowserSettings.defaults.backend.rawValue
     @AppStorage(BrowserSettingsKeys.runtimeMode) private var runtimeMode = BrowserSettings.defaults.runtimeMode.rawValue
     @AppStorage(BrowserSettingsKeys.cdpURL) private var cdpURL = BrowserSettings.defaults.cdpURL
     @AppStorage(BrowserSettingsKeys.profileName) private var profileName = BrowserSettings.defaults.profileName
@@ -198,8 +197,6 @@ private struct BrowserSettingsPane: View {
     @AppStorage(BrowserSettingsKeys.autoStartExternalBrowser) private var autoStartExternalBrowser = BrowserSettings.defaults.autoStartExternalBrowser
 
     @State private var status = BrowserBackendStatus.unavailable
-    /// nil = detection not run yet; used to gate the native `browser_tab` backend.
-    @State private var nativeSupported: Bool?
     @State private var externalStatus = ExternalBrowserStatus.unavailable(endpoint: "http://127.0.0.1:9222")
     @State private var isChecking = false
     @State private var isInstallingRuntime = false
@@ -216,13 +213,9 @@ private struct BrowserSettingsPane: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 browserToolsCard
-                if selectedBackend == .grokNative {
-                    nativeBrowserCard
-                } else {
-                    statusCard
-                    browserPresetsCard
-                    browserRuntimeCard
-                }
+                statusCard
+                browserPresetsCard
+                browserRuntimeCard
                 applyCard
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -233,7 +226,6 @@ private struct BrowserSettingsPane: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task {
             normalizeExternalBrowserSelection()
-            nativeSupported = await GrokCapabilities.supportsNativeBrowserTools()
             await refreshStatus()
         }
         .alert("Uninstall Managed Browser Runtime?", isPresented: $showRuntimeUninstallConfirmation) {
@@ -282,97 +274,11 @@ private struct BrowserSettingsPane: View {
 
                 Divider()
 
-                settingRow("Backend") {
-                    Picker("", selection: $backend) {
-                        ForEach(BrowserBackendID.allCases) { option in
-                            Text(option.displayName).tag(option.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 230)
-                }
-
-                nativeDetectionLabel
-
-                if selectedBackend == .grokNative {
-                    Text("Uses grok's built-in `browser_tab` / `browser_network_details` tools — no MCP or extra install. grok drives a real Chrome/Chromium over CDP and can reuse your logged-in profile. Choose a Chromium below to pin `CHROME_PATH`, then click Apply.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("For the agent-browser setup: install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var nativeDetectionLabel: some View {
-        switch nativeSupported {
-        case .some(true):
-            Label("grok build supports built-in browser tools.", systemImage: "checkmark.seal")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .some(false):
-            let floor = GrokCapabilities.minVersionForNativeBrowser.description
-            Label("This grok build may not expose built-in browser tools (needs grok ≥ \(floor)). Use agent-browser instead.", systemImage: "exclamationmark.triangle")
-                .font(.caption)
-                .foregroundStyle(.orange)
-        case .none:
-            EmptyView()
-        }
-    }
-
-    private var nativeBrowserCard: some View {
-        settingsCard(title: "Native Browser (browser_tab)", systemImage: "globe.badge.chevron.backward", tint: .blue) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("grok launches and controls Chrome/Chromium itself using its built-in tools. GrokBuild injects no MCP server for this backend. Native browser access may also be gated per-account by xAI; if a browser tool is unavailable at runtime, switch the backend to agent-browser.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
-                settingRow("Chromium app") {
-                    Picker("", selection: $externalBrowserAppID) {
-                        ForEach(externalBrowserChoices) { app in
-                            Text(app.displayName).tag(app.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                if selectedExternalBrowserApp == .custom {
-                    settingRow("Custom app") {
-                        HStack {
-                            TextField("Path to Chromium .app", text: $externalBrowserAppPath)
-                                .textFieldStyle(.roundedBorder)
-                            Button("Choose...") {
-                                chooseExternalBrowserApp()
-                            }
-                        }
-                    }
-                }
-
-                Text(nativeChromePathText)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                Text("Install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var nativeChromePathText: String {
-        if let path = AgentBrowserService.nativeBrowserEnvOverrides(settings: currentSettings)["CHROME_PATH"] {
-            return "CHROME_PATH=\(path)"
-        }
-        return "CHROME_PATH not set — grok auto-detects Google Chrome."
-    }
-
-    private var selectedBackend: BrowserBackendID {
-        BrowserBackendID(rawValue: backend) ?? .agentBrowser
     }
 
     private var statusCard: some View {
@@ -855,7 +761,6 @@ private struct BrowserSettingsPane: View {
     private var currentSettings: BrowserSettings {
         BrowserSettings(
             enabled: enabled,
-            backend: BrowserBackendID(rawValue: backend) ?? BrowserSettings.defaults.backend,
             runtimeMode: selectedRuntimeMode,
             cdpURL: cdpURL,
             profileName: profileName,
@@ -1695,12 +1600,13 @@ private struct AgentsSettingsPane: View {
     private var sessionAgentCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Session agent")
+                Text("Default agent for new sessions")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 Picker("", selection: $selectedAgent) {
-                    Text("Default (grok build)").tag("")
-                    Text("Web browsing (bundled)").tag(GrokAgentProfiles.webProfileID)
+                    ForEach(GrokAgentProfiles.builtInOptions) { option in
+                        Text(option.title).tag(option.id)
+                    }
                     if !discoveredAgentNames.isEmpty {
                         Section("Discovered") {
                             ForEach(discoveredAgentNames, id: \.self) { name in
@@ -1713,14 +1619,14 @@ private struct AgentsSettingsPane: View {
                 .frame(width: 240)
             }
 
-            Text("Passed to `grok --agent` when a session starts. **Default** uses grok's standard agent. **Web browsing** loads GrokBuild's bundled web-tuned profile (biases toward `browser_tab` / web tools). Discovered names are advanced — most are subagents meant to be spawned, not run as the main agent.")
+            Text("Passed to `grok --agent` when a **new** session starts. **Default** uses grok's standard agent; pick a discovered agent by name to run it as the main agent instead. Each open session also has its own agent picker in the chat status bar — switch it there to override this default per session. Discovered names are advanced (most are subagents meant to be spawned, not run as the main agent).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 Spacer()
-                Button("Apply and Restart Grok") {
+                Button("Save Default & Apply to Current") {
                     appliedAgent = selectedAgent
                     onConfigurationChanged()
                 }
@@ -1733,9 +1639,9 @@ private struct AgentsSettingsPane: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.teal.opacity(hasPendingChanges ? 0.18 : 0.10)))
     }
 
-    /// Discovered names that are not already surfaced as the built-in Default/Web options.
+    /// Discovered names that are not already surfaced as the built-in options.
     private var discoveredAgentNames: [String] {
-        agents.map(\.name).filter { $0 != GrokAgentProfiles.webProfileID }
+        agents.map(\.name).filter { name in !GrokAgentProfiles.builtInOptions.contains { $0.id == name } }
     }
 
     private func refresh() async {

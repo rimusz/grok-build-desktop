@@ -3,7 +3,6 @@ import XCTest
 
 final class BrowserIntegrationTests: XCTestCase {
     private var savedEnabled: Any?
-    private var savedBackend: Any?
     private var savedRuntimeMode: Any?
     private var savedCDPURL: Any?
     private var savedProfileName: Any?
@@ -12,7 +11,6 @@ final class BrowserIntegrationTests: XCTestCase {
     private var savedExternalBrowserAppPath: Any?
     private var savedAutoStartExternalBrowser: Any?
     private var savedAppliedEnabled: Any?
-    private var savedAppliedBackend: Any?
     private var savedAppliedRuntimeMode: Any?
     private var savedAppliedCDPURL: Any?
     private var savedAppliedProfileName: Any?
@@ -25,7 +23,6 @@ final class BrowserIntegrationTests: XCTestCase {
         super.setUp()
         let defaults = UserDefaults.standard
         savedEnabled = defaults.object(forKey: BrowserSettingsKeys.enabled)
-        savedBackend = defaults.object(forKey: BrowserSettingsKeys.backend)
         savedRuntimeMode = defaults.object(forKey: BrowserSettingsKeys.runtimeMode)
         savedCDPURL = defaults.object(forKey: BrowserSettingsKeys.cdpURL)
         savedProfileName = defaults.object(forKey: BrowserSettingsKeys.profileName)
@@ -34,7 +31,6 @@ final class BrowserIntegrationTests: XCTestCase {
         savedExternalBrowserAppPath = defaults.object(forKey: BrowserSettingsKeys.externalBrowserAppPath)
         savedAutoStartExternalBrowser = defaults.object(forKey: BrowserSettingsKeys.autoStartExternalBrowser)
         savedAppliedEnabled = defaults.object(forKey: BrowserSettingsKeys.appliedEnabled)
-        savedAppliedBackend = defaults.object(forKey: BrowserSettingsKeys.appliedBackend)
         savedAppliedRuntimeMode = defaults.object(forKey: BrowserSettingsKeys.appliedRuntimeMode)
         savedAppliedCDPURL = defaults.object(forKey: BrowserSettingsKeys.appliedCDPURL)
         savedAppliedProfileName = defaults.object(forKey: BrowserSettingsKeys.appliedProfileName)
@@ -46,7 +42,6 @@ final class BrowserIntegrationTests: XCTestCase {
 
     override func tearDown() {
         restore(savedEnabled, forKey: BrowserSettingsKeys.enabled)
-        restore(savedBackend, forKey: BrowserSettingsKeys.backend)
         restore(savedRuntimeMode, forKey: BrowserSettingsKeys.runtimeMode)
         restore(savedCDPURL, forKey: BrowserSettingsKeys.cdpURL)
         restore(savedProfileName, forKey: BrowserSettingsKeys.profileName)
@@ -55,7 +50,6 @@ final class BrowserIntegrationTests: XCTestCase {
         restore(savedExternalBrowserAppPath, forKey: BrowserSettingsKeys.externalBrowserAppPath)
         restore(savedAutoStartExternalBrowser, forKey: BrowserSettingsKeys.autoStartExternalBrowser)
         restore(savedAppliedEnabled, forKey: BrowserSettingsKeys.appliedEnabled)
-        restore(savedAppliedBackend, forKey: BrowserSettingsKeys.appliedBackend)
         restore(savedAppliedRuntimeMode, forKey: BrowserSettingsKeys.appliedRuntimeMode)
         restore(savedAppliedCDPURL, forKey: BrowserSettingsKeys.appliedCDPURL)
         restore(savedAppliedProfileName, forKey: BrowserSettingsKeys.appliedProfileName)
@@ -69,7 +63,6 @@ final class BrowserIntegrationTests: XCTestCase {
     func testBrowserSettingsRoundTrip() {
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             runtimeMode: .external,
             cdpURL: "http://127.0.0.1:9222",
             profileName: "project-a",
@@ -86,7 +79,6 @@ final class BrowserIntegrationTests: XCTestCase {
     func testAppliedBrowserSettingsRoundTripSeparately() {
         let current = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             runtimeMode: .external,
             cdpURL: "http://127.0.0.1:9222",
             profileName: "current",
@@ -97,7 +89,6 @@ final class BrowserIntegrationTests: XCTestCase {
         )
         let applied = BrowserSettings(
             enabled: false,
-            backend: .agentBrowser,
             runtimeMode: .managed,
             cdpURL: "",
             profileName: "applied",
@@ -138,7 +129,6 @@ final class BrowserIntegrationTests: XCTestCase {
     func testBrowserMCPConfigIncludesHeadedEnvironmentWhenEnabled() throws {
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             cdpURL: "",
             profileName: "",
             showBrowserWindow: true
@@ -155,7 +145,6 @@ final class BrowserIntegrationTests: XCTestCase {
     func testBrowserMCPConfigUsesDefaultCDPURLInExternalMode() throws {
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             runtimeMode: .external,
             cdpURL: "",
             profileName: "",
@@ -170,79 +159,6 @@ final class BrowserIntegrationTests: XCTestCase {
         })
     }
 
-    func testNativeBackendInjectsNoMCPServer() {
-        let settings = BrowserSettings(
-            enabled: true,
-            backend: .grokNative,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false
-        )
-
-        XCTAssertNil(AgentBrowserService.browserMCPConfig(settings: settings))
-    }
-
-    func testNativeBackendPinsChromePathForCustomApp() {
-        // A resolvable Chrome/Chromium yields a CHROME_PATH override; when nothing resolves we
-        // stay empty so grok auto-detects. Assert the override is only present for native + enabled.
-        let disabled = BrowserSettings(
-            enabled: false,
-            backend: .grokNative,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false,
-            externalBrowserAppID: .chrome
-        )
-        XCTAssertTrue(AgentBrowserService.nativeBrowserEnvOverrides(settings: disabled).isEmpty)
-
-        let agentBrowser = BrowserSettings(
-            enabled: true,
-            backend: .agentBrowser,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false,
-            externalBrowserAppID: .chrome
-        )
-        XCTAssertTrue(AgentBrowserService.nativeBrowserEnvOverrides(settings: agentBrowser).isEmpty)
-    }
-
-    func testNativeBackendHasNoConfigurationIssue() {
-        let settings = BrowserSettings(
-            enabled: true,
-            backend: .grokNative,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false,
-            externalBrowserAppID: .chrome
-        )
-        XCTAssertNil(AgentBrowserService.browserToolsConfigurationIssue(settings: settings))
-    }
-
-    func testNativeBackendFlagsInvalidCustomApp() {
-        let settings = BrowserSettings(
-            enabled: true,
-            backend: .grokNative,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false,
-            externalBrowserAppID: .custom,
-            externalBrowserAppPath: "/definitely/not/a/real.app"
-        )
-        XCTAssertNotNil(AgentBrowserService.browserToolsConfigurationIssue(settings: settings))
-    }
-
-    func testBrowserBackendRoundTripsNative() {
-        let settings = BrowserSettings(
-            enabled: true,
-            backend: .grokNative,
-            cdpURL: "",
-            profileName: "",
-            showBrowserWindow: false
-        )
-        BrowserSettingsStore.save(settings)
-        XCTAssertEqual(BrowserSettingsStore.load().backend, .grokNative)
-    }
-
     func testAgentBrowserCommandPreviewKeepsArguments() {
         let command = AgentBrowserService.commandPreview(["open", "https://example.com"])
 
@@ -253,7 +169,6 @@ final class BrowserIntegrationTests: XCTestCase {
     func testExternalBrowserLaunchArgumentsUseCDPPortAndSeparateProfile() {
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             cdpURL: "http://127.0.0.1:9333",
             profileName: "",
             showBrowserWindow: false,
@@ -282,7 +197,6 @@ final class BrowserIntegrationTests: XCTestCase {
 
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             cdpURL: "",
             profileName: "",
             showBrowserWindow: false
@@ -302,7 +216,6 @@ final class BrowserIntegrationTests: XCTestCase {
 
         let settings = BrowserSettings(
             enabled: false,
-            backend: .agentBrowser,
             cdpURL: "",
             profileName: "",
             showBrowserWindow: false
@@ -319,7 +232,6 @@ final class BrowserIntegrationTests: XCTestCase {
 
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             cdpURL: "",
             profileName: "",
             showBrowserWindow: false
@@ -337,7 +249,6 @@ final class BrowserIntegrationTests: XCTestCase {
         let preset = BrowserPreset.grokCom
         let settings = BrowserSettings(
             enabled: true,
-            backend: .agentBrowser,
             runtimeMode: .managed,
             cdpURL: "",
             profileName: "",
@@ -352,9 +263,8 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(applied.profileName, "grok-com")
         XCTAssertTrue(applied.showBrowserWindow)
         XCTAssertTrue(applied.autoStartExternalBrowser)
-        // Preset must not flip the user's enable toggle or change the backend.
+        // Preset must not flip the user's enable toggle.
         XCTAssertEqual(applied.enabled, settings.enabled)
-        XCTAssertEqual(applied.backend, settings.backend)
     }
 
     private func restore(_ value: Any?, forKey key: String) {
