@@ -162,17 +162,32 @@ enum MemoryStore {
     }
 
     /// Pure string builder: appends `entry` under a `## Notes` heading, adding the heading when
-    /// missing and keeping existing content intact. Testable without touching disk.
+    /// missing and keeping existing content intact. When the heading already exists, the entry is
+    /// inserted at the end of the Notes section (before the next `##` heading, if any).
+    /// Testable without touching disk.
     static func appendingNote(_ entry: String, to existing: String) -> String {
         let heading = "## Notes"
-        if existing.range(of: heading) != nil {
-            var body = existing
-            if !body.hasSuffix("\n") { body += "\n" }
-            return body + entry + "\n"
+        guard let headingRange = existing.range(of: heading) else {
+            var body = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !body.isEmpty { body += "\n\n" }
+            return body + heading + "\n\n" + entry + "\n"
         }
-        var body = existing.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !body.isEmpty { body += "\n\n" }
-        return body + heading + "\n\n" + entry + "\n"
+        // Find the end of the Notes section: the '\n' immediately before the next '## ' heading,
+        // or the end of the string when no subsequent heading exists.
+        let afterHeading = existing[headingRange.upperBound...]
+        let insertionIndex: String.Index
+        if let nextSectionRange = afterHeading.range(of: "\n##") {
+            insertionIndex = nextSectionRange.lowerBound
+        } else {
+            insertionIndex = existing.endIndex
+        }
+        var result = String(existing[..<insertionIndex])
+        if !result.hasSuffix("\n") { result += "\n" }
+        result += entry + "\n"
+        if insertionIndex < existing.endIndex {
+            result += String(existing[insertionIndex...])
+        }
+        return result
     }
 
     static func revealInFinder(_ file: MemoryFile) {

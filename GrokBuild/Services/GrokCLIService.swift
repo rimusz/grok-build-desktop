@@ -176,7 +176,7 @@ struct GrokAgentInfo: Identifiable, Hashable, Sendable {
         sourceType = source["type"] as? String ?? ""
         sourcePath = source["path"] as? String ?? ""
         pluginName = source["plugin_name"] as? String ?? source["pluginName"] as? String ?? ""
-        id = [name, sourceType, pluginName].joined(separator: "|")
+        id = [name, sourceType, pluginName, sourcePath].joined(separator: "|")
     }
 }
 
@@ -286,7 +286,6 @@ struct GrokPermissionSettings: Sendable {
     var permissionMode: String
     var sandboxProfile: String
     var reasoningEffort: String
-    var noMemory: Bool
     var disableWebSearch: Bool
     var noSubagents: Bool
     var allowRules: String
@@ -302,7 +301,6 @@ struct GrokPermissionSettings: Sendable {
         permissionMode: "default",
         sandboxProfile: "",
         reasoningEffort: "",
-        noMemory: false,
         disableWebSearch: false,
         noSubagents: false,
         allowRules: "",

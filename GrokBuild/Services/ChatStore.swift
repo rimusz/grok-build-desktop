@@ -102,7 +102,9 @@ final class ChatStore {
     /// Agents discovered for the current workspace (`grok inspect --json`), loaded lazily for the
     /// composer agent picker.
     private(set) var discoveredAgents: [GrokAgentInfo] = []
-    private var didLoadDiscoveredAgents = false
+    /// ID of the workspace whose agents have been loaded; `nil` means not yet loaded.
+    /// Scoped per workspace so switching projects triggers a fresh load.
+    private var loadedAgentsWorkspaceID: UUID?
 
     // MARK: - Scheduled tasks (grok `scheduler_*` tools, mirrored by observing ACP tool calls)
     /// Tasks grok has scheduled, mirrored from observed `scheduler_*` tool activity in this session.
@@ -208,10 +210,11 @@ final class ChatStore {
         appendSystemNote("Switched session agent to \(GrokAgentProfiles.displayName(for: trimmed)).")
     }
 
-    /// Load agents discovered for the current workspace once (for the composer picker).
+    /// Load agents discovered for the current workspace (reloads when the workspace changes).
     func loadDiscoveredAgentsIfNeeded() async {
-        guard !didLoadDiscoveredAgents else { return }
-        didLoadDiscoveredAgents = true
+        guard let workspaceID = currentWorkspace?.id,
+              loadedAgentsWorkspaceID != workspaceID else { return }
+        loadedAgentsWorkspaceID = workspaceID
         let agents = (try? await GrokCLIService().listAgents(cwd: currentWorkspace?.path)) ?? []
         discoveredAgents = agents
     }
@@ -1204,7 +1207,6 @@ final class ChatStore {
             permissionMode: defaults.string(forKey: GrokSettingsKeys.permissionMode) ?? GrokPermissionSettings.defaults.permissionMode,
             sandboxProfile: defaults.string(forKey: GrokSettingsKeys.sandboxProfile) ?? "",
             reasoningEffort: workspaceReasoningEffort,
-            noMemory: defaults.bool(forKey: GrokSettingsKeys.noMemory),
             disableWebSearch: defaults.bool(forKey: GrokSettingsKeys.disableWebSearch),
             noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
             allowRules: defaults.string(forKey: GrokSettingsKeys.allowRules) ?? "",

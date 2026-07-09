@@ -59,12 +59,21 @@ enum SchedulerToolParsing {
         return ScheduledTask(id: id, prompt: prompt, intervalHuman: interval, nextFireAt: next, recurring: recurring)
     }
 
+    private static let isoFormatterFractional: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fmt
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+        return fmt
+    }()
+
     static func parseDate(_ value: String) -> Date? {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: value) { return date }
-        iso.formatOptions = [.withInternetDateTime]
-        return iso.date(from: value)
+        if let date = isoFormatterFractional.date(from: value) { return date }
+        return isoFormatter.date(from: value)
     }
 
     private static func firstString(_ dict: [String: Any], _ keys: String...) -> String? {

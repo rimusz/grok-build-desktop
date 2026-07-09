@@ -108,7 +108,20 @@ final class MemoryStoreTests: XCTestCase {
         XCTAssertTrue(result.contains("- new"))
     }
 
-    func testAppendGlobalNoteCreatesFileAndReindexablePath() throws {
+    func testAppendingNoteInsertsBeforeSubsequentSection() {
+        let existing = "# Memory\n\n## Notes\n\n- old\n\n## Other Section\n\nsome content\n"
+        let result = MemoryStore.appendingNote("- new", to: existing)
+        XCTAssertEqual(result.components(separatedBy: "## Notes").count - 1, 1, "should not duplicate the heading")
+        XCTAssertTrue(result.contains("- old"))
+        XCTAssertTrue(result.contains("- new"))
+        XCTAssertTrue(result.contains("## Other Section"))
+        // The new entry must appear before the subsequent section
+        let newRange = result.range(of: "- new")!
+        let otherRange = result.range(of: "## Other Section")!
+        XCTAssertLessThan(newRange.lowerBound, otherRange.lowerBound, "new note should appear before ## Other Section")
+    }
+
+
         let url = tempBase.appendingPathComponent("MEMORY.md")
         let written = try MemoryStore.appendGlobalNote("staging uses eu-west", to: url)
         XCTAssertEqual(written, url)
