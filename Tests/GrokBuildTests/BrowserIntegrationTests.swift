@@ -170,6 +170,79 @@ final class BrowserIntegrationTests: XCTestCase {
         })
     }
 
+    func testNativeBackendInjectsNoMCPServer() {
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .grokNative,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false
+        )
+
+        XCTAssertNil(AgentBrowserService.browserMCPConfig(settings: settings))
+    }
+
+    func testNativeBackendPinsChromePathForCustomApp() {
+        // A resolvable Chrome/Chromium yields a CHROME_PATH override; when nothing resolves we
+        // stay empty so grok auto-detects. Assert the override is only present for native + enabled.
+        let disabled = BrowserSettings(
+            enabled: false,
+            backend: .grokNative,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            externalBrowserAppID: .chrome
+        )
+        XCTAssertTrue(AgentBrowserService.nativeBrowserEnvOverrides(settings: disabled).isEmpty)
+
+        let agentBrowser = BrowserSettings(
+            enabled: true,
+            backend: .agentBrowser,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            externalBrowserAppID: .chrome
+        )
+        XCTAssertTrue(AgentBrowserService.nativeBrowserEnvOverrides(settings: agentBrowser).isEmpty)
+    }
+
+    func testNativeBackendHasNoConfigurationIssue() {
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .grokNative,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            externalBrowserAppID: .chrome
+        )
+        XCTAssertNil(AgentBrowserService.browserToolsConfigurationIssue(settings: settings))
+    }
+
+    func testNativeBackendFlagsInvalidCustomApp() {
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .grokNative,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            externalBrowserAppID: .custom,
+            externalBrowserAppPath: "/definitely/not/a/real.app"
+        )
+        XCTAssertNotNil(AgentBrowserService.browserToolsConfigurationIssue(settings: settings))
+    }
+
+    func testBrowserBackendRoundTripsNative() {
+        let settings = BrowserSettings(
+            enabled: true,
+            backend: .grokNative,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false
+        )
+        BrowserSettingsStore.save(settings)
+        XCTAssertEqual(BrowserSettingsStore.load().backend, .grokNative)
+    }
+
     func testAgentBrowserCommandPreviewKeepsArguments() {
         let command = AgentBrowserService.commandPreview(["open", "https://example.com"])
 

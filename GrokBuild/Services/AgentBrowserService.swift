@@ -116,7 +116,26 @@ enum AgentBrowserService {
         )
     }
 
+    /// Environment overrides for the grok process when the native (`browser_tab`) backend is
+    /// selected. grok auto-detects Google Chrome, so we only pin `CHROME_PATH` when the user
+    /// picked a specific/custom Chromium app that resolves to an executable.
+    static func nativeBrowserEnvOverrides(settings: BrowserSettings = BrowserSettingsStore.load()) -> [String: String] {
+        guard settings.enabled, settings.backend == .grokNative else { return [:] }
+        guard let executable = externalBrowserExecutableURL(settings: settings) else { return [:] }
+        return ["CHROME_PATH": executable.path]
+    }
+
     static func browserToolsConfigurationIssue(settings: BrowserSettings = BrowserSettingsStore.load()) -> String? {
+        if settings.backend == .grokNative {
+            // Native tools need no local install; grok launches its own Chrome. A custom app
+            // selection is the only thing that can be misconfigured.
+            if settings.externalBrowserAppID == .custom,
+               !settings.externalBrowserAppPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               externalBrowserExecutableURL(settings: settings) == nil {
+                return "The selected Chromium app path is not a valid application."
+            }
+            return nil
+        }
         guard settings.backend == .agentBrowser else {
             return "Browser backend is not configured."
         }

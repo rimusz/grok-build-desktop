@@ -22,6 +22,7 @@ struct ChatView: View {
     var onAddProject: () -> Void = {}
     var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
     var onToggleBrowserTools: () -> Void = {}
+    var onSelectBrowserBackend: (BrowserBackendID) -> Void = { _ in }
     var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
     var onToggleComputerUse: () -> Void = {}
     var onOpenBrowserSettings: () -> Void = {}
@@ -644,6 +645,20 @@ struct ChatView: View {
                 Button(browserToolsEnabled ? "Turn Browser Tools Off" : "Turn Browser Tools On") {
                     onToggleBrowserTools()
                 }
+            }
+
+            Divider()
+
+            Button {
+                onSelectBrowserBackend(.grokNative)
+            } label: {
+                Label("grok Built-in (browser_tab)", systemImage: settings.backend == .grokNative ? "checkmark" : "sparkles")
+            }
+
+            Button {
+                onSelectBrowserBackend(.agentBrowser)
+            } label: {
+                Label("agent-browser (MCP)", systemImage: settings.backend == .agentBrowser ? "checkmark" : "puzzlepiece.extension")
             }
 
             if canChooseRuntime {

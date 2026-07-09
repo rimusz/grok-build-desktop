@@ -160,6 +160,26 @@ struct GrokSkillInfo: Identifiable, Hashable, Sendable {
     }
 }
 
+struct GrokAgentInfo: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let description: String
+    let sourceType: String
+    let sourcePath: String
+    let pluginName: String
+
+    init(dictionary: [String: Any]) {
+        name = dictionary["name"] as? String ?? "Unknown"
+        description = dictionary["description"] as? String ?? ""
+
+        let source = dictionary["source"] as? [String: Any] ?? [:]
+        sourceType = source["type"] as? String ?? ""
+        sourcePath = source["path"] as? String ?? ""
+        pluginName = source["plugin_name"] as? String ?? source["pluginName"] as? String ?? ""
+        id = [name, sourceType, pluginName].joined(separator: "|")
+    }
+}
+
 struct GrokMCPServerInfo: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
@@ -271,6 +291,9 @@ struct GrokPermissionSettings: Sendable {
     var noSubagents: Bool
     var allowRules: String
     var denyRules: String
+    /// Session agent selection passed to `grok --agent`. Empty = grok's default agent.
+    /// `"grokbuild-web"` resolves to the bundled web profile (see `GrokAgentProfiles`).
+    var selectedAgent: String
 
     static let defaults = GrokPermissionSettings(
         permissionMode: "default",
@@ -280,7 +303,8 @@ struct GrokPermissionSettings: Sendable {
         disableWebSearch: false,
         noSubagents: false,
         allowRules: "",
-        denyRules: ""
+        denyRules: "",
+        selectedAgent: ""
     )
 }
 
@@ -346,6 +370,7 @@ enum GrokSettingsKeys {
     static let noSubagents = "grokbuild.noSubagents"
     static let allowRules = "grokbuild.allowRules"
     static let denyRules = "grokbuild.denyRules"
+    static let selectedAgent = "grokbuild.selectedAgent"
 }
 
 /// Best-effort sign-in detection used only at launch, before any grok process runs.
@@ -467,6 +492,12 @@ final class GrokCLIService {
         let json = try await jsonValue(["inspect", "--json"], cwd: cwd)
         let dictionary = json as? [String: Any] ?? [:]
         return (dictionary["skills"] as? [[String: Any]] ?? []).map(GrokSkillInfo.init(dictionary:))
+    }
+
+    func listAgents(cwd: URL? = nil) async throws -> [GrokAgentInfo] {
+        let json = try await jsonValue(["inspect", "--json"], cwd: cwd)
+        let dictionary = json as? [String: Any] ?? [:]
+        return (dictionary["agents"] as? [[String: Any]] ?? []).map(GrokAgentInfo.init(dictionary:))
     }
 
     func pluginDetails(name: String) async throws -> String {

@@ -1,13 +1,26 @@
 import Foundation
 
 enum BrowserBackendID: String, CaseIterable, Identifiable {
+    /// grok's built-in `browser_tab` / `browser_network_details` tools (no MCP injected).
+    /// Drives a real Chrome/Chromium over CDP and can reuse the user's logged-in profile.
+    case grokNative = "grok-native"
+    /// The bundled `agent-browser` CLI, exposed to grok as an stdio MCP server.
     case agentBrowser = "agent-browser"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .agentBrowser: return "agent-browser"
+        case .grokNative: return "grok built-in (browser_tab)"
+        case .agentBrowser: return "agent-browser (MCP)"
+        }
+    }
+
+    /// Whether this backend injects an MCP server. grok's native tools need none.
+    var usesMCP: Bool {
+        switch self {
+        case .grokNative: return false
+        case .agentBrowser: return true
         }
     }
 }

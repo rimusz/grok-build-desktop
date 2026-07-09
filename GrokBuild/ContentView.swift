@@ -142,6 +142,7 @@ struct ContentView: View {
                         onAddProject: { showPicker = true },
                         onOpenProjectIn: { openCurrentProject(in: $0) },
                         onToggleBrowserTools: { toggleBrowserToolsFromChat() },
+                        onSelectBrowserBackend: { selectBrowserBackendFromChat($0) },
                         onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
                         onToggleComputerUse: { toggleComputerUseFromChat() },
                         onOpenBrowserSettings: { openSettings(tab: .browser) },
@@ -317,6 +318,20 @@ struct ContentView: View {
         BrowserSettingsStore.save(settings)
         BrowserSettingsStore.saveApplied(settings)
 
+        Task {
+            await activeStore.reloadConfiguration()
+        }
+    }
+
+    private func selectBrowserBackendFromChat(_ backend: BrowserBackendID) {
+        var settings = BrowserSettingsStore.load()
+        guard settings.backend != backend else { return }
+
+        settings.backend = backend
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        guard settings.enabled else { return }
         Task {
             await activeStore.reloadConfiguration()
         }

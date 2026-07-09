@@ -32,7 +32,19 @@ UpdateChecker.checkGrokCLI()      // grok update --check --json
 
 ## Permission settings
 
-Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `permissionMode`, etc. Passed to `GrokLaunchOptions` in `ChatStore`.
+Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `permissionMode`, `selectedAgent`, etc. Passed to `GrokLaunchOptions` in `ChatStore`.
+
+## Session agent (`--agent`)
+
+- `grokbuild.selectedAgent` (Settings → **Agents**) → `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` → `grok --agent`.
+- `""` = grok default (no flag); `"grokbuild-web"` = bundled `Resources/Agents/grokbuild-web.md`; any other value = discovered agent name.
+- Discover agents via `GrokCLIService.listAgents(cwd:)` (parses `agents` from `grok inspect --json`). Keep this thin — grok owns agents/personas.
+
+## Browser backend
+
+`BrowserBackendID` in `BrowserSettings.swift`:
+- `grok-native` — grok's built-in `browser_tab` / `browser_network_details`; no MCP injected. `browserMCPConfig` returns nil; `nativeBrowserEnvOverrides` pins `CHROME_PATH` via `GrokLaunchOptions.envOverrides`. Version-gated by `GrokCapabilities.supportsNativeBrowserTools` (+ per-account `grok_build_access_gate`).
+- `agent-browser` — bundled `agent-browser` CLI as an stdio MCP server (`grokbuild-browser`); managed/external Chromium over CDP.
 
 ## Bundled skills
 

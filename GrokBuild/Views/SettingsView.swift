@@ -7,6 +7,7 @@ enum SettingsTab: Hashable {
     case plugins
     case marketplace
     case skills
+    case agents
     case mcpServers
     case browser
     case computerUse
@@ -70,6 +71,15 @@ struct SettingsView: View {
                         Label("Skills", systemImage: "wand.and.stars")
                     }
                     .tag(SettingsTab.skills)
+
+                AgentsSettingsPane(workspace: store.currentWorkspace) {
+                    Task { await store.reloadConfiguration() }
+                }
+                .settingsPaneColumn()
+                .tabItem {
+                    Label("Agents", systemImage: "person.2.badge.gearshape")
+                }
+                .tag(SettingsTab.agents)
 
                 MCPSettingsPane {
                     Task { await store.reloadConfiguration() }
@@ -188,6 +198,8 @@ private struct BrowserSettingsPane: View {
     @AppStorage(BrowserSettingsKeys.autoStartExternalBrowser) private var autoStartExternalBrowser = BrowserSettings.defaults.autoStartExternalBrowser
 
     @State private var status = BrowserBackendStatus.unavailable
+    /// nil = detection not run yet; used to gate the native `browser_tab` backend.
+    @State private var nativeSupported: Bool?
     @State private var externalStatus = ExternalBrowserStatus.unavailable(endpoint: "http://127.0.0.1:9222")
     @State private var isChecking = false
     @State private var isInstallingRuntime = false
@@ -204,9 +216,13 @@ private struct BrowserSettingsPane: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 browserToolsCard
-                statusCard
-                browserPresetsCard
-                browserRuntimeCard
+                if selectedBackend == .grokNative {
+                    nativeBrowserCard
+                } else {
+                    statusCard
+                    browserPresetsCard
+                    browserRuntimeCard
+                }
                 applyCard
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -217,6 +233,7 @@ private struct BrowserSettingsPane: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .task {
             normalizeExternalBrowserSelection()
+            nativeSupported = await GrokCapabilities.supportsNativeBrowserTools()
             await refreshStatus()
         }
         .alert("Uninstall Managed Browser Runtime?", isPresented: $showRuntimeUninstallConfirmation) {
@@ -266,16 +283,96 @@ private struct BrowserSettingsPane: View {
                 Divider()
 
                 settingRow("Backend") {
-                    Text(BrowserBackendID(rawValue: backend)?.displayName ?? backend)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 190, alignment: .leading)
+                    Picker("", selection: $backend) {
+                        ForEach(BrowserBackendID.allCases) { option in
+                            Text(option.displayName).tag(option.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 230)
                 }
 
-                Text("For the normal setup: install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
-                    .font(.caption)
+                nativeDetectionLabel
+
+                if selectedBackend == .grokNative {
+                    Text("Uses grok's built-in `browser_tab` / `browser_network_details` tools — no MCP or extra install. grok drives a real Chrome/Chromium over CDP and can reuse your logged-in profile. Choose a Chromium below to pin `CHROME_PATH`, then click Apply.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("For the agent-browser setup: install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var nativeDetectionLabel: some View {
+        switch nativeSupported {
+        case .some(true):
+            Label("grok build supports built-in browser tools.", systemImage: "checkmark.seal")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .some(false):
+            let floor = GrokCapabilities.minVersionForNativeBrowser.description
+            Label("This grok build may not expose built-in browser tools (needs grok ≥ \(floor)). Use agent-browser instead.", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .none:
+            EmptyView()
+        }
+    }
+
+    private var nativeBrowserCard: some View {
+        settingsCard(title: "Native Browser (browser_tab)", systemImage: "globe.badge.chevron.backward", tint: .blue) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("grok launches and controls Chrome/Chromium itself using its built-in tools. GrokBuild injects no MCP server for this backend. Native browser access may also be gated per-account by xAI; if a browser tool is unavailable at runtime, switch the backend to agent-browser.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                settingRow("Chromium app") {
+                    Picker("", selection: $externalBrowserAppID) {
+                        ForEach(externalBrowserChoices) { app in
+                            Text(app.displayName).tag(app.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                if selectedExternalBrowserApp == .custom {
+                    settingRow("Custom app") {
+                        HStack {
+                            TextField("Path to Chromium .app", text: $externalBrowserAppPath)
+                                .textFieldStyle(.roundedBorder)
+                            Button("Choose...") {
+                                chooseExternalBrowserApp()
+                            }
+                        }
+                    }
+                }
+
+                Text(nativeChromePathText)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var nativeChromePathText: String {
+        if let path = AgentBrowserService.nativeBrowserEnvOverrides(settings: currentSettings)["CHROME_PATH"] {
+            return "CHROME_PATH=\(path)"
+        }
+        return "CHROME_PATH not set — grok auto-detects Google Chrome."
+    }
+
+    private var selectedBackend: BrowserBackendID {
+        BrowserBackendID(rawValue: backend) ?? .agentBrowser
     }
 
     private var statusCard: some View {
@@ -1515,6 +1612,146 @@ private struct SkillsSettingsPane: View {
     private func sourceLabel(for skill: GrokSkillInfo) -> String {
         if !skill.pluginName.isEmpty { return "plugin: \(skill.pluginName)" }
         return skill.sourceType.isEmpty ? "unknown" : skill.sourceType
+    }
+}
+
+private struct AgentsSettingsPane: View {
+    let workspace: Workspace?
+    let onConfigurationChanged: () -> Void
+
+    private let service = GrokCLIService()
+    @AppStorage(GrokSettingsKeys.selectedAgent) private var selectedAgent = ""
+    @State private var appliedAgent = UserDefaults.standard.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
+    @State private var agents: [GrokAgentInfo] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    private var hasPendingChanges: Bool { selectedAgent != appliedAgent }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                settingsPaneHeader(
+                    "Agents",
+                    subtitle: "Pick the agent grok uses for new sessions and browse the agents discovered for this project.",
+                    systemImage: "person.2.badge.gearshape",
+                    color: .teal
+                )
+                Button("Refresh") {
+                    Task { await refresh() }
+                }
+            }
+
+            sessionAgentCard
+
+            Text("Discovered agents (`grok inspect --json`)")
+                .font(.headline)
+
+            List {
+                ForEach(agents) { agent in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(agent.name)
+                                .font(.headline)
+                            Spacer()
+                            Text(sourceLabel(for: agent))
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        if !agent.description.isEmpty {
+                            Text(agent.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(5)
+                        }
+                        if !agent.sourcePath.isEmpty {
+                            Text(agent.sourcePath)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .overlay {
+                if agents.isEmpty && !isLoading {
+                    ContentUnavailableView("No Agents", systemImage: "person.2.slash", description: Text("Grok did not report any agents for this project."))
+                }
+            }
+
+            if isLoading { ProgressView() }
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .task { await refresh() }
+    }
+
+    private var sessionAgentCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Session agent")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $selectedAgent) {
+                    Text("Default (grok build)").tag("")
+                    Text("Web browsing (bundled)").tag(GrokAgentProfiles.webProfileID)
+                    if !discoveredAgentNames.isEmpty {
+                        Section("Discovered") {
+                            ForEach(discoveredAgentNames, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 240)
+            }
+
+            Text("Passed to `grok --agent` when a session starts. **Default** uses grok's standard agent. **Web browsing** loads GrokBuild's bundled web-tuned profile (biases toward `browser_tab` / web tools). Discovered names are advanced — most are subagents meant to be spawned, not run as the main agent.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+                Button("Apply and Restart Grok") {
+                    appliedAgent = selectedAgent
+                    onConfigurationChanged()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!hasPendingChanges)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.teal.opacity(hasPendingChanges ? 0.08 : 0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.teal.opacity(hasPendingChanges ? 0.18 : 0.10)))
+    }
+
+    /// Discovered names that are not already surfaced as the built-in Default/Web options.
+    private var discoveredAgentNames: [String] {
+        agents.map(\.name).filter { $0 != GrokAgentProfiles.webProfileID }
+    }
+
+    private func refresh() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            agents = try await service.listAgents(cwd: workspace?.path)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func sourceLabel(for agent: GrokAgentInfo) -> String {
+        if !agent.pluginName.isEmpty { return "plugin: \(agent.pluginName)" }
+        return agent.sourceType.isEmpty ? "unknown" : agent.sourceType
     }
 }
 

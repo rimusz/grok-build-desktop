@@ -302,7 +302,9 @@ final class ChatStore {
         let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? workspaceReasoningEffort : ""
         let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseSettings = ComputerUseSettingsStore.loadApplied()
-        if browserSettings.enabled {
+        // The agent-browser skill + external-browser auto-start only apply to the MCP backend.
+        // The native `browser_tab` backend launches its own Chrome and needs no local setup.
+        if browserSettings.enabled, browserSettings.backend == .agentBrowser {
             do {
                 try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
             } catch {
@@ -325,8 +327,10 @@ final class ChatStore {
             AgentBrowserService.browserMCPConfig(settings: browserSettings),
             ComputerUseService.computerUseMCPConfig(settings: computerUseSettings)
         ].compactMap { $0 }
+        // Native browser backend needs no MCP; pin CHROME_PATH when a specific Chromium is chosen.
+        let envOverrides = AgentBrowserService.nativeBrowserEnvOverrides(settings: browserSettings)
         let opts = GrokLaunchOptions(
-            agent: nil,  // Agent Team / personas removed. Use --agent only for custom profiles if needed.
+            agent: GrokAgentProfiles.launchArgument(for: settings.selectedAgent),
             noMemory: settings.noMemory,
             permissionMode: settings.permissionMode,
             reasoningEffort: reasoningEffortForLaunch,
@@ -337,7 +341,8 @@ final class ChatStore {
             allowRules: lineList(settings.allowRules),
             denyRules: lineList(settings.denyRules),
             resumeSessionID: resumeSessionID,
-            mcpServers: mcpServers
+            mcpServers: mcpServers,
+            envOverrides: envOverrides
         )
         await process.start(workspace: ws, options: opts)
         connectionWatchdogTask?.cancel()
@@ -1080,7 +1085,8 @@ final class ChatStore {
             disableWebSearch: defaults.bool(forKey: GrokSettingsKeys.disableWebSearch),
             noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
             allowRules: defaults.string(forKey: GrokSettingsKeys.allowRules) ?? "",
-            denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? ""
+            denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? "",
+            selectedAgent: defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
         )
     }
 

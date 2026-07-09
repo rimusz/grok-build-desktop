@@ -22,6 +22,7 @@ let package = Package(
             exclude: ["GrokBuildApp.swift"], // We use AppKit entry point instead
             resources: [
                 .process("Resources/Assets.xcassets"),
+                .copy("Resources/Agents"),
                 .copy("Resources/Skills/grokbuild-browser-control"),
                 .copy("Resources/Skills/grokbuild-computer-use"),
                 .copy("Resources/Skills/grokbuild-desktop"),
