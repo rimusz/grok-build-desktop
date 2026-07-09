@@ -788,3 +788,300 @@ enum CustomModelStore {
         return quote(key)
     }
 }
+
+/// A user-defined subagent **role** for grok's `[subagents.roles.<name>]` in `~/.grok/config.toml`.
+///
+/// Maps to a role table plus a prompt file holding the instruction, e.g.
+/// ```toml
+/// [subagents.roles.researcher]
+/// description = "Deep research agent"
+/// model = "grok-build"
+/// prompt_file = "/Users/me/.grok/prompts/researcher.md"
+/// ```
+///
+/// grok owns how roles are spawned; GrokBuild only edits the definition. An empty `model`
+/// means the subagent inherits the parent session's model (grok's default behavior).
+struct SubagentRole: Identifiable, Hashable, Sendable {
+    /// The role name — the TOML table key `[subagents.roles.<name>]` and how the role is spawned.
+    var name: String
+    /// The model this role runs on. Empty = inherit the parent session's model.
+    var model: String
+    /// The role's system instruction, stored in a prompt file and referenced via `prompt_file`.
+    var instruction: String
+    /// Optional short description shown in `grok inspect` and the editor.
+    var description: String
+    /// Role keys GrokBuild does not edit directly (for example `default_capability_mode`).
+    /// Values are preserved as TOML literals so saving from the UI does not erase valid grok config.
+    var extraFields: [String: String]
+
+    var id: String { name }
+
+    init(
+        name: String,
+        model: String = "",
+        instruction: String = "",
+        description: String = "",
+        extraFields: [String: String] = [:]
+    ) {
+        self.name = name
+        self.model = model
+        self.instruction = instruction
+        self.description = description
+        self.extraFields = extraFields
+    }
+
+    /// Derives a valid role name from free text (letters, numbers, dashes, underscores).
+    static func suggestedName(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return "" }
+        var result = ""
+        var lastWasSeparator = false
+        for char in trimmed {
+            if char.isLetter || char.isNumber || char == "_" || char == "-" {
+                result.append(char)
+                lastWasSeparator = false
+            } else if !lastWasSeparator {
+                result.append("-")
+                lastWasSeparator = true
+            }
+        }
+        return result.trimmingCharacters(in: CharacterSet(charactersIn: "-_")).lowercased()
+    }
+
+    /// Names reserved by grok's built-in subagents; a custom role may not shadow them.
+    static let reservedNames: Set<String> = [
+        "general", "general-purpose", "explore", "plan", "vision", "verify", "computer"
+    ]
+
+    /// A validation error message, or nil when the entry is well-formed.
+    var validationError: String? {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        if trimmedName.isEmpty { return "Name is required." }
+        if trimmedName.range(of: #"^[A-Za-z0-9_-]+$"#, options: .regularExpression) == nil {
+            return "Name may only contain letters, numbers, dashes, and underscores."
+        }
+        if SubagentRole.reservedNames.contains(trimmedName.lowercased()) {
+            return "\"\(trimmedName)\" is reserved by a built-in subagent."
+        }
+        if instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Instruction is required."
+        }
+        return nil
+    }
+}
+
+/// Reads and writes custom subagent roles in `~/.grok/config.toml` (`[subagents.roles.*]`).
+///
+/// Mirrors `CustomModelStore`: it performs minimal, targeted edits — managing only
+/// `[subagents.roles.<name>]` tables while preserving every other section (models, other
+/// `[subagents.*]` tables, etc.). Each role's instruction lives in `~/.grok/prompts/<name>.md`
+/// and is referenced from the role table via `prompt_file`.
+enum SubagentRoleStore {
+    /// Maximum number of custom roles GrokBuild will manage.
+    static let maxRoles = 24
+
+    static var configURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok/config.toml")
+    }
+
+    static var promptsDirectory: URL {
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grok/prompts")
+    }
+
+    static func promptURL(for name: String) -> URL {
+        promptsDirectory.appendingPathComponent("\(name).md")
+    }
+
+    // MARK: - Loading
+
+    static func load() -> [SubagentRole] {
+        guard let contents = try? String(contentsOf: configURL, encoding: .utf8) else { return [] }
+        return parse(contents)
+    }
+
+    /// Parses `[subagents.roles.<name>]` tables, reading each instruction from its `prompt_file`.
+    static func parse(
+        _ contents: String,
+        relativePromptBaseURL: URL = URL(fileURLWithPath: NSHomeDirectory())
+    ) -> [SubagentRole] {
+        var roles: [SubagentRole] = []
+        var currentName: String?
+        var fields: [String: String] = [:]
+        var rawFields: [String: String] = [:]
+
+        func flush() {
+            guard let name = currentName else { return }
+            let instruction: String
+            if let path = fields["prompt_file"], !path.isEmpty,
+               let text = try? String(contentsOfFile: resolvePath(path, relativeTo: relativePromptBaseURL), encoding: .utf8) {
+                instruction = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                instruction = ""
+            }
+            roles.append(SubagentRole(
+                name: name,
+                model: fields["model"] ?? "",
+                instruction: instruction,
+                description: fields["description"] ?? "",
+                extraFields: rawFields.filter { !Self.managedRoleFields.contains($0.key) }
+            ))
+            currentName = nil
+            fields = [:]
+            rawFields = [:]
+        }
+
+        for rawLine in contents.components(separatedBy: .newlines) {
+            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                flush()
+                let header = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                if header.hasPrefix("subagents.roles.") {
+                    currentName = unquote(String(header.dropFirst("subagents.roles.".count)))
+                }
+                continue
+            }
+
+            guard currentName != nil, let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+            let rawValue = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            let value = unquote(rawValue)
+            fields[key] = value
+            rawFields[key] = String(rawValue)
+        }
+        flush()
+
+        return roles
+    }
+
+    // MARK: - Saving
+
+    /// Persists `roles` into config.toml (preserving unrelated content) and writes each
+    /// instruction to its prompt file. Prompt files for removed roles are deleted.
+    static func save(_ roles: [SubagentRole]) throws {
+        let previous = load().map(\.name)
+        let existing = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        let updated = rewrite(existing, roles: roles)
+
+        try FileManager.default.createDirectory(
+            at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: promptsDirectory, withIntermediateDirectories: true)
+
+        for role in roles {
+            try role.instruction.write(to: promptURL(for: role.name), atomically: true, encoding: .utf8)
+        }
+
+        // Remove prompt files for roles that no longer exist.
+        let keptNames = Set(roles.map(\.name))
+        for name in previous where !keptNames.contains(name) {
+            try? FileManager.default.removeItem(at: promptURL(for: name))
+        }
+
+        try updated.write(to: configURL, atomically: true, encoding: .utf8)
+    }
+
+    /// Drops all existing `[subagents.roles.*]` tables, then appends fresh ones, keeping every
+    /// other section intact.
+    static func rewrite(_ contents: String, roles: [SubagentRole]) -> String {
+        var output: [String] = []
+        var skipping = false
+
+        for rawLine in contents.components(separatedBy: .newlines) {
+            let trimmed = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                let header = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                skipping = header.hasPrefix("subagents.roles.")
+                if skipping { continue }
+                output.append(rawLine)
+                continue
+            }
+            if skipping { continue }
+            output.append(rawLine)
+        }
+
+        while let last = output.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            output.removeLast()
+        }
+
+        var result = output.joined(separator: "\n")
+
+        for role in roles {
+            result += "\n\n[subagents.roles.\(role.name)]\n"
+            if !role.description.trimmingCharacters(in: .whitespaces).isEmpty {
+                result += "description = \(quote(role.description))\n"
+            }
+            if !role.model.trimmingCharacters(in: .whitespaces).isEmpty {
+                result += "model = \(quote(role.model))\n"
+            }
+            for key in role.extraFields.keys.sorted() {
+                guard let rawValue = role.extraFields[key],
+                      !Self.managedRoleFields.contains(key) else { continue }
+                result += "\(key) = \(rawValue)\n"
+            }
+            result += "prompt_file = \(quote(promptURL(for: role.name).path))\n"
+        }
+
+        if !result.hasSuffix("\n") { result += "\n" }
+        return result
+    }
+
+    // MARK: - TOML helpers
+
+    private static let managedRoleFields: Set<String> = ["description", "model", "prompt_file"]
+
+    private static func resolvePath(_ path: String, relativeTo baseURL: URL) -> String {
+        if path.hasPrefix("~") {
+            return (path as NSString).expandingTildeInPath
+        }
+        if path.hasPrefix("/") {
+            return path
+        }
+        return baseURL.appendingPathComponent(path).path
+    }
+
+    static func resolvedPromptPath(_ path: String) -> String {
+        resolvePath(path, relativeTo: URL(fileURLWithPath: NSHomeDirectory()))
+    }
+
+    private static func stripComment(_ line: String) -> String {
+        var quote: Character?
+        var escaped = false
+        var result = ""
+        for char in line {
+            if let q = quote {
+                if q == "\"" {
+                    if escaped { escaped = false }
+                    else if char == "\\" { escaped = true }
+                    else if char == "\"" { quote = nil }
+                } else if char == q {
+                    quote = nil
+                }
+                result.append(char)
+                continue
+            }
+            if char == "\"" || char == "'" { quote = char; result.append(char); continue }
+            if char == "#" { break }
+            result.append(char)
+        }
+        return result
+    }
+
+    private static func unquote(_ value: String) -> String {
+        var v = value.trimmingCharacters(in: .whitespaces)
+        if v.count >= 2, (v.hasPrefix("\"") && v.hasSuffix("\"")) || (v.hasPrefix("'") && v.hasSuffix("'")) {
+            v = String(v.dropFirst().dropLast())
+        }
+        return v
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\\\", with: "\\")
+    }
+
+    private static func quote(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+}

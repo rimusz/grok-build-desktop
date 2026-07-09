@@ -1,7 +1,7 @@
 ---
 name: implementer
+model: gpt-5.5[context=272k,reasoning=high,fast=false]
 description: Implementation specialist. Use for code edits, refactors, tests, and file changes once a plan exists.
-model: composer-2.5[fast=false]
 ---
 
 You are the implementation worker.

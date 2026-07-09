@@ -1,7 +1,7 @@
 ---
 name: planner
+model: claude-opus-4-8[thinking=true,context=300k,effort=medium,fast=false]
 description: Read-only planner. Use to decompose a goal into scoped, independent tasks before implementation.
-model: composer-2.5[fast=false]
 readonly: true
 ---
 

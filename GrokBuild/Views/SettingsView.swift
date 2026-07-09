@@ -1539,6 +1539,12 @@ private struct AgentsSettingsPane: View {
     @State private var agents: [GrokAgentInfo] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showDiscoveredAgents = false
+
+    @State private var roles: [SubagentRole] = []
+    @State private var editingRole: SubagentRole?
+    @State private var isAddingRole = false
+    @State private var roleError: String?
 
     private var hasPendingChanges: Bool { selectedAgent != appliedAgent }
 
@@ -1556,11 +1562,24 @@ private struct AgentsSettingsPane: View {
                 }
             }
 
+            discoveredAgentsSection
+
             sessionAgentCard
 
-            Text("Discovered agents (`grok inspect --json`)")
-                .font(.headline)
+            customSubagentsSection
 
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .task { await refresh() }
+    }
+
+    private var discoveredAgentsSection: some View {
+        DisclosureGroup(isExpanded: $showDiscoveredAgents) {
             List {
                 ForEach(agents) { agent in
                     VStack(alignment: .leading, spacing: 6) {
@@ -1589,21 +1608,30 @@ private struct AgentsSettingsPane: View {
                     .padding(.vertical, 4)
                 }
             }
+            .frame(minHeight: 220)
             .overlay {
                 if agents.isEmpty && !isLoading {
                     ContentUnavailableView("No Agents", systemImage: "person.2.slash", description: Text("Grok did not report any agents for this project."))
                 }
             }
-
             if isLoading { ProgressView() }
-            if let errorMessage {
-                Text(errorMessage)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Discovered agents")
+                    .font(.headline)
+                Text("(`grok inspect --json`)")
                     .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
+                    .foregroundStyle(.secondary)
+                if !agents.isEmpty {
+                    Text("\(agents.count)")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
             }
         }
-        .task { await refresh() }
     }
 
     private var sessionAgentCard: some View {
@@ -1623,12 +1651,19 @@ private struct AgentsSettingsPane: View {
                             }
                         }
                     }
+                    if !customSubagentNames.isEmpty {
+                        Section("Run as custom role") {
+                            ForEach(customSubagentNames, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                    }
                 }
                 .labelsHidden()
                 .frame(width: 240)
             }
 
-            Text("Passed to `grok --agent` when a **new** session starts. **Default** uses grok's standard agent; pick a discovered agent by name to run it as the main agent instead. Each open session also has its own agent picker in the chat status bar — switch it there to override this default per session. Discovered names are advanced (most are subagents meant to be spawned, not run as the main agent).")
+            Text("Passed to `grok --agent` when a **new** session starts. **Default** uses grok's standard agent; pick a discovered agent by name to run it as the main agent instead. Each open session also has its **own** agent picker in the chat status bar — switch it there to override this default per session. Choosing a custom role here runs the whole session as that role; to spawn it as a parallel subagent, ask for it in chat.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1648,14 +1683,169 @@ private struct AgentsSettingsPane: View {
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.teal.opacity(hasPendingChanges ? 0.18 : 0.10)))
     }
 
+    private var customSubagentsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Custom subagents")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    editingRole = nil
+                    isAddingRole = true
+                } label: {
+                    Label("Add Subagent", systemImage: "plus")
+                }
+                .disabled(roles.count >= SubagentRoleStore.maxRoles)
+            }
+
+            Text("Reusable subagent **roles** grok can spawn (`[subagents.roles.*]` in `~/.grok/config.toml`). Each has a name, an optional model (empty = inherit the session's model), and an instruction saved to `~/.grok/prompts/<name>.md`.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Label {
+                Text("**How to use:** just chat normally — the main agent delegates to a matching role on its own, or ask it by name (e.g. *“use the researcher subagent to map the auth flow”*). Each runs in parallel with its own context and reports back. Keep **Disable subagents** off in Permissions for delegation to work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.teal)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.teal.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.teal.opacity(0.12)))
+
+            if roles.isEmpty {
+                Text("No custom subagents yet.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.vertical, 4)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(roles) { role in
+                        roleRow(role)
+                        if role.id != roles.last?.id { Divider() }
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.03)))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08)))
+            }
+
+            if let roleError {
+                Text(roleError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+        }
+        .sheet(isPresented: $isAddingRole) {
+            SubagentRoleEditor(
+                role: editingRole,
+                existingNames: Set(roles.map(\.name)),
+                modelOptions: modelOptions
+            ) { saved in
+                upsertRole(saved)
+            }
+        }
+    }
+
+    private func roleRow(_ role: SubagentRole) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(role.name)
+                        .font(.subheadline.weight(.semibold))
+                    Text(role.model.isEmpty ? "inherits model" : role.model)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.teal.opacity(0.12)))
+                }
+                if !role.description.isEmpty {
+                    Text(role.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Text(role.instruction)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button {
+                editingRole = role
+                isAddingRole = true
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless)
+            .help("Edit subagent")
+            Button(role: .destructive) {
+                removeRole(role)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove subagent")
+        }
+        .padding(12)
+    }
+
+    /// Model ids available in the role editor picker (built-ins + custom models from config.toml).
+    private var modelOptions: [String] {
+        var options = ["grok-build"]
+        for model in CustomModelStore.load().models where !options.contains(model.id) {
+            options.append(model.id)
+        }
+        return options
+    }
+
+    private func upsertRole(_ role: SubagentRole) {
+        if let editing = editingRole, editing.name != role.name {
+            roles.removeAll { $0.name == editing.name }
+        }
+        if let index = roles.firstIndex(where: { $0.name == role.name }) {
+            roles[index] = role
+        } else {
+            roles.append(role)
+        }
+        persistRoles()
+    }
+
+    private func removeRole(_ role: SubagentRole) {
+        roles.removeAll { $0.name == role.name }
+        persistRoles()
+    }
+
+    private func persistRoles() {
+        do {
+            try SubagentRoleStore.save(roles)
+            roleError = nil
+            onConfigurationChanged()
+        } catch {
+            roleError = "Could not save subagents: \(error.localizedDescription)"
+        }
+        roles = SubagentRoleStore.load()
+    }
+
     /// Discovered names that are not already surfaced as the built-in options.
     private var discoveredAgentNames: [String] {
         agents.map(\.name).filter { name in !GrokAgentProfiles.builtInOptions.contains { $0.id == name } }
     }
 
+    /// Custom subagent roles that are not already present in built-in or discovered agent lists.
+    private var customSubagentNames: [String] {
+        let excluded = Set(GrokAgentProfiles.builtInOptions.map(\.id) + agents.map(\.name))
+        return roles.map(\.name).filter { !excluded.contains($0) }
+    }
+
     private func refresh() async {
         isLoading = true
         errorMessage = nil
+        roles = SubagentRoleStore.load()
         do {
             agents = try await service.listAgents(cwd: workspace?.path)
         } catch {
@@ -1667,6 +1857,120 @@ private struct AgentsSettingsPane: View {
     private func sourceLabel(for agent: GrokAgentInfo) -> String {
         if !agent.pluginName.isEmpty { return "plugin: \(agent.pluginName)" }
         return agent.sourceType.isEmpty ? "unknown" : agent.sourceType
+    }
+}
+
+/// Add/edit sheet for a custom subagent role (name, model, instruction, description).
+private struct SubagentRoleEditor: View {
+    let role: SubagentRole?
+    let existingNames: Set<String>
+    let modelOptions: [String]
+    let onSave: (SubagentRole) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name = ""
+    @State private var model = ""
+    @State private var description = ""
+    @State private var instruction = ""
+
+    private var isEditing: Bool { role != nil }
+
+    private var validationError: String? {
+        let candidate = SubagentRole(
+            name: name.trimmingCharacters(in: .whitespaces),
+            model: model,
+            instruction: instruction,
+            description: description
+        )
+        if let error = candidate.validationError { return error }
+        let originalName = role?.name
+        if name.trimmingCharacters(in: .whitespaces) != originalName,
+           existingNames.contains(name.trimmingCharacters(in: .whitespaces)) {
+            return "A subagent named \"\(name.trimmingCharacters(in: .whitespaces))\" already exists."
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isEditing ? "Edit Subagent" : "Add Subagent")
+                .font(.title3.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                TextField("e.g. researcher", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isEditing)
+                    .onChange(of: name) { _, newValue in
+                        if !isEditing {
+                            name = SubagentRole.suggestedName(from: newValue)
+                        }
+                    }
+                if isEditing {
+                    Text("Name can't be changed after creation.")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                Picker("", selection: $model) {
+                    Text("Inherit session model").tag("")
+                    ForEach(modelOptions, id: \.self) { option in
+                        Text(option).tag(option)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Description (optional)").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                TextField("Short summary", text: $description)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Instruction").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                TextEditor(text: $instruction)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 140)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.15)))
+                Text("Saved to ~/.grok/prompts/\(name.isEmpty ? "<name>" : name).md")
+                    .font(.caption2.monospaced()).foregroundStyle(.tertiary)
+            }
+
+            if let validationError {
+                Text(validationError).font(.caption).foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button(isEditing ? "Save" : "Add") {
+                    onSave(SubagentRole(
+                        name: name.trimmingCharacters(in: .whitespaces),
+                        model: model,
+                        instruction: instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+                        description: description.trimmingCharacters(in: .whitespaces),
+                        extraFields: role?.extraFields ?? [:]
+                    ))
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(validationError != nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .onAppear {
+            if let role {
+                name = role.name
+                model = role.model
+                description = role.description
+                instruction = role.instruction
+            }
+        }
     }
 }
 

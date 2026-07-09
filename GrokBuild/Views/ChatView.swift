@@ -675,6 +675,20 @@ struct ChatView: View {
                 }
             }
 
+            let excluded = Set(GrokAgentProfiles.builtInOptions.map(\.id) + store.discoveredAgents.map(\.name))
+            let customSubagents = SubagentRoleStore.load().map(\.name).filter { !excluded.contains($0) }
+            if !customSubagents.isEmpty {
+                Section("Run as custom role") {
+                    ForEach(customSubagents, id: \.self) { name in
+                        Button {
+                            Task { await store.setSessionAgent(name) }
+                        } label: {
+                            Label(name, systemImage: effective == name ? "checkmark" : "person.2")
+                        }
+                    }
+                }
+            }
+
             Divider()
 
             Button {
