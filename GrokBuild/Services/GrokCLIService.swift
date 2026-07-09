@@ -294,6 +294,9 @@ struct GrokPermissionSettings: Sendable {
     /// Session agent selection passed to `grok --agent`. Empty = grok's default agent;
     /// any other value is a discovered agent name (see `GrokAgentProfiles`).
     var selectedAgent: String
+    /// Opt-in cross-session memory (experimental). `true` → `--experimental-memory`,
+    /// `false` → `--no-memory` (memory is disabled by default; see `MemoryStore`).
+    var memoryEnabled: Bool
 
     static let defaults = GrokPermissionSettings(
         permissionMode: "default",
@@ -304,7 +307,8 @@ struct GrokPermissionSettings: Sendable {
         noSubagents: false,
         allowRules: "",
         denyRules: "",
-        selectedAgent: ""
+        selectedAgent: "",
+        memoryEnabled: false
     )
 }
 
@@ -371,6 +375,7 @@ enum GrokSettingsKeys {
     static let allowRules = "grokbuild.allowRules"
     static let denyRules = "grokbuild.denyRules"
     static let selectedAgent = "grokbuild.selectedAgent"
+    static let memoryEnabled = "grokbuild.memoryEnabled"
 }
 
 /// Best-effort sign-in detection used only at launch, before any grok process runs.

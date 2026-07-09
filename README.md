@@ -56,6 +56,13 @@ Let Grok control **native macOS UI** — apps, menus, dialogs, Finder, Safari, a
 - Installs a `grokbuild-computer-use` skill; use Computer Use for macOS apps, Browser control for websites in Chromium.
 - Optional **Cursor integration** — **Install for Cursor** copies the MCP helper to `~/.grokbuild/computer-use/` and registers `grokbuild-computer-use` in `~/.cursor/mcp.json` so Cursor Agent gets the same tools globally.
 
+### Memory (cross-session)
+Let Grok recall facts, decisions, and patterns from earlier sessions ([Memory](https://docs.x.ai/build/features/memory)) — experimental and off by default. Turn it on in **Settings → Memory**. Once enabled, a **Memory** pill appears in the chat status bar (it stays hidden while memory is off) for quick access to browse/remember/settings:
+- **Enable** — flips grok's launch flag (`--experimental-memory`; off passes `--no-memory`) and restarts Grok. It's app-scoped, so it does **not** change your `~/.grok/config.toml` or the grok TUI. Once on, Grok automatically searches memory on the first turn of each session and can read it with `memory_search` / `memory_get`.
+- **Browse** — a read-only viewer of everything under `~/.grok/memory/` (global `MEMORY.md`, per-project `MEMORY.md`, and session logs newest-first) with a preview pane; copy a path, reveal in Finder, or delete a session log (global/workspace files are protected).
+- **Remember** — save a note that Grok appends to your global `MEMORY.md`; its file watcher reindexes it so future sessions can recall it.
+- **Flush & Dream** — grok's `/flush` (rich session summary) and `/dream` (consolidation) are TUI-only commands and aren't exposed to the app over the agent protocol; they still run **automatically** (on session end, before compaction, and on dream gates). Run `/flush` or `/dream` in the grok TUI to trigger them on demand.
+
 ### Beyond coding — general-purpose use
 GrokBuild is a full Grok agent cockpit, not just a coding tool. With **Browser control** and **Computer Use** enabled you can run everyday, non-coding tasks. A session is always anchored to **a folder**, but it does **not** have to be a code repo — point it at any folder (e.g. `~/Documents` or a throwaway scratch folder); the folder is just the working directory and is ignored for browser/desktop tasks.
 

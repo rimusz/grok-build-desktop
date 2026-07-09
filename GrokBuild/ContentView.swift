@@ -147,6 +147,7 @@ struct ContentView: View {
                         onOpenBrowserSettings: { openSettings(tab: .browser) },
                         onOpenComputerUseSettings: { openSettings(tab: .computerUse) },
                         onOpenAgentSettings: { openSettings(tab: .agents) },
+                        onOpenMemorySettings: { openSettings(tab: .memory) },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)

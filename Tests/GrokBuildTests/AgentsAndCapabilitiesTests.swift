@@ -51,4 +51,36 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
     func testPermissionSettingsDefaultsToEmptyAgent() {
         XCTAssertEqual(GrokPermissionSettings.defaults.selectedAgent, "")
     }
+
+    // MARK: - Memory launch flag
+
+    func testMemoryEnabledDefaultsOff() {
+        XCTAssertFalse(GrokPermissionSettings.defaults.memoryEnabled)
+    }
+
+    func testMemoryFlagMapsEnabledToExperimentalMemory() {
+        XCTAssertEqual(
+            GrokMemoryFlag.argument(noMemory: false, experimentalMemory: true),
+            "--experimental-memory"
+        )
+    }
+
+    func testMemoryFlagMapsDisabledToNoMemory() {
+        XCTAssertEqual(
+            GrokMemoryFlag.argument(noMemory: true, experimentalMemory: false),
+            "--no-memory"
+        )
+    }
+
+    func testMemoryFlagNoMemoryTakesPriority() {
+        // grok gives `--no-memory` absolute priority; never emit both.
+        XCTAssertEqual(
+            GrokMemoryFlag.argument(noMemory: true, experimentalMemory: true),
+            "--no-memory"
+        )
+    }
+
+    func testMemoryFlagOmittedWhenNeitherSet() {
+        XCTAssertNil(GrokMemoryFlag.argument(noMemory: false, experimentalMemory: false))
+    }
 }

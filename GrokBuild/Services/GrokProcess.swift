@@ -32,6 +32,7 @@ struct GrokLaunchOptions: Sendable {
     var agent: String? = nil  // advanced: for custom --agent profiles only (built-in personas removed)
     var extraArgs: [String] = []
     var noMemory: Bool = false
+    var experimentalMemory: Bool = false  // maps to `--experimental-memory` (mutually exclusive with noMemory)
     var permissionMode: String? = nil
     var reasoningEffort: String? = nil   // passed to `grok agent --reasoning-effort X stdio`
     var model: String? = nil             // e.g. model name like "gpt-5.5-extra-high" or grok variant
@@ -42,6 +43,17 @@ struct GrokLaunchOptions: Sendable {
     var denyRules: [String] = []
     var resumeSessionID: String? = nil
     var mcpServers: [MCPServerConfig] = []
+}
+
+/// Resolves grok's mutually-exclusive memory launch flag. `--no-memory` has absolute priority
+/// (matches grok's own precedence); `--experimental-memory` enables cross-session memory;
+/// `nil` leaves memory at grok's default.
+enum GrokMemoryFlag {
+    static func argument(noMemory: Bool, experimentalMemory: Bool) -> String? {
+        if noMemory { return "--no-memory" }
+        if experimentalMemory { return "--experimental-memory" }
+        return nil
+    }
 }
 
 /// Detects ACP `session/update` events replayed during `session/load`.
@@ -371,7 +383,12 @@ final class GrokProcess: @unchecked Sendable {
         // ACP: grok [top-level flags] agent [agent flags] stdio
         var args: [String] = []
         if let a = options.agent, !a.isEmpty { args += ["--agent", a] }
-        if options.noMemory { args.append("--no-memory") }
+        if let memoryFlag = GrokMemoryFlag.argument(
+            noMemory: options.noMemory,
+            experimentalMemory: options.experimentalMemory
+        ) {
+            args.append(memoryFlag)
+        }
         if let mode = options.permissionMode, !mode.isEmpty, mode != "default" {
             args += ["--permission-mode", mode]
         }

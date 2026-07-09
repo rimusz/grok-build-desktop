@@ -394,7 +394,9 @@ final class ChatStore {
         ].compactMap { $0 }
         let opts = GrokLaunchOptions(
             agent: GrokAgentProfiles.launchArgument(for: effectiveAgentSelection),
-            noMemory: settings.noMemory,
+            // Memory is a single app-scoped toggle: on → `--experimental-memory`, off → `--no-memory`.
+            noMemory: !settings.memoryEnabled,
+            experimentalMemory: settings.memoryEnabled,
             permissionMode: settings.permissionMode,
             reasoningEffort: reasoningEffortForLaunch,
             model: modelForLaunch.isEmpty ? nil : modelForLaunch,
@@ -527,6 +529,27 @@ final class ChatStore {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return await send("Cancel the scheduled task with id \(trimmed) (use scheduler_delete) and do nothing else.")
+    }
+
+    // MARK: - Memory
+
+    /// Save a note to grok's global memory (`~/.grok/memory/MEMORY.md`). grok's file watcher
+    /// reindexes it on the next memory search, so it becomes recallable in future sessions.
+    ///
+    /// This writes the file directly rather than sending `/remember`: that slash command is a
+    /// TUI-only pager builtin and is not exposed over `grok agent stdio` (ACP).
+    @discardableResult
+    func remember(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            let url = try MemoryStore.appendGlobalNote(trimmed)
+            appendSystemNote("Remembered — saved to \(url.path).")
+            return true
+        } catch {
+            lastError = "Couldn't save memory note: \(error.localizedDescription)"
+            return false
+        }
     }
 
     private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
@@ -1186,8 +1209,14 @@ final class ChatStore {
             noSubagents: defaults.bool(forKey: GrokSettingsKeys.noSubagents),
             allowRules: defaults.string(forKey: GrokSettingsKeys.allowRules) ?? "",
             denyRules: defaults.string(forKey: GrokSettingsKeys.denyRules) ?? "",
-            selectedAgent: defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? ""
+            selectedAgent: defaults.string(forKey: GrokSettingsKeys.selectedAgent) ?? "",
+            memoryEnabled: defaults.bool(forKey: GrokSettingsKeys.memoryEnabled)
         )
+    }
+
+    /// Whether cross-session memory is enabled for new/restarted sessions (Settings → Memory).
+    var isMemoryEnabled: Bool {
+        defaults.bool(forKey: GrokSettingsKeys.memoryEnabled)
     }
 
     private func lineList(_ text: String) -> [String] {
