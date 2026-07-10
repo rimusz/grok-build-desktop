@@ -48,6 +48,7 @@ struct ChatView: View {
     @State private var showMemoryBrowser = false
     @State private var showRememberPrompt = false
     @State private var memoryNoteText = ""
+    @State private var cachedCustomSubagentNames: [String] = []
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -641,6 +642,10 @@ struct ChatView: View {
         .padding(.horizontal, 4)
         .task(id: store.currentWorkspace?.id) {
             await store.loadDiscoveredAgentsIfNeeded()
+            cachedCustomSubagentNames = SubagentRoleStore.load().map(\.name)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .subagentRolesChanged)) { _ in
+            cachedCustomSubagentNames = SubagentRoleStore.load().map(\.name)
         }
     }
 
@@ -670,6 +675,20 @@ struct ChatView: View {
                             Task { await store.setSessionAgent(name) }
                         } label: {
                             Label(name, systemImage: effective == name ? "checkmark" : "person.crop.square")
+                        }
+                    }
+                }
+            }
+
+            let excluded = Set(GrokAgentProfiles.builtInOptions.map(\.id) + store.discoveredAgents.map(\.name))
+            let customSubagents = cachedCustomSubagentNames.filter { !excluded.contains($0) }
+            if !customSubagents.isEmpty {
+                Section("Run as custom role") {
+                    ForEach(customSubagents, id: \.self) { name in
+                        Button {
+                            Task { await store.setSessionAgent(name) }
+                        } label: {
+                            Label(name, systemImage: effective == name ? "checkmark" : "person.2")
                         }
                     }
                 }

@@ -42,6 +42,15 @@ Stored in `UserDefaults` via `GrokSettingsKeys` — `allowRules`, `denyRules`, `
 - **UI:** `ChatView.agentStatusPill` menu (built-ins from `GrokAgentProfiles.builtInOptions` + discovered via `ChatStore.loadDiscoveredAgentsIfNeeded`). Picking one calls `setSessionAgent` → **restarts that tab's grok** (agents change only at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`.
 - Discover agents via `GrokCLIService.listAgents(cwd:)` (parses `agents` from `grok inspect --json`). Keep this thin — grok owns agents/personas.
 
+## Custom subagents (roles)
+
+grok owns subagent orchestration (main agent delegates to subagents in parallel; gated by `--no-subagents` / Settings → Permissions "Disable subagents"). GrokBuild adds a thin CRUD editor for **roles** in Settings → **Agents** → "Custom subagents".
+
+- **Schema (installed grok, verified via `~/.grok/README.md`):** roles live in `~/.grok/config.toml` as `[subagents.roles.<name>]` with `description`, `model` (empty = inherit parent session model), and `prompt_file`. Personas (`[subagents.personas.*]`, tone-only, no model) and `[subagents.toggle]` / `[subagents.models]` are *not* managed by the app. The third-party `~/.grok/user-settings.json` `subAgents` array is a different CLI — **not** what xAI's grok uses.
+- **Storage:** `SubagentRole` + `SubagentRoleStore` in `CustomModelSettings.swift` mirror `CustomModelStore` — minimal targeted TOML edits that preserve all other content and unmanaged role keys (for example `default_capability_mode`); each instruction is written to `~/.grok/prompts/<name>.md` and referenced via `prompt_file`. Relative `prompt_file` values resolve from the user's home directory. Removing a role deletes its GrokBuild-managed prompt file.
+- **UI:** `SubagentRoleEditor` sheet (name/model/instruction/description). Model picker options come from `CustomModelStore.load()` + `grok-build`. Reserved names (`general`, `general-purpose`, `explore`, `plan`, `vision`, `verify`, `computer`) are rejected. Roles are a separate concept from the read-only discovered-agents list — `grok inspect --json` does not report them — but custom role names are shown under **Run as custom role** in Settings' default-agent picker and the chat agent pill menu. Choosing one in those pickers runs the whole session as that role; to spawn it as a child subagent, ask for it in chat.
+- **Why edit the file directly:** grok's `/agents` (`/config-agents`) TUI manager is a pager builtin, not exposed over `grok agent stdio` (same limitation as `/remember`). Covered by `AgentsAndCapabilitiesTests`.
+
 ## Browser backend
 
 Browser tools are provided by the bundled `agent-browser` CLI (`BrowserSettings.swift`), exposed to grok as an stdio MCP server (`grokbuild-browser`) via `AgentBrowserService.browserMCPConfig`; managed or external Chromium over CDP. (grok's native `browser_tab` was evaluated and removed — it wasn't exposed to sessions in practice.)

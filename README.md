@@ -106,7 +106,10 @@ Tips: enable each tool from the chat status-bar pills (**Browser Tools On/Off**,
 - **Plugins** — manage installed Grok plugins and add trusted plugin sources.
 - **Marketplace** — browse available plugins and manage marketplace sources.
 - **Skills** — view user, project, compatibility, and plugin skills available to Grok.
-- **Agents** — browse the agents Grok discovers for the project and choose the **default agent for new sessions** (grok's default, or a discovered agent by name), passed through as `grok --agent`. Each open session also has its **own** agent picker in the chat status bar — switch it there to run a different agent per session; changing it restarts that session's Grok.
+- **Agents** — pick the **main agent** and manage **custom subagents**:
+  - *Main agent* — browse the agents Grok discovers for the project and choose the **default agent for new sessions** (grok's default, or a discovered agent by name), passed through as `grok --agent`. Each open session also has its **own** agent picker in the chat status bar — switch it there to run a different agent per session; changing it restarts that session's Grok.
+  - *Custom subagents (roles)* — create reusable subagents inline, each with a name, an optional model (empty = inherit the session's model), and an instruction. They're saved to `[subagents.roles.*]` in `~/.grok/config.toml` (instruction in `~/.grok/prompts/<name>.md`); add, edit, and remove them right in the tab. Custom roles also appear under **Run as custom role** in the default-agent picker and chat agent pill menu; choosing one there runs the whole session as that role.
+  - *Using subagents* — just chat normally: the main agent delegates to a matching subagent automatically, or you can ask for one by name (e.g. *"use the researcher subagent to map the auth flow"*). Each runs in parallel with its own context window and reports back. Keep **Disable subagents** off in **Permissions** for delegation to work.
 - **MCP servers** — configure external Model Context Protocol servers and run health checks.
 - **Permissions** — session safety toggles (disable memory, web search, or subagents for new sessions).
 
