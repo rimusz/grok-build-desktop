@@ -711,6 +711,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
 | `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
+| `.subagentRolesChanged` | Custom subagent roles saved in Settings | `ChatView` refreshes `cachedCustomSubagentNames` in the agent pill |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
 

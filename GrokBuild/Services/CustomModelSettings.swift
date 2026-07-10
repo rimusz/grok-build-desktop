@@ -958,10 +958,12 @@ enum SubagentRoleStore {
     // MARK: - Saving
 
     /// Persists `roles` into config.toml (preserving unrelated content) and writes each
-    /// instruction to its prompt file. Prompt files for removed roles are deleted.
+    /// instruction to its prompt file. Prompt files for removed roles are deleted only when
+    /// the role's `prompt_file` in config.toml pointed to the GrokBuild-managed path.
     static func save(_ roles: [SubagentRole]) throws {
-        let previous = load().map(\.name)
         let existing = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        // Capture prompt_file paths before overwriting, so we can check which files are safe to delete.
+        let previousPromptFiles = parsePromptFilePaths(existing)
         let updated = rewrite(existing, roles: roles)
 
         try FileManager.default.createDirectory(
@@ -973,13 +975,42 @@ enum SubagentRoleStore {
             try role.instruction.write(to: promptURL(for: role.name), atomically: true, encoding: .utf8)
         }
 
-        // Remove prompt files for roles that no longer exist.
+        // Remove prompt files only for roles that no longer exist and whose prompt_file
+        // resolved to the GrokBuild-managed path (to avoid deleting user-maintained files).
         let keptNames = Set(roles.map(\.name))
-        for name in previous where !keptNames.contains(name) {
-            try? FileManager.default.removeItem(at: promptURL(for: name))
+        let homeURL = URL(fileURLWithPath: NSHomeDirectory())
+        for (name, rawPath) in previousPromptFiles where !keptNames.contains(name) {
+            let managedURL = promptURL(for: name).standardized
+            let resolvedURL = URL(fileURLWithPath: resolvePath(rawPath, relativeTo: homeURL)).standardized
+            if resolvedURL == managedURL {
+                try? FileManager.default.removeItem(at: managedURL)
+            }
         }
 
         try updated.write(to: configURL, atomically: true, encoding: .utf8)
+    }
+
+    /// Returns a map of role name → raw `prompt_file` value for every `[subagents.roles.*]` table.
+    private static func parsePromptFilePaths(_ contents: String) -> [String: String] {
+        var result: [String: String] = [:]
+        var currentName: String?
+        for rawLine in contents.components(separatedBy: .newlines) {
+            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                let header = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                currentName = header.hasPrefix("subagents.roles.")
+                    ? unquote(String(header.dropFirst("subagents.roles.".count)))
+                    : nil
+                continue
+            }
+            guard let name = currentName, let eq = line.firstIndex(of: "=") else { continue }
+            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
+            guard key == "prompt_file" else { continue }
+            let rawValue = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            result[name] = unquote(rawValue)
+        }
+        return result
     }
 
     /// Drops all existing `[subagents.roles.*]` tables, then appends fresh ones, keeping every

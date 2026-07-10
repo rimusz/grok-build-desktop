@@ -1824,11 +1824,12 @@ private struct AgentsSettingsPane: View {
         do {
             try SubagentRoleStore.save(roles)
             roleError = nil
+            roles = SubagentRoleStore.load()
+            NotificationCenter.default.post(name: .subagentRolesChanged, object: nil)
             onConfigurationChanged()
         } catch {
             roleError = "Could not save subagents: \(error.localizedDescription)"
         }
-        roles = SubagentRoleStore.load()
     }
 
     /// Discovered names that are not already surfaced as the built-in options.

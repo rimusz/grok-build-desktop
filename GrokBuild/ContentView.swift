@@ -1202,6 +1202,7 @@ extension Notification.Name {
     static let liveSessionModelChanged = Notification.Name("liveSessionModelChanged")
     static let liveSessionAgentChanged = Notification.Name("liveSessionAgentChanged")
     static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
+    static let subagentRolesChanged = Notification.Name("subagentRolesChanged")
     static let grokBuildUpdateAvailable = Notification.Name("grokBuildUpdateAvailable")
     static let grokBuildUpdateStateChanged = Notification.Name("grokBuildUpdateStateChanged")
     static let grokBuildUpdaterPhaseChanged = Notification.Name("grokBuildUpdaterPhaseChanged")
