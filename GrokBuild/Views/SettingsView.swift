@@ -2760,8 +2760,7 @@ private struct CustomModelsSettingsPane: View {
     }
 
     private func selectableModels(for provider: Provider) -> [FetchedModel] {
-        if provider.usesCatalogModels { return provider.catalogModels }
-        return fetchedModels[provider.id] ?? []
+        fetchedModels[provider.id] ?? []
     }
 
     /// True when a provider has a non-empty fetched-model list ready for "Add model".
@@ -2773,7 +2772,6 @@ private struct CustomModelsSettingsPane: View {
         if isAtModelLimit {
             return "Maximum of \(CustomModelStore.maxModels) custom models reached. Remove a model first."
         }
-        if provider.usesCatalogModels { return nil }
         if !hasFetchedModels(for: provider) {
             return "Fetch models from this provider first."
         }
@@ -2998,11 +2996,6 @@ private struct CustomModelsSettingsPane: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            if preset.usesCatalogModels {
-                Text("Model list from docs")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
             Button(installed ? "Configure" : "Install") { addProviderPreset(preset) }
                 .controlSize(.small)
                 .buttonStyle(.bordered)
@@ -3055,11 +3048,7 @@ private struct CustomModelsSettingsPane: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
-                    if provider.usesCatalogModels {
-                        Text("\(provider.catalogModelIDs.count) in catalog")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                    } else if let fetched = fetchedModels[provider.id] {
+                    if let fetched = fetchedModels[provider.id] {
                         if fetched.isEmpty {
                             Text("0 available")
                                 .font(.caption2)
@@ -3090,9 +3079,7 @@ private struct CustomModelsSettingsPane: View {
                         .controlSize(.small)
                         .disabled(addModelDisabled)
                         .help(addModelDisabledReason(for: provider)
-                            ?? (provider.usesCatalogModels
-                                ? "Add a model from the provider catalog."
-                                : "Add a model from the fetched list."))
+                            ?? "Add a model from the fetched list.")
                     Button("Edit") { beginEditingProvider(provider) }
                         .controlSize(.small)
                     let inUse = modelsUsing(provider).count
@@ -3106,63 +3093,65 @@ private struct CustomModelsSettingsPane: View {
                             ? "Remove its \(inUse) model\(inUse == 1 ? "" : "s") first before removing this provider."
                             : "Remove this provider.")
                 }
-                if provider.usesCatalogModels {
-                    if let docsURL = provider.catalogDocumentationURL {
-                        Link(destination: docsURL) {
-                            Label("Model list", systemImage: "book")
+                let canFetchProvider = canFetch(
+                    baseURL: provider.baseURL,
+                    apiKey: provider.apiKey,
+                    providerID: provider.id
+                )
+                let highlightFetch = !hasFetchedModels(for: provider) && canFetchProvider
+                Group {
+                    if highlightFetch {
+                        Button {
+                            fetchModels(for: provider)
+                        } label: {
+                            if fetchingProviderID == provider.id {
+                                HStack(spacing: 5) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Fetching…")
+                                }
+                            } else {
+                                Label("Fetch models", systemImage: "arrow.down.circle.fill")
+                            }
                         }
                         .controlSize(.small)
-                        .font(.caption)
-                        .help("Open the \(provider.name) models table in the docs.")
-                    }
-                } else {
-                    let canFetchProvider = canFetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
-                    let highlightFetch = !hasFetchedModels(for: provider) && canFetchProvider
-                    Group {
-                        if highlightFetch {
-                            Button {
-                                fetchModels(for: provider)
-                            } label: {
-                                if fetchingProviderID == provider.id {
-                                    HStack(spacing: 5) {
-                                        ProgressView().controlSize(.small)
-                                        Text("Fetching…")
-                                    }
-                                } else {
-                                    Label("Fetch models", systemImage: "arrow.down.circle.fill")
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                    } else {
+                        Button {
+                            fetchModels(for: provider)
+                        } label: {
+                            if fetchingProviderID == provider.id {
+                                HStack(spacing: 5) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Fetching…")
                                 }
+                            } else {
+                                Label("Fetch models", systemImage: "arrow.down.circle")
                             }
-                            .controlSize(.small)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.purple)
-                        } else {
-                            Button {
-                                fetchModels(for: provider)
-                            } label: {
-                                if fetchingProviderID == provider.id {
-                                    HStack(spacing: 5) {
-                                        ProgressView().controlSize(.small)
-                                        Text("Fetching…")
-                                    }
-                                } else {
-                                    Label("Fetch models", systemImage: "arrow.down.circle")
-                                }
-                            }
-                            .controlSize(.small)
-                            .buttonStyle(.borderless)
                         }
+                        .controlSize(.small)
+                        .buttonStyle(.borderless)
                     }
-                    .disabled(
-                        fetchingProviderID == provider.id
-                        || !canFetchProvider
-                    )
-                    .help(highlightFetch
-                        ? "Fetch the provider's model list before adding a model."
-                        : "Refresh the provider's model list.")
                 }
+                .disabled(
+                    fetchingProviderID == provider.id
+                    || !canFetchProvider
+                )
+                .help(fetchHelp(for: provider, highlight: highlightFetch))
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func fetchHelp(for provider: Provider, highlight: Bool) -> String {
+        if provider.supportsLiveCatalogRefresh {
+            return highlight
+                ? "Fetch the Cline Pass model list before adding a model (no API key required)."
+                : "Refresh the Cline Pass model list (no API key required)."
+        }
+        return highlight
+            ? "Fetch the provider's model list before adding a model."
+            : "Refresh the provider's model list."
     }
 
     @ViewBuilder
@@ -3264,41 +3253,7 @@ private struct CustomModelsSettingsPane: View {
     /// "Fetch models" control + result/error summary inside the provider editor.
     @ViewBuilder
     private var providerFetchRow: some View {
-        if let preset = ProviderPreset.matching(provider: providerDraft), preset.usesCatalogModels {
-            catalogModelsReferenceRow(preset: preset)
-        } else {
-            providerModelFetchRow
-        }
-    }
-
-    @ViewBuilder
-    private func catalogModelsReferenceRow(preset: ProviderPreset) -> some View {
-        Divider()
-
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Models from \(preset.displayName) docs (\(preset.catalogModelIDs.count))")
-                .font(.caption.weight(.semibold))
-
-            if let url = preset.catalogDocumentationURL {
-                Link("Documentation", destination: url)
-                    .font(.caption)
-            }
-
-            Text(preset.catalogModels.map { entry in
-                if let name = entry.ownedBy, !name.isEmpty {
-                    return "\(name) — \(entry.id)"
-                }
-                return entry.id
-            }.joined(separator: "\n"))
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-                .lineLimit(12)
-
-            Text("This provider has no public /models API. Pick models from the catalog when adding a model.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
+        providerModelFetchRow
     }
 
     @ViewBuilder
@@ -3308,8 +3263,11 @@ private struct CustomModelsSettingsPane: View {
         let fetched = fetchedModels[draftKey] ?? []
         let canFetchNow = canFetch(
             baseURL: providerDraft.baseURL,
-            apiKey: providerDraft.apiKey
+            apiKey: providerDraft.apiKey,
+            providerID: providerDraft.id
         )
+        let usesLiveCatalog = providerDraft.supportsLiveCatalogRefresh
+            || ProviderPreset.matching(provider: providerDraft)?.supportsLiveCatalogRefresh == true
 
         Divider()
 
@@ -3335,9 +3293,16 @@ private struct CustomModelsSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.green)
                 }
+
+                if let docsURL = ProviderPreset.matching(provider: providerDraft)?.catalogDocumentationURL {
+                    Link("Documentation", destination: docsURL)
+                        .font(.caption)
+                }
             }
 
-            Text("Queries \(ProviderModelFetcher.modelsURL(for: providerDraft.baseURL)?.absoluteString ?? "the provider")/… to list available models. Enter the API key first (local servers need none).")
+            Text(usesLiveCatalog
+                 ? "Fetches the live Cline Pass catalog (no API key required)."
+                 : "Queries \(ProviderModelFetcher.modelsURL(for: providerDraft.baseURL)?.absoluteString ?? "the provider")/… to list available models. Enter the API key first (local servers need none).")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -3482,38 +3447,37 @@ private struct CustomModelsSettingsPane: View {
                 }
 
                 if let provider = providers.first(where: { $0.id == draft.providerID }) {
-                    if provider.usesCatalogModels {
-                        if let docsURL = provider.catalogDocumentationURL {
-                            settingRow("") {
+                    settingRow("") {
+                        HStack(spacing: 8) {
+                            Button {
+                                fetchModels(for: provider)
+                            } label: {
+                                if fetchingProviderID == provider.id {
+                                    HStack(spacing: 5) {
+                                        ProgressView().controlSize(.small)
+                                        Text("Fetching…")
+                                    }
+                                } else {
+                                    Label("Fetch models from \(provider.name)", systemImage: "arrow.down.circle")
+                                }
+                            }
+                            .controlSize(.small)
+                            .disabled(
+                                fetchingProviderID == provider.id
+                                || !canFetch(
+                                    baseURL: provider.baseURL,
+                                    apiKey: provider.apiKey,
+                                    providerID: provider.id
+                                )
+                            )
+                            if let docsURL = provider.catalogDocumentationURL {
                                 Link("Documentation", destination: docsURL)
                                     .font(.caption)
                             }
-                        }
-                    } else {
-                        settingRow("") {
-                            HStack(spacing: 8) {
-                                Button {
-                                    fetchModels(for: provider)
-                                } label: {
-                                    if fetchingProviderID == provider.id {
-                                        HStack(spacing: 5) {
-                                            ProgressView().controlSize(.small)
-                                            Text("Fetching…")
-                                        }
-                                    } else {
-                                        Label("Fetch models from \(provider.name)", systemImage: "arrow.down.circle")
-                                    }
-                                }
-                                .controlSize(.small)
-                                .disabled(
-                                    fetchingProviderID == provider.id
-                                    || !canFetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
-                                )
-                                if fetchErrorProviderID == provider.id, let message = fetchErrorMessage {
-                                    Text(message)
-                                        .font(.caption2)
-                                        .foregroundStyle(.orange)
-                                }
+                            if fetchErrorProviderID == provider.id, let message = fetchErrorMessage {
+                                Text(message)
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
                             }
                         }
                     }
@@ -3684,7 +3648,7 @@ private struct CustomModelsSettingsPane: View {
                 if let picked = selectableModelsForDraft.first(where: { $0.id == newValue }),
                    let displayName = picked.ownedBy,
                    !displayName.isEmpty {
-                    if draftProvider?.usesCatalogModels == true {
+                    if draftProvider?.supportsLiveCatalogRefresh == true {
                         draft.name = ClinePassCatalog.displayName(for: displayName)
                     } else {
                         draft.name = displayName
@@ -3877,9 +3841,10 @@ private struct CustomModelsSettingsPane: View {
         fetchingProviderID = key
         fetchErrorProviderID = nil
         fetchErrorMessage = nil
+        let provider = Provider(id: id, name: "", baseURL: baseURL, apiKey: apiKey)
         Task {
             do {
-                let result = try await ProviderModelFetcher.fetch(baseURL: baseURL, apiKey: apiKey)
+                let result = try await ProviderModelFetcher.fetch(for: provider)
                 await MainActor.run {
                     fetchedModels[key] = result
                     fetchingProviderID = nil
@@ -3903,13 +3868,17 @@ private struct CustomModelsSettingsPane: View {
     }
 
     private func modelPickerPlaceholder(for provider: Provider) -> String {
-        if provider.usesCatalogModels { return "Pick a catalog model…" }
-        return selectableModels(for: provider).isEmpty ? "Fetch models first…" : "Pick a fetched model…"
+        hasFetchedModels(for: provider) ? "Pick a fetched model…" : "Fetch models first…"
     }
 
-    private func canFetch(baseURL: String, apiKey: String) -> Bool {
+    private func canFetch(baseURL: String, apiKey: String, providerID: String = "") -> Bool {
+        let provider = Provider(id: providerID, name: "", baseURL: baseURL, apiKey: apiKey)
+        // Cline Pass uses the public recommended-models feed — no API key required.
+        if provider.supportsLiveCatalogRefresh {
+            return true
+        }
         guard ProviderModelFetcher.modelsURL(for: baseURL) != nil else { return false }
-        let isLocal = Provider(id: "", name: "", baseURL: baseURL).isLocalEndpoint
+        let isLocal = provider.isLocalEndpoint
         // Local servers accept no key; remote ones need an inline key.
         if isLocal { return true }
         return ProviderModelFetcher.resolveKey(apiKey: apiKey) != nil

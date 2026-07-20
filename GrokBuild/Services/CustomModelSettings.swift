@@ -241,22 +241,12 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Fixed model ids from provider docs when listing fetch is unavailable.
-    var catalogModelIDs: [String] {
+    /// Whether GrokBuild fetches this provider's models from Cline's public recommended-models
+    /// feed (no API key required) instead of `{base_url}/models`.
+    var supportsLiveCatalogRefresh: Bool {
         switch self {
-        case .clinePass:
-            return ClinePassCatalog.modelIDs
-        default:
-            return []
-        }
-    }
-
-    var catalogModels: [FetchedModel] {
-        switch self {
-        case .clinePass:
-            return ClinePassCatalog.fetchedModels
-        default:
-            return []
+        case .clinePass: return true
+        default: return false
         }
     }
 
@@ -267,11 +257,6 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         default:
             return nil
         }
-    }
-
-    /// Presets that ship a fixed model catalog instead of a `/models` listing API.
-    var usesCatalogModels: Bool {
-        !supportsModelListingFetch && !catalogModelIDs.isEmpty
     }
 
     var provider: Provider {
@@ -346,35 +331,31 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
     }
 }
 
-/// Model catalog from the [ClinePass docs — Models](https://docs.cline.bot/getting-started/clinepass#models) table.
+/// Helpers for Cline Pass model listing (live feed + display labels).
+///
+/// Docs: [ClinePass — Models](https://docs.cline.bot/getting-started/clinepass#models).
 enum ClinePassCatalog {
-    struct Entry: Hashable, Sendable {
-        /// Human-readable model name from the docs (e.g. "GLM-5.2").
-        var name: String
-        /// Full ClinePass model slug for the `model` field (e.g. `cline-pass/glm-5.2`).
-        var modelID: String
-    }
-
     static let documentationURL = URL(string: "https://docs.cline.bot/getting-started/clinepass#models")!
 
-    /// Order and ids match the ## Models table in the ClinePass documentation.
-    static let models: [Entry] = [
-        Entry(name: "GLM-5.2", modelID: "cline-pass/glm-5.2"),
-        Entry(name: "Kimi K2.7 Code", modelID: "cline-pass/kimi-k2.7-code"),
-        Entry(name: "Kimi K2.6", modelID: "cline-pass/kimi-k2.6"),
-        Entry(name: "DeepSeek V4 Pro", modelID: "cline-pass/deepseek-v4-pro"),
-        Entry(name: "DeepSeek V4 Flash", modelID: "cline-pass/deepseek-v4-flash"),
-        Entry(name: "MiMo-V2.5", modelID: "cline-pass/mimo-v2.5"),
-        Entry(name: "MiMo-V2.5-Pro", modelID: "cline-pass/mimo-v2.5-pro"),
-        Entry(name: "MiniMax M3", modelID: "cline-pass/minimax-m3"),
-        Entry(name: "Qwen3.7 Max", modelID: "cline-pass/qwen3.7-max"),
-        Entry(name: "Qwen3.7 Plus", modelID: "cline-pass/qwen3.7-plus"),
-    ]
+    /// Public Cline recommended-models feed (includes a `clinePass` array; no API key required).
+    static let recommendedModelsURL = URL(
+        string: "https://api.cline.bot/api/v1/ai/cline/recommended-models"
+    )!
 
-    static var modelIDs: [String] { models.map(\.modelID) }
-
-    static var fetchedModels: [FetchedModel] {
-        models.map { FetchedModel(id: $0.modelID, ownedBy: $0.name) }
+    /// Human-readable label derived from a Cline Pass model id slug.
+    static func displayLabel(for modelID: String) -> String {
+        let slug = modelID.split(separator: "/").last.map(String.init) ?? modelID
+        let acronyms: Set<String> = ["glm", "gpt"]
+        return slug
+            .split(separator: "-")
+            .map { part -> String in
+                let token = String(part)
+                if token.allSatisfy({ $0.isNumber || $0 == "." }) { return token }
+                let lower = token.lowercased()
+                if acronyms.contains(lower) { return lower.uppercased() }
+                return token.prefix(1).uppercased() + token.dropFirst()
+            }
+            .joined(separator: " ")
     }
 
     /// Display name written to config.toml `name` (e.g. "Cline Kimi K2.7 Code").
@@ -383,6 +364,17 @@ enum ClinePassCatalog {
         guard !trimmed.isEmpty else { return "" }
         if trimmed.lowercased().hasPrefix("cline ") { return trimmed }
         return "Cline \(trimmed)"
+    }
+
+    /// Sorts models A–Z by display label (falls back to id), so related names stay adjacent.
+    static func sortedAlphabetically(_ models: [FetchedModel]) -> [FetchedModel] {
+        models.sorted { lhs, rhs in
+            let left = (lhs.ownedBy?.isEmpty == false ? lhs.ownedBy! : lhs.id)
+            let right = (rhs.ownedBy?.isEmpty == false ? rhs.ownedBy! : rhs.id)
+            let labelOrder = left.localizedCaseInsensitiveCompare(right)
+            if labelOrder != .orderedSame { return labelOrder == .orderedAscending }
+            return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+        }
     }
 }
 
@@ -393,20 +385,12 @@ extension Provider {
         matchingPreset?.supportsModelListingFetch ?? true
     }
 
-    var catalogModelIDs: [String] {
-        matchingPreset?.catalogModelIDs ?? []
-    }
-
     var catalogDocumentationURL: URL? {
         matchingPreset?.catalogDocumentationURL
     }
 
-    var usesCatalogModels: Bool {
-        matchingPreset?.usesCatalogModels ?? false
-    }
-
-    var catalogModels: [FetchedModel] {
-        matchingPreset?.catalogModels ?? []
+    var supportsLiveCatalogRefresh: Bool {
+        matchingPreset?.supportsLiveCatalogRefresh ?? false
     }
 }
 
@@ -516,6 +500,61 @@ enum ProviderModelFetcher {
         guard let models = parse(data) else { throw FetchError.decode }
         guard !models.isEmpty else { throw FetchError.empty }
         return models
+    }
+
+    /// Fetches Cline Pass models from the public recommended-models feed (no API key).
+    static func fetchClinePassRecommended(
+        url: URL = ClinePassCatalog.recommendedModelsURL
+    ) async throws -> [FetchedModel] {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw FetchError.transport(error.localizedDescription)
+        }
+
+        if let http = response as? HTTPURLResponse {
+            guard (200..<300).contains(http.statusCode) else { throw FetchError.http(http.statusCode) }
+        }
+
+        guard let models = parseClinePassRecommended(data) else { throw FetchError.decode }
+        guard !models.isEmpty else { throw FetchError.empty }
+        return models
+    }
+
+    /// Parses `{ "clinePass": [{ "id": "cline-pass/…", "name": "…" }] }` from Cline's feed.
+    static func parseClinePassRecommended(_ data: Data) -> [FetchedModel]? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let list = object["clinePass"] as? [Any] else {
+            return nil
+        }
+
+        var seen = Set<String>()
+        var models: [FetchedModel] = []
+        for item in list {
+            guard let entry = item as? [String: Any] else { continue }
+            let identifier = (entry["id"] as? String) ?? (entry["model"] as? String)
+            guard let id = identifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !id.isEmpty,
+                  id.hasPrefix("cline-pass/") else { continue }
+            guard seen.insert(id).inserted else { continue }
+            models.append(FetchedModel(id: id, ownedBy: ClinePassCatalog.displayLabel(for: id)))
+        }
+        // Alphabetical by display label (related names stay adjacent).
+        return ClinePassCatalog.sortedAlphabetically(models)
+    }
+
+    /// Fetches models for an installed/draft provider, routing Cline Pass to its live catalog.
+    static func fetch(for provider: Provider) async throws -> [FetchedModel] {
+        if provider.supportsLiveCatalogRefresh {
+            return try await fetchClinePassRecommended()
+        }
+        return try await fetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
     }
 }
 
