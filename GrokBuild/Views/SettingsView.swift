@@ -3874,8 +3874,7 @@ private struct CustomModelsSettingsPane: View {
     private func canFetch(baseURL: String, apiKey: String, providerID: String = "") -> Bool {
         let provider = Provider(id: providerID, name: "", baseURL: baseURL, apiKey: apiKey)
         // Cline Pass uses the public recommended-models feed — no API key required.
-        if provider.supportsLiveCatalogRefresh
-            || providerID == ProviderPreset.clinePass.provider.id {
+        if provider.supportsLiveCatalogRefresh {
             return true
         }
         guard ProviderModelFetcher.modelsURL(for: baseURL) != nil else { return false }

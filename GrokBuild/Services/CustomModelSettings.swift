@@ -519,7 +519,6 @@ enum ProviderModelFetcher {
         }
 
         if let http = response as? HTTPURLResponse {
-            if http.statusCode == 401 || http.statusCode == 403 { throw FetchError.unauthorized }
             guard (200..<300).contains(http.statusCode) else { throw FetchError.http(http.statusCode) }
         }
 
@@ -552,7 +551,7 @@ enum ProviderModelFetcher {
 
     /// Fetches models for an installed/draft provider, routing Cline Pass to its live catalog.
     static func fetch(for provider: Provider) async throws -> [FetchedModel] {
-        if provider.supportsLiveCatalogRefresh || provider.id == ProviderPreset.clinePass.provider.id {
+        if provider.supportsLiveCatalogRefresh {
             return try await fetchClinePassRecommended()
         }
         return try await fetch(baseURL: provider.baseURL, apiKey: provider.apiKey)
