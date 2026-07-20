@@ -318,42 +318,17 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(provider.suggestedModel, "deepseek-v4-pro")
     }
 
-    func testClinePassPresetUsesCatalogNotFetch() {
+    func testClinePassPresetFetchesLiveCatalog() {
         let preset = ProviderPreset.clinePass
+        // Listing uses the recommended-models feed (not `/models`), so this flag stays false.
         XCTAssertFalse(preset.supportsModelListingFetch)
-        XCTAssertTrue(preset.usesCatalogModels)
+        XCTAssertTrue(preset.supportsLiveCatalogRefresh)
         XCTAssertEqual(preset.provider.id, "clinepass")
         XCTAssertEqual(preset.provider.baseURL, "https://api.cline.bot/api/v1")
         XCTAssertEqual(preset.provider.suggestedModel, "cline-pass/glm-5.2")
         XCTAssertEqual(
             preset.catalogDocumentationURL?.absoluteString,
             ClinePassCatalog.documentationURL.absoluteString
-        )
-        XCTAssertEqual(preset.catalogModelIDs, ClinePassCatalog.modelIDs)
-        XCTAssertEqual(preset.catalogModels.count, ClinePassCatalog.models.count)
-    }
-
-    func testClinePassCatalogMatchesDocumentationModelsTable() {
-        let expected: [(String, String)] = [
-            ("GLM-5.2", "cline-pass/glm-5.2"),
-            ("Kimi K2.7 Code", "cline-pass/kimi-k2.7-code"),
-            ("Kimi K2.6", "cline-pass/kimi-k2.6"),
-            ("DeepSeek V4 Pro", "cline-pass/deepseek-v4-pro"),
-            ("DeepSeek V4 Flash", "cline-pass/deepseek-v4-flash"),
-            ("MiMo-V2.5", "cline-pass/mimo-v2.5"),
-            ("MiMo-V2.5-Pro", "cline-pass/mimo-v2.5-pro"),
-            ("MiniMax M3", "cline-pass/minimax-m3"),
-            ("Qwen3.7 Max", "cline-pass/qwen3.7-max"),
-            ("Qwen3.7 Plus", "cline-pass/qwen3.7-plus"),
-        ]
-        XCTAssertEqual(ClinePassCatalog.models.count, expected.count)
-        for (index, pair) in expected.enumerated() {
-            XCTAssertEqual(ClinePassCatalog.models[index].name, pair.0, "row \(index + 1) name")
-            XCTAssertEqual(ClinePassCatalog.models[index].modelID, pair.1, "row \(index + 1) id")
-        }
-        XCTAssertEqual(
-            ClinePassCatalog.fetchedModels.first?.ownedBy,
-            "GLM-5.2"
         )
     }
 
@@ -367,15 +342,83 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(ClinePassCatalog.displayName(for: "Cline GLM-5.2"), "Cline GLM-5.2")
     }
 
-    func testProviderCatalogFlagsFromMatchingPreset() {
+    func testClinePassDisplayLabelDerivesFromSlug() {
+        XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/kimi-k3"), "Kimi K3")
+        XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/glm-5.2"), "GLM 5.2")
+        XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/kimi-k2.7-code"), "Kimi K2.7 Code")
+        XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/new-model-x"), "New Model X")
+    }
+
+    func testClinePassSupportsLiveCatalogRefresh() {
+        XCTAssertTrue(ProviderPreset.clinePass.supportsLiveCatalogRefresh)
+        XCTAssertTrue(ProviderPreset.clinePass.provider.supportsLiveCatalogRefresh)
+        XCTAssertFalse(ProviderPreset.zai.supportsLiveCatalogRefresh)
+        XCTAssertEqual(
+            ClinePassCatalog.recommendedModelsURL.absoluteString,
+            "https://api.cline.bot/api/v1/ai/cline/recommended-models"
+        )
+    }
+
+    func testParseClinePassRecommendedSortsAlphabeticallyAndSkipsNonPass() {
+        let json = Data("""
+        {
+          "recommended": [{"id": "openai/gpt-5", "name": "gpt-5"}],
+          "clinePass": [
+            {"id": "cline-pass/glm-5.2", "name": "cline-pass/glm-5.2"},
+            {"id": "cline-pass/kimi-k3", "name": "cline-pass/kimi-k3"},
+            {"id": "ignored/other", "name": "other"},
+            {"id": "cline-pass/deepseek-v4-pro", "name": "cline-pass/deepseek-v4-pro"},
+            {"id": "cline-pass/kimi-k2.6", "name": "cline-pass/kimi-k2.6"},
+            {"id": "cline-pass/glm-5.2", "name": "duplicate"}
+          ]
+        }
+        """.utf8)
+        let models = ProviderModelFetcher.parseClinePassRecommended(json)
+        XCTAssertEqual(models?.map(\.id), [
+            "cline-pass/deepseek-v4-pro",
+            "cline-pass/glm-5.2",
+            "cline-pass/kimi-k2.6",
+            "cline-pass/kimi-k3"
+        ])
+        XCTAssertEqual(models?.map(\.ownedBy), [
+            "Deepseek V4 Pro",
+            "GLM 5.2",
+            "Kimi K2.6",
+            "Kimi K3"
+        ])
+    }
+
+    func testClinePassSortedAlphabeticallyByDisplayLabel() {
+        let input = [
+            FetchedModel(id: "cline-pass/kimi-k3", ownedBy: "Kimi K3"),
+            FetchedModel(id: "cline-pass/glm-5.2", ownedBy: "GLM 5.2"),
+            FetchedModel(id: "cline-pass/kimi-k2.6", ownedBy: "Kimi K2.6"),
+            FetchedModel(id: "cline-pass/deepseek-v4-flash", ownedBy: "Deepseek V4 Flash"),
+        ]
+        XCTAssertEqual(
+            ClinePassCatalog.sortedAlphabetically(input).map(\.id),
+            [
+                "cline-pass/deepseek-v4-flash",
+                "cline-pass/glm-5.2",
+                "cline-pass/kimi-k2.6",
+                "cline-pass/kimi-k3",
+            ]
+        )
+    }
+
+    func testParseClinePassRecommendedRejectsBadPayload() {
+        XCTAssertNil(ProviderModelFetcher.parseClinePassRecommended(Data("not json".utf8)))
+        XCTAssertNil(ProviderModelFetcher.parseClinePassRecommended(Data(#"{"recommended":[]}"#.utf8)))
+    }
+
+    func testProviderListingFlagsFromMatchingPreset() {
         let cline = ProviderPreset.clinePass.provider
-        XCTAssertTrue(cline.usesCatalogModels)
         XCTAssertFalse(cline.supportsModelListingFetch)
-        XCTAssertEqual(cline.catalogModelIDs.count, 10)
+        XCTAssertTrue(cline.supportsLiveCatalogRefresh)
 
         let zai = ProviderPreset.zai.provider
-        XCTAssertFalse(zai.usesCatalogModels)
         XCTAssertTrue(zai.supportsModelListingFetch)
+        XCTAssertFalse(zai.supportsLiveCatalogRefresh)
     }
 
     func testOpenAIPresetEndpoint() {
