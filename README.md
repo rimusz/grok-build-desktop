@@ -1,8 +1,8 @@
-# GrokBuild
+# GrokBuild Desktop App
 
-GrokBuild is a native SwiftUI macOS shell for the [`grok`](https://grok.com) CLI — a project-focused chat UI with persistent workspaces, resumable sessions, and settings for CLI features.
+GrokBuild Desktop App is a native SwiftUI macOS shell for the [`grok`](https://grok.com) CLI — a project-focused chat UI with persistent workspaces, resumable sessions, and settings for CLI features.
 
-![GrokBuild Desktop app showing the project sidebar, chat UI, composer, and status bar menu](docs/images/grokbuild-app.png)
+![GrokBuild Desktop App showing the project sidebar, chat UI, composer, and status bar menu](docs/images/grokbuild-app.png)
 
 ## Requirements
 
@@ -14,13 +14,13 @@ GrokBuild is a native SwiftUI macOS shell for the [`grok`](https://grok.com) CLI
 
 1. Install and sign in to the `grok` CLI (`grok login`).
 2. Download a notarized release from [GitHub Releases](https://github.com/rimusz/grok-build-desktop/releases) and move `GrokBuild.app` to `/Applications`.
-3. Open GrokBuild and choose **Add Project**.
+3. Open GrokBuild Desktop App and choose **Add Project**.
 4. Pick a folder. It can be a code repo, a docs folder, or a scratch workspace.
-5. Start chatting. GrokBuild launches `grok agent stdio` for that project and streams the session in the app.
+5. Start chatting. GrokBuild Desktop App launches `grok agent stdio` for that project and streams the session in the app.
 
-## What GrokBuild Is
+## What GrokBuild Desktop App Is
 
-GrokBuild owns the macOS window, project sidebar, session tabs, settings UI, browser/computer-use enablement, and local app update flow.
+GrokBuild Desktop App owns the macOS window, project sidebar, session tabs, settings UI, browser/computer-use enablement, and local app update flow.
 
 It is **not** a replacement for the CLI. The `grok` CLI still owns agent reasoning, ACP, MCP tools, models, skills, subagents, plan mode, permissions, memory, hooks, plugins, and `AGENTS.md` instructions.
 
@@ -50,7 +50,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 ### Agent Capabilities
 
 - **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the chat agent pill. These choices pass through as `grok --agent` and restart the affected session.
-- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
+- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
 - **Using subagents** — keep the main agent as Default and chat normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
 - Inspect hooks, plugins, marketplace sources, skills, MCP servers, and session permissions from Settings.
 
@@ -61,18 +61,18 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 - **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
 - **Memory** — experimental and off by default. Enable from Settings, browse `~/.grok/memory/`, and add "Remember" notes from the chat status bar. Slash commands like `/flush` and `/dream` remain TUI-only.
-- **Background tasks** — ask Grok to schedule recurring prompts, start background commands, or monitor logs. The Tasks pill mirrors schedules seen in the live session. Schedules only fire while GrokBuild is open and that session process is alive (inactive tabs may be stopped by LRU eviction).
+- **Background tasks** — ask Grok to schedule recurring prompts, start background commands, or monitor logs. The Tasks pill mirrors schedules seen in the live session. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (inactive tabs may be stopped by LRU eviction).
 - **Documents and spreadsheets** — use grok's document skills (`xlsx`, `docx`, `pptx`) to create, read, edit, and reformat Office files from paths in your workspace. Spreadsheet skills may need [LibreOffice](https://www.libreoffice.org/) installed for some conversions.
 
 ### App Experience
 
 - Menu bar item plus main window with status-dot icon, quick actions, settings, update checks, and sign-in recovery.
-- In-app update panels for both GrokBuild and the `grok` CLI. GrokBuild app updates are offered only for signed and notarized releases.
+- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. App updates are offered only for signed and notarized releases.
 - Dark-mode-first SwiftUI design with accessibility labels for interactive status controls.
 
 ## Permissions & Privacy
 
-- GrokBuild talks to the local `grok` CLI; your prompts, tool calls, model routing, auth, and CLI-side storage follow the CLI's behavior.
+- GrokBuild Desktop App talks to the local `grok` CLI; your prompts, tool calls, model routing, auth, and CLI-side storage follow the CLI's behavior.
 - Browser control uses a separate managed Chromium profile by default. If you attach to an existing browser over CDP, Grok can interact with that browser window.
 - Computer Use requires macOS Accessibility permission. Screenshots require Screen Recording and are optional.
 - You can control tool approval behavior in **Settings → Permissions** and **Settings → Computer Use** (Auto / Ask / Deny, plus limits).
@@ -111,7 +111,7 @@ Local builds from `make app` / `make run` are unsigned. macOS Gatekeeper may blo
    xattr -cr /path/to/GrokBuild.app
    ```
 
-Self-built apps do not receive in-app GrokBuild upgrade offers. Use a notarized GitHub release for one-click updates, or keep rebuilding from source.
+Self-built apps do not receive in-app upgrade offers. Use a notarized GitHub release for one-click updates, or keep rebuilding from source.
 
 ### Recommended for SwiftUI work
 
@@ -150,4 +150,4 @@ Debug builds (`make run-debug`) include a menu-bar **Simulate Updates** submenu 
 
 ## License
 
-[Apache License 2.0](LICENSE). GrokBuild is an independent desktop client for the Grok Build CLI and is not affiliated with, endorsed by, or sponsored by xAI.
+[Apache License 2.0](LICENSE). GrokBuild Desktop App is an independent desktop client for the Grok Build CLI and is not affiliated with, endorsed by, or sponsored by xAI.
