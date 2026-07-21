@@ -1,6 +1,6 @@
 # GrokBuild Desktop App
 
-GrokBuild Desktop is a native SwiftUI macOS app for using the [`grok`](https://grok.com) CLI as a desktop AI development environment.
+GrokBuild Desktop App (not affiliated with xAI) is a native SwiftUI macOS app for using the [`grok`](https://grok.com) CLI as a desktop AI development environment.
 
 It gives Grok a project-focused chat UI with persistent workspaces, resumable sessions, rich message rendering, diff review, full settings for Grok CLI features, optional browser-control tools, and optional macOS desktop automation. The app stays close to the CLI: GrokBuild launches and talks to `grok agent stdio`, while the CLI remains responsible for core capabilities such as ACP, MCP, skills, subagents, `AGENTS.md` instructions, permissions, and plan mode.
 
