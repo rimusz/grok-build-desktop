@@ -125,6 +125,14 @@ final class ChatStore {
     private var pendingShareURLCapture = false
     private var lastSharedURL: String?
 
+    /// Test-only: whether the next assistant URL should be treated as a `/share` result.
+    var isPendingShareURLCaptureForTests: Bool { pendingShareURLCapture }
+
+    /// Test-only: force streaming so queue-send guards can be exercised without a live process.
+    func setStreamingForTests(_ value: Bool) {
+        isStreaming = value
+    }
+
     // MARK: - Workflow runs (grok `workflow` tools, mirrored by observing ACP tool calls)
     private(set) var workflowRuns: [WorkflowRun] = []
     private var workflowRunTracker = WorkflowRunTracker()
@@ -546,7 +554,12 @@ final class ChatStore {
     @discardableResult
     func shareSession() async -> Bool {
         pendingShareURLCapture = true
-        return await send("/share")
+        let ok = await send("/share")
+        if !ok {
+            // Avoid capturing an unrelated later assistant URL if /share never started.
+            pendingShareURLCapture = false
+        }
+        return ok
     }
 
     func copyLastSharedURLToPasteboard() -> Bool {
@@ -569,8 +582,18 @@ final class ChatStore {
 
     func sendQueuedPromptNow(at index: Int) async -> Bool {
         guard promptQueue.indices.contains(index) else { return false }
+        guard !isStreaming else {
+            lastError = "Wait for the current response to finish."
+            return false
+        }
         let text = promptQueue.remove(at: index)
-        return await deliverPrompt(text, waitForCompletion: false, fromQueue: true)
+        let ok = await deliverPrompt(text, waitForCompletion: false, fromQueue: true)
+        if !ok {
+            // Put the prompt back so a failed send does not drop queued work.
+            let insertAt = min(index, promptQueue.count)
+            promptQueue.insert(text, at: insertAt)
+        }
+        return ok
     }
 
     func clearBtwAside() {
@@ -842,6 +865,7 @@ final class ChatStore {
             return
         }
 
+        pendingShareURLCapture = false
         lastError = process.state.errorMessage ?? "Failed to send to grok."
         connectionState = process.state == .ready ? .ready : process.state
         postStatusUpdate(statusName(for: connectionState))

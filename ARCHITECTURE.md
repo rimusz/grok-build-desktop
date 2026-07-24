@@ -526,7 +526,7 @@ grok's **Rhai workflow engine** (`.grok/workflows/`, `/workflow`, `/workflows`) 
 
 ### Prompt queue
 
-While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Send now` / `Remove`).
+While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Send now` / `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped.
 
 ### `/btw` aside
 
@@ -538,7 +538,7 @@ Sending `/btw` sets `pendingBtw`; the next assistant reply is captured in `ChatS
 
 ### Share session
 
-When `/share` is advertised: session menu → `ChatStore.shareSession()`; URL parsed from assistant reply (`ShareURLParser`) and copied to pasteboard.
+When `/share` is advertised: session menu → `ChatStore.shareSession()`; URL parsed from assistant reply (`ShareURLParser`) and copied to pasteboard. `pendingShareURLCapture` is cleared if send fails (including async process send failure) so a later unrelated URL is not captured.
 
 ### Create skill / Imagine
 
