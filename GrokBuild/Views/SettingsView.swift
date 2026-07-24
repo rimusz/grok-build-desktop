@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
-enum SettingsTab: Hashable {
+enum SettingsTab: String, Hashable, CaseIterable, Identifiable {
     case agents
     case models
     case permissions
@@ -17,6 +17,46 @@ enum SettingsTab: Hashable {
     case compatibility
     case hooks
     case app
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .agents: return "Agents"
+        case .models: return "Models"
+        case .permissions: return "Permissions"
+        case .memory: return "Memory"
+        case .workflows: return "Workflows"
+        case .browser: return "Browser"
+        case .computerUse: return "Computer Use"
+        case .mcpServers: return "MCP Servers"
+        case .skills: return "Skills"
+        case .plugins: return "Plugins"
+        case .marketplace: return "Marketplace"
+        case .compatibility: return "Compatibility"
+        case .hooks: return "Hooks"
+        case .app: return "App"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .agents: return "person.2.badge.gearshape"
+        case .models: return "cpu"
+        case .permissions: return "lock.shield"
+        case .memory: return "brain"
+        case .workflows: return "arrow.triangle.branch"
+        case .browser: return "globe"
+        case .computerUse: return "desktopcomputer"
+        case .mcpServers: return "point.3.connected.trianglepath.dotted"
+        case .skills: return "wand.and.stars"
+        case .plugins: return "shippingbox"
+        case .marketplace: return "storefront"
+        case .compatibility: return "arrow.triangle.swap"
+        case .hooks: return "curlybraces"
+        case .app: return "arrow.triangle.2.circlepath"
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -42,122 +82,133 @@ struct SettingsView: View {
 
             Divider()
 
-            TabView(selection: $selectedTab) {
-                AgentsSettingsPane(workspace: store.currentWorkspace) {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("Agents", systemImage: "person.2.badge.gearshape")
-                }
-                .tag(SettingsTab.agents)
+            settingsTabBar
 
-                CustomModelsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Models", systemImage: "cpu")
-                }
-                .tag(SettingsTab.models)
+            Divider()
 
-                PermissionsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Permissions", systemImage: "lock.shield")
-                }
-                .tag(SettingsTab.permissions)
-
-                MemorySettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Memory", systemImage: "brain")
-                }
-                .tag(SettingsTab.memory)
-
-                WorkflowsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Workflows", systemImage: "arrow.triangle.branch")
-                }
-                .tag(SettingsTab.workflows)
-
-                BrowserSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Browser", systemImage: "globe")
-                }
-                .tag(SettingsTab.browser)
-
-                ComputerUseSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Computer Use", systemImage: "desktopcomputer")
-                }
-                .tag(SettingsTab.computerUse)
-
-                MCPSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("MCP Servers", systemImage: "point.3.connected.trianglepath.dotted")
-                }
-                .tag(SettingsTab.mcpServers)
-
-                SkillsSettingsPane(workspace: store.currentWorkspace)
-                    .settingsPaneColumn()
-                    .tabItem {
-                        Label("Skills", systemImage: "wand.and.stars")
-                    }
-                    .tag(SettingsTab.skills)
-
-                PluginsSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("Plugins", systemImage: "shippingbox")
-                }
-                .tag(SettingsTab.plugins)
-
-                MarketplaceSettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .settingsPaneColumn()
-                .tabItem {
-                    Label("Marketplace", systemImage: "storefront")
-                }
-                .tag(SettingsTab.marketplace)
-
-                CompatibilitySettingsPane {
-                    Task { await store.reloadConfiguration() }
-                }
-                .tabItem {
-                    Label("Compatibility", systemImage: "arrow.triangle.swap")
-                }
-                .tag(SettingsTab.compatibility)
-
-                HooksSettingsPane(workspace: store.currentWorkspace)
-                    .settingsPaneColumn()
-                    .tabItem {
-                        Label("Hooks", systemImage: "curlybraces")
-                    }
-                    .tag(SettingsTab.hooks)
-
-                AppUpdatesSettingsPane()
-                .tabItem {
-                    Label("App", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .tag(SettingsTab.app)
-            }
-            .padding()
+            settingsContent
+                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minWidth: 860, minHeight: 620)
+    }
+
+    private var settingsTabBar: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: true) {
+                HStack(spacing: 4) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        Button {
+                            selectedTab = tab
+                        } label: {
+                            Label(tab.title, systemImage: tab.systemImage)
+                                .labelStyle(.titleAndIcon)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(selectedTab == tab ? Color.accentColor.opacity(0.16) : Color.clear)
+                        )
+                        .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
+                        .accessibilityLabel(tab.title)
+                        .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
+                        .id(tab)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Settings tabs")
+            .onAppear {
+                proxy.scrollTo(selectedTab, anchor: .center)
+            }
+            .onChange(of: selectedTab) { _, tab in
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(tab, anchor: .center)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var settingsContent: some View {
+        switch selectedTab {
+        case .agents:
+            AgentsSettingsPane(workspace: store.currentWorkspace) {
+                Task { await store.reloadConfiguration() }
+            }
+            .settingsPaneColumn()
+
+        case .models:
+            CustomModelsSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .permissions:
+            PermissionsSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .memory:
+            MemorySettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .workflows:
+            WorkflowsSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .browser:
+            BrowserSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .computerUse:
+            ComputerUseSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .mcpServers:
+            MCPSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+            .settingsPaneColumn()
+
+        case .skills:
+            SkillsSettingsPane(workspace: store.currentWorkspace)
+                .settingsPaneColumn()
+
+        case .plugins:
+            PluginsSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+            .settingsPaneColumn()
+
+        case .marketplace:
+            MarketplaceSettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+            .settingsPaneColumn()
+
+        case .compatibility:
+            CompatibilitySettingsPane {
+                Task { await store.reloadConfiguration() }
+            }
+
+        case .hooks:
+            HooksSettingsPane(workspace: store.currentWorkspace)
+                .settingsPaneColumn()
+
+        case .app:
+            AppUpdatesSettingsPane()
+        }
     }
 }
 
