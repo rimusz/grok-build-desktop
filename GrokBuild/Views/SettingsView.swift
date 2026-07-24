@@ -64,6 +64,9 @@ struct SettingsView: View {
     @Binding var selectedTab: SettingsTab
     var onBackToChat: () -> Void = {}
 
+    /// Tabs opened at least once stay mounted so pane `@State` / `.task` survive revisits.
+    @State private var loadedTabs: Set<SettingsTab> = []
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -91,6 +94,12 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minWidth: 860, minHeight: 620)
+        .onAppear {
+            SettingsTabKeepAlive.recordVisit(selectedTab, loaded: &loadedTabs)
+        }
+        .onChange(of: selectedTab) { _, tab in
+            SettingsTabKeepAlive.recordVisit(tab, loaded: &loadedTabs)
+        }
     }
 
     private var settingsTabBar: some View {
@@ -136,9 +145,24 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
+    /// Keeps visited panes in the hierarchy (hidden when inactive) so state is not reset on tab change.
     private var settingsContent: some View {
-        switch selectedTab {
+        ZStack(alignment: .topLeading) {
+            ForEach(SettingsTab.allCases) { tab in
+                if SettingsTabKeepAlive.shouldMount(tab, selected: selectedTab, loaded: loadedTabs) {
+                    settingsPane(for: tab)
+                        .opacity(selectedTab == tab ? 1 : 0)
+                        .allowsHitTesting(selectedTab == tab)
+                        .accessibilityHidden(selectedTab != tab)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settingsPane(for tab: SettingsTab) -> some View {
+        switch tab {
         case .agents:
             AgentsSettingsPane(workspace: store.currentWorkspace) {
                 Task { await store.reloadConfiguration() }
@@ -209,6 +233,17 @@ struct SettingsView: View {
         case .app:
             AppUpdatesSettingsPane()
         }
+    }
+}
+
+/// Pure helpers for Settings pane keep-alive (lazy mount + retain visited tabs).
+enum SettingsTabKeepAlive {
+    static func recordVisit(_ tab: SettingsTab, loaded: inout Set<SettingsTab>) {
+        loaded.insert(tab)
+    }
+
+    static func shouldMount(_ tab: SettingsTab, selected: SettingsTab, loaded: Set<SettingsTab>) -> Bool {
+        tab == selected || loaded.contains(tab)
     }
 }
 

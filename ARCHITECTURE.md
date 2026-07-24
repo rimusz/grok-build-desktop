@@ -613,7 +613,7 @@ OpenAI-compatible provider URLs; not a replacement for grok-native models. Custo
 
 Ordered config-first (session config → capabilities → grok ecosystem/inspection → app). `.agents` is the default landing tab (generic Settings gear + initial state; `.app` when an update is pending).
 
-The settings chrome uses a custom horizontal **scrollable** tab bar (`SettingsView.settingsTabBar`) instead of `TabView`’s compressing segmented control — full titles stay readable; the bar scrolls sideways in a narrow window and auto-scrolls the selected tab into view.
+The settings chrome uses a custom horizontal **scrollable** tab bar (`SettingsView.settingsTabBar`) instead of `TabView`’s compressing segmented control — full titles stay readable; the bar scrolls sideways in a narrow window and auto-scrolls the selected tab into view. Visited panes stay mounted in a `ZStack` (`SettingsTabKeepAlive`) so `@State` / `.task` are not reset when switching tabs.
 
 | Tab | Pane | Data source |
 |-----|------|-------------|

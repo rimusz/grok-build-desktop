@@ -39,4 +39,19 @@ final class SettingsTabTests: XCTestCase {
             XCTAssertFalse(tab.systemImage.isEmpty, "\(tab) missing systemImage")
         }
     }
+
+    func testKeepAliveMountsSelectedAndPreviouslyVisitedTabsOnly() {
+        var loaded: Set<SettingsTab> = []
+        XCTAssertTrue(SettingsTabKeepAlive.shouldMount(.agents, selected: .agents, loaded: loaded))
+        XCTAssertFalse(SettingsTabKeepAlive.shouldMount(.browser, selected: .agents, loaded: loaded))
+
+        SettingsTabKeepAlive.recordVisit(.agents, loaded: &loaded)
+        SettingsTabKeepAlive.recordVisit(.browser, loaded: &loaded)
+
+        XCTAssertEqual(loaded, [.agents, .browser])
+        XCTAssertTrue(SettingsTabKeepAlive.shouldMount(.agents, selected: .models, loaded: loaded))
+        XCTAssertTrue(SettingsTabKeepAlive.shouldMount(.browser, selected: .models, loaded: loaded))
+        XCTAssertTrue(SettingsTabKeepAlive.shouldMount(.models, selected: .models, loaded: loaded))
+        XCTAssertFalse(SettingsTabKeepAlive.shouldMount(.hooks, selected: .models, loaded: loaded))
+    }
 }
