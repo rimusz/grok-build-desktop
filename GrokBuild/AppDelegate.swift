@@ -96,8 +96,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private static let mainWindowDefaultSize = NSSize(width: 1024, height: 720)
-    private static let mainWindowMinimumSize = NSSize(width: 800, height: 560)
+    private static let mainWindowDefaultSize = NSSize(
+        width: MainWindowLayout.defaultSize.width,
+        height: MainWindowLayout.defaultSize.height
+    )
+    private static let mainWindowMinimumSize = NSSize(
+        width: MainWindowLayout.minimumSize.width,
+        height: MainWindowLayout.minimumSize.height
+    )
 
     private func openMainWindow() {
         // If a window is already open, just bring it forward
@@ -123,6 +129,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func presentMainWindow(_ window: NSWindow) {
+        window.minSize = Self.mainWindowMinimumSize
         normalizeMainWindowFrame(window)
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)

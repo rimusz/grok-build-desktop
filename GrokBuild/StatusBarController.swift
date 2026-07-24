@@ -197,6 +197,8 @@ class StatusBarController: NSObject {
         aboutItem.target = self
         menu.addItem(aboutItem)
 
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit GrokBuild", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)

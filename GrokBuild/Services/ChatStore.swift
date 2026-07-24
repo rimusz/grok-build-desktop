@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SwiftUI
+import AppKit
 
 @Observable
 @MainActor
@@ -110,6 +111,26 @@ final class ChatStore {
     /// Tasks grok has scheduled, mirrored from observed `scheduler_*` tool activity in this session.
     private(set) var scheduledTasks: [ScheduledTask] = []
     private var scheduledTaskTracker = ScheduledTaskTracker()
+
+    // MARK: - Background activity (scheduled + background shells, monitors, subagents)
+    private(set) var backgroundActivities: [BackgroundActivity] = []
+    private var backgroundTaskTracker = BackgroundTaskTracker()
+
+    // MARK: - Prompt queue (send while streaming)
+    private(set) var promptQueue: [String] = []
+
+    // MARK: - /btw aside panel
+    private(set) var btwAsideText: String?
+    private var pendingBtw = false
+    private var pendingShareURLCapture = false
+    private var lastSharedURL: String?
+
+    // MARK: - Workflow runs (grok `workflow` tools, mirrored by observing ACP tool calls)
+    private(set) var workflowRuns: [WorkflowRun] = []
+    private var workflowRunTracker = WorkflowRunTracker()
+
+    private var launchForkSession = false
+    private var launchNewSessionID: String?
 
     private(set) var commandHistory: [String] = []
     private var historyIndex: Int?
@@ -251,6 +272,12 @@ final class ChatStore {
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
         goalState = nil
+        clearWorkflowRunState()
+        clearBackgroundTaskState()
+        promptQueue.removeAll()
+        btwAsideText = nil
+        pendingBtw = false
+        pendingShareURLCapture = false
         clearTurnState()
         connectionState = .idle
         lastError = nil
@@ -328,6 +355,7 @@ final class ChatStore {
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
         goalState = nil
+        clearWorkflowRunState()
         if currentWorkspace != nil {
             await restartProcess()
         }
@@ -352,7 +380,18 @@ final class ChatStore {
         fileAttachments.removeAll()
         goalState = nil
         messages.removeAll()
+        clearWorkflowRunState()
         clearTurnState()
+    }
+
+    private func clearWorkflowRunState() {
+        workflowRunTracker.reset()
+        workflowRuns = []
+    }
+
+    private func clearBackgroundTaskState() {
+        backgroundTaskTracker.reset()
+        backgroundActivities = []
     }
 
     private func restartProcess(resumeSessionID: String? = nil) async {
@@ -409,6 +448,8 @@ final class ChatStore {
             allowRules: lineList(settings.allowRules),
             denyRules: lineList(settings.denyRules),
             resumeSessionID: resumeSessionID,
+            forkSession: launchForkSession,
+            newSessionID: launchNewSessionID,
             mcpServers: mcpServers
         )
         await process.start(workspace: ws, options: opts)
@@ -477,10 +518,91 @@ final class ChatStore {
     }
 
     @discardableResult
-    func setGoal(_ objective: String) async -> Bool {
+    func setGoal(_ objective: String, budget: Int? = nil) async -> Bool {
         let trimmed = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        if let budget {
+            return await send("/goal \(trimmed) --budget \(budget)")
+        }
         return await send("/goal \(trimmed)")
+    }
+
+    var hasShareCommand: Bool {
+        availableSlashCommands.contains { $0.name == "share" }
+    }
+
+    var hasBtwCommand: Bool {
+        availableSlashCommands.contains { $0.name == "btw" }
+    }
+
+    var hasCreateSkillCommand: Bool {
+        availableSlashCommands.contains { $0.name == "create-skill" }
+    }
+
+    var hasForkCommand: Bool {
+        availableSlashCommands.contains { $0.name == "fork" }
+    }
+
+    @discardableResult
+    func shareSession() async -> Bool {
+        pendingShareURLCapture = true
+        return await send("/share")
+    }
+
+    func copyLastSharedURLToPasteboard() -> Bool {
+        guard let lastSharedURL else { return false }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastSharedURL, forType: .string)
+        return true
+    }
+
+    func removeQueuedPrompt(at index: Int) {
+        guard promptQueue.indices.contains(index) else { return }
+        promptQueue.remove(at: index)
+    }
+
+    func enqueuePrompt(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        promptQueue.append(trimmed)
+    }
+
+    func sendQueuedPromptNow(at index: Int) async -> Bool {
+        guard promptQueue.indices.contains(index) else { return false }
+        let text = promptQueue.remove(at: index)
+        return await deliverPrompt(text, waitForCompletion: false, fromQueue: true)
+    }
+
+    func clearBtwAside() {
+        btwAsideText = nil
+    }
+
+    /// Start a new grok process forked from an existing session id (new tab).
+    func startForked(workspace: Workspace, fromSessionID: String) async {
+        currentWorkspace = workspace
+        mergeCustomModels()
+        loadWorkspaceReasoningEffort()
+        launchForkSession = true
+        launchNewSessionID = UUID().uuidString
+        clearTransientSessionState()
+        await restartProcess(resumeSessionID: fromSessionID)
+        launchForkSession = false
+        launchNewSessionID = nil
+        appendSystemNote("Forked from session \(fromSessionID.prefix(8))…")
+    }
+
+    @discardableResult
+    func forkIntoWorktree(branch: String, path: String, fromSessionID: String?) async -> Bool {
+        if hasForkCommand {
+            var command = "/fork --worktree"
+            if !branch.isEmpty { command += " --branch \(branch)" }
+            if !path.isEmpty { command += " --path \(path)" }
+            return await send(command)
+        }
+        guard let fromSessionID else { return false }
+        // Fallback: caller should create worktree via GitService then startForked.
+        _ = fromSessionID
+        return false
     }
 
     @discardableResult
@@ -534,6 +656,64 @@ final class ChatStore {
         return await send("Cancel the scheduled task with id \(trimmed) (use scheduler_delete) and do nothing else.")
     }
 
+    // MARK: - Workflow runs
+
+    var hasWorkflowCommand: Bool {
+        availableSlashCommands.contains { $0.name == "workflow" || $0.name == "workflows" }
+    }
+
+    var hasDeepResearchCommand: Bool {
+        availableSlashCommands.contains { $0.name == "deep-research" }
+    }
+
+    @discardableResult
+    func refreshWorkflowRuns() async -> Bool {
+        if hasWorkflowCommand {
+            return await send("/workflows")
+        }
+        return await send("List all my workflow runs (use the workflow tool) and do nothing else.")
+    }
+
+    @discardableResult
+    func pauseWorkflowRun(_ name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("/workflow pause \(trimmed)")
+    }
+
+    @discardableResult
+    func resumeWorkflowRun(_ name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("/workflow resume \(trimmed)")
+    }
+
+    @discardableResult
+    func stopWorkflowRun(_ name: String) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("/workflow stop \(trimmed)")
+    }
+
+    @discardableResult
+    func startDeepResearch(_ query: String) async -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return await send("/deep-research \(trimmed)")
+    }
+
+    @discardableResult
+    func launchSavedWorkflow(name: String, args: [String: Any]? = nil) async -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if let args, !args.isEmpty,
+           let data = try? JSONSerialization.data(withJSONObject: args),
+           let json = String(data: data, encoding: .utf8) {
+            return await send("/workflow \(trimmed) \(json)")
+        }
+        return await send("/workflow \(trimmed)")
+    }
+
     // MARK: - Memory
 
     /// Save a note to grok's global memory (`~/.grok/memory/MEMORY.md`). grok's file watcher
@@ -555,7 +735,7 @@ final class ChatStore {
         }
     }
 
-    private func deliverPrompt(_ text: String, waitForCompletion: Bool) async -> Bool {
+    private func deliverPrompt(_ text: String, waitForCompletion: Bool, fromQueue: Bool = false) async -> Bool {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || fileAttachments.contains(where: { !$0.isHidden }) else { return false }
         guard currentWorkspace != nil else {
@@ -563,6 +743,14 @@ final class ChatStore {
             return false
         }
         if isStreaming {
+            if waitForCompletion {
+                lastError = "Wait for the current response to finish."
+                return false
+            }
+            if !fromQueue {
+                enqueuePrompt(trimmed)
+                return true
+            }
             lastError = "Wait for the current response to finish."
             return false
         }
@@ -594,6 +782,9 @@ final class ChatStore {
         }
         if let goalCommand = GoalCommand.parse(from: trimmed) {
             SessionGoalStateMutation.apply(goalCommand, to: &goalState)
+        }
+        if trimmed.lowercased().hasPrefix("/btw") {
+            pendingBtw = true
         }
         fileAttachments.removeAll()
 
@@ -632,6 +823,10 @@ final class ChatStore {
     }
 
     private func finishPrompt(assistantID: UUID, ok: Bool) {
+        if ok, let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+            captureAsideAndShare(from: messages[idx].content)
+        }
+
         isStreaming = false
         isGrokking = false
         turnStartedAt = nil
@@ -643,6 +838,7 @@ final class ChatStore {
             connectionState = .ready
             postStatusUpdate("ready")
             notifyMessagesChanged()
+            drainPromptQueueIfNeeded()
             return
         }
 
@@ -654,6 +850,30 @@ final class ChatStore {
             messages.remove(at: idx)
         }
         notifyMessagesChanged()
+    }
+
+    private func drainPromptQueueIfNeeded() {
+        guard !isStreaming, !promptQueue.isEmpty else { return }
+        let next = promptQueue.removeFirst()
+        Task { [weak self] in
+            _ = await self?.deliverPrompt(next, waitForCompletion: false)
+        }
+    }
+
+    private func captureAsideAndShare(from assistantText: String) {
+        let trimmed = assistantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if pendingBtw {
+            btwAsideText = trimmed
+            pendingBtw = false
+        }
+        if pendingShareURLCapture, let url = ShareURLParser.firstURL(in: trimmed) {
+            lastSharedURL = url
+            pendingShareURLCapture = false
+            appendSystemNote("Share link copied to clipboard.")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url, forType: .string)
+        }
     }
 
     func toggleThinkingExpanded() {
@@ -1081,6 +1301,15 @@ final class ChatStore {
         case .schedulerActivity(let payload):
             scheduledTaskTracker.apply(update: payload)
             scheduledTasks = scheduledTaskTracker.tasks
+            backgroundTaskTracker.apply(update: payload)
+            backgroundActivities = backgroundTaskTracker.activities
+        case .workflowActivity(let payload):
+            workflowRunTracker.apply(update: payload)
+            workflowRuns = workflowRunTracker.runs
+        case .backgroundActivity(let payload):
+            backgroundTaskTracker.apply(update: payload)
+            backgroundActivities = backgroundTaskTracker.activities
+            scheduledTasks = backgroundTaskTracker.activities.compactMap(\.scheduledTask)
         case .permissionRequest(let req):
             if isYolo {
                 // Auto-approve in YOLO mode (prefer allow_always or first allow)

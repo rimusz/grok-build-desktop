@@ -38,8 +38,8 @@ enum SlashMenuEntry: Identifiable, Hashable {
     }
 }
 
-/// Curated workflow slash commands shown as composer chips when advertised by the CLI.
-enum WorkflowSlashCommands {
+/// Curated skill slash commands shown as composer chips when advertised by the CLI.
+enum SkillSlashCommands {
     static let curatedOrder = [
         "design",
         "implement",
@@ -63,17 +63,63 @@ enum WorkflowSlashCommands {
     }
 }
 
+/// Curated research slash commands shown as composer chips when advertised by the CLI.
+enum ResearchSlashCommands {
+    static let curatedOrder = [
+        "deep-research",
+        "create-workflow",
+    ]
+
+    static func filter(_ available: [SlashCommand]) -> [SlashCommand] {
+        var byName: [String: SlashCommand] = [:]
+        for command in available where byName[command.name] == nil {
+            byName[command.name] = command
+        }
+        return curatedOrder.compactMap { byName[$0] }
+    }
+
+    static func slashText(for command: SlashCommand) -> String {
+        "/\(command.name)"
+    }
+}
+
+/// Curated imagine slash commands shown as composer chips when advertised by the CLI.
+enum ImagineSlashCommands {
+    static let curatedOrder = [
+        "imagine",
+        "imagine-video",
+    ]
+
+    static func filter(_ available: [SlashCommand]) -> [SlashCommand] {
+        var byName: [String: SlashCommand] = [:]
+        for command in available where byName[command.name] == nil {
+            byName[command.name] = command
+        }
+        return curatedOrder.compactMap { byName[$0] }
+    }
+
+    static func slashText(for command: SlashCommand) -> String {
+        "/\(command.name)"
+    }
+}
+
 struct SessionGoalState: Equatable, Sendable {
     var objective: String
+    var budget: Int?
     var isPaused: Bool = false
 
     var statusLabel: String {
         isPaused ? "Paused" : "Active"
     }
+
+    var budgetLabel: String? {
+        guard let budget else { return nil }
+        return "Budget: \(budget)"
+    }
 }
 
 enum GoalCommand: Equatable, Sendable {
-    case set(objective: String)
+    case set(objective: String, budget: Int?)
     case status
     case pause
     case resume
@@ -86,20 +132,35 @@ enum GoalCommand: Equatable, Sendable {
         if !afterName.isEmpty, let first = afterName.first, !first.isWhitespace {
             return nil
         }
-        let rest = afterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rest = String(afterName.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !rest.isEmpty else { return nil }
         switch rest.lowercased() {
         case "status": return .status
         case "pause": return .pause
         case "resume": return .resume
         case "clear": return .clear
-        default: return .set(objective: String(rest))
+        default:
+            var budget: Int?
+            if let range = rest.range(of: #"--budget\s+(\d+)"#, options: .regularExpression) {
+                let match = String(rest[range])
+                if let value = match.split(separator: " ").last, let parsed = Int(value) {
+                    budget = parsed
+                }
+                rest.removeSubrange(range)
+                rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard !rest.isEmpty else { return nil }
+            return .set(objective: rest, budget: budget)
         }
     }
 
     var sendText: String {
         switch self {
-        case .set(let objective): return "/goal \(objective)"
+        case .set(let objective, let budget):
+            if let budget {
+                return "/goal \(objective) --budget \(budget)"
+            }
+            return "/goal \(objective)"
         case .status: return "/goal status"
         case .pause: return "/goal pause"
         case .resume: return "/goal resume"
@@ -111,8 +172,8 @@ enum GoalCommand: Equatable, Sendable {
 enum SessionGoalStateMutation {
     static func apply(_ command: GoalCommand, to state: inout SessionGoalState?) {
         switch command {
-        case .set(let objective):
-            state = SessionGoalState(objective: objective, isPaused: false)
+        case .set(let objective, let budget):
+            state = SessionGoalState(objective: objective, budget: budget, isPaused: false)
         case .pause:
             state?.isPaused = true
         case .resume:
@@ -369,5 +430,17 @@ enum SessionTitle {
 
         let preview = parts.prefix(maxWords).joined(separator: " ")
         return parts.count > maxWords ? preview + "…" : preview
+    }
+}
+
+enum ShareURLParser {
+    static func firstURL(in text: String) -> String? {
+        let pattern = #"https?://[^\s<>")\]]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range, in: text) else {
+            return nil
+        }
+        return String(text[range])
     }
 }

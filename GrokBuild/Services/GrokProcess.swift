@@ -42,6 +42,8 @@ struct GrokLaunchOptions: Sendable {
     var allowRules: [String] = []
     var denyRules: [String] = []
     var resumeSessionID: String? = nil
+    var forkSession: Bool = false
+    var newSessionID: String? = nil
     var mcpServers: [MCPServerConfig] = []
 }
 
@@ -191,6 +193,10 @@ enum AcpEvent: @unchecked Sendable {
     case availableCommands([SlashCommand])
     /// A grok `scheduler_*` tool-call `session/update`, forwarded raw for the scheduled-tasks panel.
     case schedulerActivity(payload: [String: Any])
+    /// A grok `workflow` tool-call or workflow session update, forwarded raw for workflow runs.
+    case workflowActivity(payload: [String: Any])
+    /// Background shells, monitors, subagents, and scheduler tools (richer Tasks pill).
+    case backgroundActivity(payload: [String: Any])
     case rawLine(String)
     case error(String)
 }
@@ -402,6 +408,12 @@ final class GrokProcess: @unchecked Sendable {
         }
         for rule in options.denyRules where !rule.isEmpty {
             args += ["--deny", rule]
+        }
+        if options.forkSession {
+            args.append("--fork-session")
+        }
+        if let sessionID = options.newSessionID, !sessionID.isEmpty {
+            args += ["--session-id", sessionID]
         }
 
         args.append("agent")
@@ -991,12 +1003,24 @@ final class GrokProcess: @unchecked Sendable {
             if SchedulerToolParsing.schedulerName(inUpdate: u) != nil {
                 acpEventContinuation?.yield(.schedulerActivity(payload: u))
             }
+            if WorkflowToolParsing.workflowName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.workflowActivity(payload: u))
+            }
+            if BackgroundToolParsing.backgroundToolName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.backgroundActivity(payload: u))
+            }
         case "tool_call_update":
             if let tc = parseToolCall(from: u) {
                 acpEventContinuation?.yield(.toolCallUpdate(tc))
             }
             if SchedulerToolParsing.schedulerName(inUpdate: u) != nil {
                 acpEventContinuation?.yield(.schedulerActivity(payload: u))
+            }
+            if WorkflowToolParsing.workflowName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.workflowActivity(payload: u))
+            }
+            if BackgroundToolParsing.backgroundToolName(inUpdate: u) != nil {
+                acpEventContinuation?.yield(.backgroundActivity(payload: u))
             }
         case "plan":
             acpEventContinuation?.yield(.plan(payload: u))
@@ -1010,7 +1034,10 @@ final class GrokProcess: @unchecked Sendable {
                 currentMode = AgentMode(rawValue: m)
                 acpEventContinuation?.yield(.modeChanged(mode: currentMode))
             }
-        default: break
+        default:
+            if WorkflowToolParsing.isWorkflowSessionUpdate(k) {
+                acpEventContinuation?.yield(.workflowActivity(payload: u))
+            }
         }
     }
 

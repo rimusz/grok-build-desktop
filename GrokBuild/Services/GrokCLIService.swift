@@ -503,6 +503,22 @@ final class GrokCLIService {
         return (dictionary["agents"] as? [[String: Any]] ?? []).map(GrokAgentInfo.init(dictionary:))
     }
 
+    func listExternalCompat(cwd: URL? = nil) async throws -> [GrokExternalCompatInfo] {
+        let json = try await jsonValue(["inspect", "--json"], cwd: cwd)
+        let dictionary = json as? [String: Any] ?? [:]
+        if let compat = dictionary["compat"] as? [[String: Any]] {
+            return compat.map(GrokExternalCompatInfo.init(dictionary:))
+        }
+        if let compat = dictionary["external_compat"] as? [[String: Any]] {
+            return compat.map(GrokExternalCompatInfo.init(dictionary:))
+        }
+        return (dictionary["compat_layers"] as? [[String: Any]] ?? []).map(GrokExternalCompatInfo.init(dictionary:))
+    }
+
+    func listAvailablePlugins() async throws -> [GrokPluginInfo] {
+        try await listPlugins(includeAvailable: true).filter { $0.status == "available" }
+    }
+
     func pluginDetails(name: String) async throws -> String {
         try await run(["plugin", "details", name]).combinedOutput
     }

@@ -65,6 +65,7 @@ grok-deck2/
 ├── GrokBuild/                    # Main app target (SwiftUI + AppKit)
 │   ├── main.swift                # NSApplication entry (NOT GrokBuildApp.swift)
 │   ├── AppDelegate.swift         # Single instance, main window, menus
+│   ├── MainWindowLayout.swift    # Main window min/default size + composer max width
 │   ├── StatusBarController.swift # Menu bar icon + actions
 │   ├── ContentView.swift         # Root view: multi-session orchestration
 │   ├── Views/                    # SwiftUI screens (SettingsView is large)
@@ -485,6 +486,72 @@ grok owns scheduling (`scheduler_create` / `scheduler_list` / `scheduler_delete`
 
 **Wire caveats (verified live, grok 0.2.93):** the completing `tool_call_update` carries `rawOutput` but no `_meta`, and `rawOutput.type` is CamelCase (`SchedulerList`), so detection matches `_meta` name **or** a case-insensitive `rawOutput.type` prefix. The `/loop` slash command is handled by the CLI and emits **no** scheduler tool call, so the pill updates on **Refresh** (or when grok schedules via its tool, e.g. natural-language requests).
 
+### Background tasks (richer Tasks pill)
+
+Extends the Tasks pill beyond scheduled `/loop` tasks to mirror background shells, monitors, and subagents observed via ACP.
+
+| Piece | Location |
+|-------|----------|
+| Model + parsing | `BackgroundTaskStore.swift` — `BackgroundActivity`, `BackgroundToolParsing`, `BackgroundTaskTracker` |
+| ACP event | `GrokProcess` yields `AcpEvent.backgroundActivity(payload:)` for `run_terminal_command` (when `background` in rawInput), `monitor`, `spawn_subagent`, `kill_command_or_subagent`, `get_command_or_subagent_output`, plus scheduler tools |
+| Store | `ChatStore.backgroundActivities` (also keeps `scheduledTasks` in sync) |
+| Chat UI | `ChatView.tasksStatusPill` — sections: Scheduled, Background commands, Monitors, Subagents |
+
+### Rhai workflows (distinct from skill chips)
+
+grok's **Rhai workflow engine** (`.grok/workflows/`, `/workflow`, `/workflows`) is separate from **skill slash commands** (`/design`, `/review`, …) shown as composer chips.
+
+| Piece | Location |
+|-------|----------|
+| Config toggle | `WorkflowsConfigStore` — `[workflows] enabled` in `~/.grok/config.toml` (shared with grok TUI); `SettingsView` → `.workflows` (`WorkflowsSettingsPane`); posts `.workflowsConfigChanged` |
+| Runs mirror | `WorkflowRunStore.swift`, `ChatStore.workflowRuns`, `AcpEvent.workflowActivity` |
+| Saved scripts | `SavedWorkflowStore.swift`, `SavedWorkflowsPanel.swift` |
+| Chat UI | `ChatView.workflowsStatusPill` — runs, saved workflows, deep research, Open Workflow Settings |
+
+### Session goals (`/goal`)
+
+| Piece | Location |
+|-------|----------|
+| Parsing | `ComposerModels.GoalCommand` — supports `--budget N` on set |
+| State | `ChatStore.goalState` (`SessionGoalState` with optional `budget`) |
+| UI | `GoalBanner`, `SetGoalSheet` in `ComposerViews.swift`; top-bar session menu |
+
+### Fork session
+
+| Piece | Location |
+|-------|----------|
+| Launch | `GrokLaunchOptions.forkSession` + `newSessionID` → `--fork-session` / `--session-id` |
+| Store | `ChatStore.startForked(workspace:fromSessionID:)` |
+| UI | `ContentView.forkCurrentSession()` → new tab; `ChatView` session menu **Fork session** |
+
+### Prompt queue
+
+While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Send now` / `Remove`).
+
+### `/btw` aside
+
+Sending `/btw` sets `pendingBtw`; the next assistant reply is captured in `ChatStore.btwAsideText` and shown via `BtwAsideBanner`.
+
+### Session dashboard
+
+`SessionDashboardPanel.swift` — groups live tabs by needs-input / working / idle / failed. Opened from chat top bar; `ContentView` owns `dashboardEntries`.
+
+### Share session
+
+When `/share` is advertised: session menu → `ChatStore.shareSession()`; URL parsed from assistant reply (`ShareURLParser`) and copied to pasteboard.
+
+### Create skill / Imagine
+
+When advertised: session menu **Create skill…** sheet → `/create-skill`; `ImagineSlashCommands` chips + sheet → `/imagine`.
+
+### Compatibility layers
+
+| Piece | Location |
+|-------|----------|
+| Config | `CompatConfigStore` — `[compat.cursor|claude|codex] enabled` in config.toml |
+| Discovery | `GrokCLIService.listExternalCompat()` from `grok inspect --json` |
+| UI | `SettingsView` → `.compatibility` (`CompatibilitySettingsPane`) |
+
 ### Memory (cross-session)
 
 grok owns memory storage, indexing, search, and first-turn injection ([`13-memory.md`](https://docs.x.ai/build/features/memory)). GrokBuild stays thin: it flips the launch flag, browses the files read-only, and appends "Remember" notes.
@@ -552,12 +619,14 @@ Ordered config-first (session config → capabilities → grok ecosystem/inspect
 | `.models` | Custom providers | `CustomModelStore` |
 | `.permissions` | Session safety toggles | `GrokSettingsKeys` |
 | `.memory` | Cross-session memory toggle + browser | `grokbuild.memoryEnabled`, `MemoryStore` |
+| `.workflows` | Rhai workflows enable toggle | `WorkflowsConfigStore` → `[workflows] enabled` in config.toml |
 | `.browser` | Browser tools | `BrowserSettingsStore` draft keys |
 | `.computerUse` | Desktop automation | `ComputerUseSettingsStore` draft keys |
 | `.mcpServers` | External MCP + health | `listMCPServers` |
 | `.skills` | Discovered skills | `listSkills` |
 | `.plugins` | Installed plugins | `listPlugins` |
-| `.marketplace` | Marketplace sources | `listMarketplaceSources` |
+| `.marketplace` | Marketplace sources + install | `listPlugins(includeAvailable:)`, `listAvailablePlugins` |
+| `.compatibility` | Cursor/Claude/Codex compat toggles | `CompatConfigStore`, `listExternalCompat` |
 | `.hooks` | Hooks list | `GrokCLIService.listHooks` |
 | `.app` | App + CLI updates | `UpdateScheduler`, `UpdateSettingsStore` |
 
@@ -652,6 +721,8 @@ Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make 
 ## UI layout & panels
 
 ### Main window (`ContentView`)
+
+Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `AppDelegate`) — sized so sidebar, composer, and status pills stay readable. Composer fills the chat column (`composerMaxWidth` = infinity) — no mid-width 780pt cap. Project status row scrolls horizontally; Browser Tools / Computer Use pills are icon-only when configured (full label only for setup-needed).
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -796,6 +867,11 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
 | **Custom subagents (roles)** | `SubagentRole` / `SubagentRoleStore` (`CustomModelSettings.swift`), `SubagentRoleEditor` in `SettingsView`, `~/.grok/config.toml` `[subagents.roles.*]` + `~/.grok/prompts/` |
 | **Scheduled tasks** | `ScheduledTaskStore.swift`, `ChatStore.scheduledTasks` + refresh/create/cancel, `ChatView.tasksStatusPill`, `AcpEvent.schedulerActivity` |
+| **Background tasks** | `BackgroundTaskStore.swift`, `ChatStore.backgroundActivities`, `AcpEvent.backgroundActivity` |
+| **Rhai workflows** | `WorkflowsConfigStore`, `WorkflowRunStore`, `SavedWorkflowStore`, `ChatView.workflowsStatusPill`, `.workflowsConfigChanged` |
+| **Fork / share / queue** | `GrokLaunchOptions.forkSession`, `ChatStore.startForked`, `shareSession`, `promptQueue`, `btwAsideText` |
+| **Dashboard** | `SessionDashboardPanel.swift`, `ContentView.dashboardEntries` |
+| **Compat** | `CompatConfigStore`, `CompatibilitySettingsPane`, `listExternalCompat` |
 | **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatView.memoryStatusPill`, `ChatStore.remember`/`isMemoryEnabled` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Custom models** | `CustomModelStore`, `~/.grok/config.toml` |

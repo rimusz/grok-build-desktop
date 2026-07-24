@@ -64,6 +64,25 @@ grok owns scheduling (`scheduler_create`/`list`/`delete`, `/loop`); the ACP surf
 - **Wire shape (verified live, grok 0.2.93):** the initiating `tool_call` carries `_meta."x.ai/tool".name` = `scheduler_*` and `rawInput`; the **completing** `tool_call_update` carries **`rawOutput`** but **no `_meta`**, and `rawOutput.type` is **CamelCase** (`SchedulerCreate` / `SchedulerList` / `SchedulerDelete`). Detection must match `_meta` name OR a **case-insensitive** `rawOutput.type` prefix — see `SchedulerToolParsing`.
 - **`/loop` caveat:** the `/loop` slash command is handled by the CLI and does **not** emit a `scheduler_*` tool call, so the pill only updates after **Refresh** (or when grok schedules via its tool, e.g. natural-language requests). The mirror only reflects the live session; schedules fire only while that session's grok process is alive (LRU-capped). Covered by `ScheduledTaskTests` (includes the real captured create→list sequence).
 
+## Background tasks (richer Tasks pill)
+
+Same mirror pattern as schedulers, extended in `BackgroundTaskStore.swift`:
+
+- **Kinds:** scheduled (`scheduler_*`), background `run_terminal_command` (when `background: true` in rawInput), `monitor`, subagent tools (`spawn_subagent`, etc.).
+- **ACP:** `GrokProcess` yields `AcpEvent.backgroundActivity(payload:)`; `ChatStore.backgroundActivities` feeds `ChatView.tasksStatusPill` (sectioned menu).
+- Covered by `BackgroundTaskTests`.
+
+## Rhai workflows vs skill chips
+
+Two different grok features — do not conflate them in UI copy:
+
+| Feature | What it is | GrokBuild surface |
+|---------|------------|-------------------|
+| **Skill chips** | User-invocable skills from `grok inspect` (`/design`, `/review`, …) | `SkillSlashCommands` composer chips |
+| **Rhai workflows** | Background scripts in `.grok/workflows/`, `/workflow` tools | `[workflows] enabled` in config.toml (`WorkflowsConfigStore`), `WorkflowsSettingsPane`, `workflowsStatusPill`, `SavedWorkflowsPanel` |
+
+`WorkflowsConfigStore.setEnabled` posts `.workflowsConfigChanged` so the chat pill refreshes without restart.
+
 ## Memory (cross-session)
 
 The app owns the **toggle**; grok owns storage/index/injection. `grokbuild.memoryEnabled` (Settings → **Memory**) maps in `ChatStore.restartProcess` via `GrokMemoryFlag.argument(noMemory:experimentalMemory:)`:
