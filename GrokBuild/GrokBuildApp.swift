@@ -9,11 +9,17 @@ struct GrokBuildApp: App {
         WindowGroup(id: "main") {
             ContentView()
                 .preferredColorScheme(appearance == "dark" ? .dark : .light)
-                .frame(minWidth: 980, minHeight: 680)
+                .frame(
+                    minWidth: MainWindowLayout.minimumSize.width,
+                    minHeight: MainWindowLayout.minimumSize.height
+                )
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
-        .defaultSize(width: 1024, height: 720)
+        .defaultSize(
+            width: MainWindowLayout.defaultSize.width,
+            height: MainWindowLayout.defaultSize.height
+        )
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About GrokBuild") {

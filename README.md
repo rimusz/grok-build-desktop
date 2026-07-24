@@ -36,7 +36,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 - Streaming chat for `grok agent stdio` with Markdown, thinking blocks, live tool cards, permission prompts, plan/question cards, and diff review.
 - Multi-tab sessions with lazy restore, resumable grok sessions, a session browser, and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
-- Composer controls for model, mode, context usage, voice dictation, file attachments, slash-command autocomplete, workflow chips, and `/goal` status.
+- Composer controls for model, mode, context usage, voice dictation, file attachments, slash-command autocomplete, **skill chips** (`/design`, `/review`, …), **research/workflow chips** (`/deep-research`, `/create-workflow`), **imagine chips**, `/goal` with optional budget, prompt queue while streaming, and session dashboard.
 - Guided empty state with quick-start prompts; use **Clear** on an Empty session to remove it from the tab strip.
 
 ### Project Workflow
@@ -52,7 +52,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 - **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the chat agent pill. These choices pass through as `grok --agent` and restart the affected session.
 - **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
 - **Using subagents** — keep the main agent as Default and chat normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
-- Inspect hooks, plugins, marketplace sources, skills, MCP servers, and session permissions from Settings.
+- Inspect hooks, plugins, marketplace sources (install/enable/disable), compatibility layers (Cursor/Claude/Codex), skills, MCP servers, and session permissions from Settings.
 
 ### Optional Automation
 
@@ -61,7 +61,9 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 - **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
 - **Memory** — experimental and off by default. Enable from Settings, browse `~/.grok/memory/`, and add "Remember" notes from the chat status bar. Slash commands like `/flush` and `/dream` remain TUI-only.
-- **Background tasks** — ask Grok to schedule recurring prompts, start background commands, or monitor logs. The Tasks pill mirrors schedules seen in the live session. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (inactive tabs may be stopped by LRU eviction).
+- **Background tasks** — scheduled `/loop` tasks plus background shells, monitors, and subagents mirrored in the Tasks pill. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (inactive tabs may be stopped by LRU eviction).
+- **Rhai workflows** — enable in Settings → Workflows (`[workflows] enabled` in config.toml, shared with the grok TUI). The Workflows pill lists runs, saved `.grok/workflows/` scripts, and deep research. This is separate from skill chips in the composer.
+- **Session tools** — fork session (new tab with `--fork-session`), share link (`/share` + clipboard), `/btw` aside panel, create-skill sheet, and multi-session dashboard grouped by status.
 - **Documents and spreadsheets** — use grok's document skills (`xlsx`, `docx`, `pptx`) to create, read, edit, and reformat Office files from paths in your workspace. Spreadsheet skills may need [LibreOffice](https://www.libreoffice.org/) installed for some conversions.
 
 ### App Experience

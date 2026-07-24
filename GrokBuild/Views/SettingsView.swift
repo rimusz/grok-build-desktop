@@ -7,12 +7,14 @@ enum SettingsTab: Hashable {
     case models
     case permissions
     case memory
+    case workflows
     case browser
     case computerUse
     case mcpServers
     case skills
     case plugins
     case marketplace
+    case compatibility
     case hooks
     case app
 }
@@ -74,6 +76,14 @@ struct SettingsView: View {
                 }
                 .tag(SettingsTab.memory)
 
+                WorkflowsSettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Workflows", systemImage: "arrow.triangle.branch")
+                }
+                .tag(SettingsTab.workflows)
+
                 BrowserSettingsPane {
                     Task { await store.reloadConfiguration() }
                 }
@@ -123,6 +133,14 @@ struct SettingsView: View {
                     Label("Marketplace", systemImage: "storefront")
                 }
                 .tag(SettingsTab.marketplace)
+
+                CompatibilitySettingsPane {
+                    Task { await store.reloadConfiguration() }
+                }
+                .tabItem {
+                    Label("Compatibility", systemImage: "arrow.triangle.swap")
+                }
+                .tag(SettingsTab.compatibility)
 
                 HooksSettingsPane(workspace: store.currentWorkspace)
                     .settingsPaneColumn()
@@ -1245,6 +1263,7 @@ private struct MarketplaceSettingsPane: View {
 
     private let service = GrokCLIService()
     @State private var availablePlugins: [GrokPluginInfo] = []
+    @State private var installedPlugins: [GrokPluginInfo] = []
     @State private var marketplaceSources: [GrokMarketplaceSource] = []
     @State private var marketplaceSource = ""
     @State private var availableFilter = ""
@@ -1288,37 +1307,23 @@ private struct MarketplaceSettingsPane: View {
 
             HSplitView {
                 List {
-                    ForEach(filteredAvailablePlugins) { plugin in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .firstTextBaseline) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(plugin.name)
-                                        .font(.headline)
-                                    Text([plugin.marketplace, plugin.componentSummary].filter { !$0.isEmpty }.joined(separator: " · "))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Install") {
-                                    Task { await installAvailablePlugin(plugin) }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                            }
-
-                            if !plugin.description.isEmpty {
-                                Text(plugin.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(3)
+                    if !installedPlugins.isEmpty {
+                        Section("Installed") {
+                            ForEach(installedPlugins) { plugin in
+                                marketplacePluginRow(plugin, showInstall: false)
                             }
                         }
-                        .padding(.vertical, 4)
+                    }
+
+                    Section("Available") {
+                        ForEach(filteredAvailablePlugins) { plugin in
+                            marketplacePluginRow(plugin, showInstall: true)
+                        }
                     }
                 }
                 .overlay {
-                    if availablePlugins.isEmpty && !isLoading {
-                        ContentUnavailableView("No Available Plugins", systemImage: "storefront", description: Text("Refresh marketplace sources or add a source above."))
+                    if availablePlugins.isEmpty && installedPlugins.isEmpty && !isLoading {
+                        ContentUnavailableView("No Plugins", systemImage: "storefront", description: Text("Refresh marketplace sources or add a source above."))
                     }
                 }
 
@@ -1360,12 +1365,75 @@ private struct MarketplaceSettingsPane: View {
         .task { await refresh() }
     }
 
+    @ViewBuilder
+    private func marketplacePluginRow(_ plugin: GrokPluginInfo, showInstall: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(plugin.name)
+                        .font(.headline)
+                    Text([plugin.marketplace, plugin.componentSummary].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if showInstall {
+                    Button("Install") {
+                        Task { await installAvailablePlugin(plugin) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                } else {
+                    Text(plugin.isEnabled ? "Enabled" : "Disabled")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(plugin.isEnabled ? .green : .secondary)
+                }
+            }
+
+            if !plugin.description.isEmpty {
+                Text(plugin.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            if !showInstall {
+                HStack {
+                    Button(plugin.isEnabled ? "Disable" : "Enable") {
+                        Task { await setInstalledPlugin(plugin, enabled: !plugin.isEnabled) }
+                    }
+                    Button("Uninstall", role: .destructive) {
+                        Task { await uninstallInstalledPlugin(plugin) }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func refresh() async {
         await perform {
             let allPlugins = try await service.listPlugins(includeAvailable: true)
             async let sources = service.listMarketplaceSources()
             availablePlugins = allPlugins.filter { $0.status == "available" }
+            installedPlugins = allPlugins.filter { $0.status != "available" }
             marketplaceSources = try await sources
+        }
+    }
+
+    private func setInstalledPlugin(_ plugin: GrokPluginInfo, enabled: Bool) async {
+        await perform {
+            try await service.setPlugin(name: plugin.name, enabled: enabled)
+            try await refreshAfterMutation()
+        }
+    }
+
+    private func uninstallInstalledPlugin(_ plugin: GrokPluginInfo) async {
+        await perform {
+            try await service.uninstallPlugin(name: plugin.name, keepData: false)
+            try await refreshAfterMutation()
         }
     }
 
@@ -1395,6 +1463,7 @@ private struct MarketplaceSettingsPane: View {
     private func refreshAfterMutation() async throws {
         let allPlugins = try await service.listPlugins(includeAvailable: true)
         availablePlugins = allPlugins.filter { $0.status == "available" }
+        installedPlugins = allPlugins.filter { $0.status != "available" }
         marketplaceSources = try await service.listMarketplaceSources()
         onConfigurationChanged()
     }
@@ -4642,6 +4711,282 @@ private struct MemorySettingsPane: View {
             statusMessage = error.localizedDescription
         }
         showRemember = false
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+}
+
+private struct WorkflowsSettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    @State private var workflowsEnabled = WorkflowsConfigStore.loadEnabled()
+    @State private var appliedEnabled = WorkflowsConfigStore.loadEnabled()
+    @State private var statusMessage: String?
+
+    private var hasPendingChanges: Bool { workflowsEnabled != appliedEnabled }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                enableCard
+                infoCard
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onReceive(NotificationCenter.default.publisher(for: .workflowsConfigChanged)) { _ in
+            let enabled = WorkflowsConfigStore.loadEnabled()
+            workflowsEnabled = enabled
+            appliedEnabled = enabled
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.indigo)
+                .frame(width: 44, height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.indigo.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Workflows")
+                    .font(.title3.weight(.semibold))
+                Text("Rhai background workflows (`.grok/workflows/`) — distinct from skill slash commands in the composer.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(workflowsEnabled ? "On" : "Off")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill((workflowsEnabled ? Color.indigo : Color.secondary).opacity(0.14)))
+                .foregroundStyle(workflowsEnabled ? Color.indigo : Color.secondary)
+        }
+    }
+
+    private var enableCard: some View {
+        settingsCard(title: "Background Workflows", systemImage: "gearshape.2") {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $workflowsEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable workflows")
+                            .font(.callout.weight(.medium))
+                        Text("Writes `[workflows] enabled` in `~/.grok/config.toml`.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Text("This is a shared grok config flag — it also affects the grok TUI. Skill chips in the composer (`/design`, `/review`, …) are separate: they are user-invocable skills advertised by the CLI, not Rhai workflow scripts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let statusMessage {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Apply and Restart Grok") {
+                        do {
+                            try WorkflowsConfigStore.setEnabled(workflowsEnabled)
+                            appliedEnabled = workflowsEnabled
+                            statusMessage = "Saved. Restarting sessions…"
+                            onConfigurationChanged()
+                        } catch {
+                            statusMessage = error.localizedDescription
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!hasPendingChanges)
+                }
+            }
+        }
+    }
+
+    private var infoCard: some View {
+        settingsCard(title: "Saved Workflows", systemImage: "doc.text") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Workflow scripts live under `.grok/workflows/` in each project. Use the **Workflows** pill in chat to pause/stop runs, browse saved scripts, or start deep research when advertised.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open config.toml") {
+                    openPath(WorkflowsConfigStore.configURL.path)
+                }
+                .controlSize(.small)
+            }
+        }
+    }
+
+    private func settingsCard<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(nsColor: .separatorColor).opacity(0.6)))
+    }
+}
+
+private struct CompatibilitySettingsPane: View {
+    let onConfigurationChanged: () -> Void
+
+    private let service = GrokCLIService()
+    @State private var cursorEnabled = CompatConfigStore.loadEnabled(.cursor)
+    @State private var claudeEnabled = CompatConfigStore.loadEnabled(.claude)
+    @State private var codexEnabled = CompatConfigStore.loadEnabled(.codex)
+    @State private var appliedCursor = CompatConfigStore.loadEnabled(.cursor)
+    @State private var appliedClaude = CompatConfigStore.loadEnabled(.claude)
+    @State private var appliedCodex = CompatConfigStore.loadEnabled(.codex)
+    @State private var externalCompat: [GrokExternalCompatInfo] = []
+    @State private var statusMessage: String?
+    @State private var isLoading = false
+
+    private var hasPendingChanges: Bool {
+        cursorEnabled != appliedCursor || claudeEnabled != appliedClaude || codexEnabled != appliedCodex
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 14) {
+                    Image(systemName: "arrow.triangle.swap")
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(.teal)
+                        .frame(width: 44, height: 44)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.teal.opacity(0.12)))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Compatibility")
+                            .font(.title3.weight(.semibold))
+                        Text("Import skills, hooks, and MCP servers from other agent tools via `~/.grok/config.toml`.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Refresh") {
+                        Task { await loadExternalCompat() }
+                    }
+                    .controlSize(.small)
+                }
+
+                settingsCard(title: "Compat Layers", systemImage: "square.stack.3d.up") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        compatToggle("Cursor", binding: $cursorEnabled, flavor: .cursor)
+                        compatToggle("Claude Code", binding: $claudeEnabled, flavor: .claude)
+                        compatToggle("Codex", binding: $codexEnabled, flavor: .codex)
+
+                        if let statusMessage {
+                            Text(statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
+                            Spacer()
+                            Button("Apply and Restart Grok") {
+                                applyCompat()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!hasPendingChanges)
+                        }
+                    }
+                }
+
+                if !externalCompat.isEmpty {
+                    settingsCard(title: "Detected via grok inspect", systemImage: "magnifyingglass") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(externalCompat) { item in
+                                HStack {
+                                    Text(item.name)
+                                        .font(.callout.weight(.medium))
+                                    Spacer()
+                                    Text(item.isEnabled ? "On" : "Off")
+                                        .font(.caption)
+                                        .foregroundStyle(item.isEnabled ? .green : .secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if isLoading {
+                    ProgressView()
+                }
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task { await loadExternalCompat() }
+    }
+
+    private func compatToggle(_ title: String, binding: Binding<Bool>, flavor: CompatFlavor) -> some View {
+        Toggle(isOn: binding) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text("[compat.\(flavor.tomlKey)] in config.toml")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .toggleStyle(.switch)
+    }
+
+    private func applyCompat() {
+        do {
+            try CompatConfigStore.setEnabled(.cursor, cursorEnabled)
+            try CompatConfigStore.setEnabled(.claude, claudeEnabled)
+            try CompatConfigStore.setEnabled(.codex, codexEnabled)
+            appliedCursor = cursorEnabled
+            appliedClaude = claudeEnabled
+            appliedCodex = codexEnabled
+            statusMessage = "Saved. Restarting sessions…"
+            onConfigurationChanged()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func loadExternalCompat() async {
+        isLoading = true
+        externalCompat = (try? await service.listExternalCompat()) ?? []
+        isLoading = false
     }
 
     private func settingsCard<Content: View>(

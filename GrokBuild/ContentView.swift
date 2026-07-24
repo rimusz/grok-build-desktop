@@ -29,6 +29,7 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var selectedSettingsTab: SettingsTab = .agents
     @State private var showSessions = false
+    @State private var showSessionDashboard = false
     @State private var showPreview = false
     @State private var gitCheckoutRequest: GitCheckoutRequest?
     @State private var gitError: String?
@@ -148,6 +149,9 @@ struct ContentView: View {
                         onOpenComputerUseSettings: { openSettings(tab: .computerUse) },
                         onOpenAgentSettings: { openSettings(tab: .agents) },
                         onOpenMemorySettings: { openSettings(tab: .memory) },
+                        onOpenWorkflowSettings: { openSettings(tab: .workflows) },
+                        onForkSession: { Task { await forkCurrentSession() } },
+                        onOpenDashboard: { showSessionDashboard = true },
                         onSwitchBranch: {
                             if let workspace = currentWorkspace {
                                 gitCheckoutRequest = GitCheckoutRequest(project: workspace)
@@ -204,6 +208,11 @@ struct ContentView: View {
                 },
                 onSelectLive: { selectSession($0) }
             )
+        }
+        .sheet(isPresented: $showSessionDashboard) {
+            SessionDashboardPanel(entries: dashboardEntries) { sessionID in
+                selectSession(sessionID)
+            }
         }
         .sheet(item: $gitCheckoutRequest) { request in
             GitCheckoutSheet(
@@ -306,6 +315,69 @@ struct ContentView: View {
     private func openSettings(tab: SettingsTab) {
         selectedSettingsTab = tab
         showSettings = true
+    }
+
+    private var dashboardEntries: [SessionDashboardEntry] {
+        _ = sessionListRevision
+        return liveSessions.map { session in
+            let store = session.store
+            let pending = store.pendingPermissions.count
+                + store.pendingQuestions.count
+                + (store.pendingExitPlan == nil ? 0 : 1)
+            let group: SessionDashboardEntry.Group
+            switch store.connectionState {
+            case .failed:
+                group = .failed
+            case .busy:
+                group = store.isStreaming || pending > 0 ? (pending > 0 ? .needsInput : .working) : .working
+            case .ready:
+                group = pending > 0 ? .needsInput : .idle
+            case .starting:
+                group = .working
+            case .idle:
+                group = .idle
+            }
+            if pending > 0 { return SessionDashboardEntry(
+                id: session.id,
+                title: sessionTitle(for: session),
+                workspaceName: session.workspace.displayName,
+                group: .needsInput,
+                modelName: store.modelDisplayName(store.currentModel),
+                pendingCount: pending
+            ) }
+            return SessionDashboardEntry(
+                id: session.id,
+                title: sessionTitle(for: session),
+                workspaceName: session.workspace.displayName,
+                group: group,
+                modelName: store.modelDisplayName(store.currentModel),
+                pendingCount: pending
+            )
+        }
+    }
+
+    private func forkCurrentSession() async {
+        guard let source = activeSession,
+              let grokID = source.store.grokSessionId ?? source.grokSessionID else { return }
+        purgeEmptySessions(in: source.workspace.id)
+        let id = UUID()
+        let store = ChatStore()
+        let title = "Fork of \(sessionTitle(for: source))"
+        liveSessions.append(
+            LiveSession(id: id, store: store, workspace: source.workspace, title: title, grokSessionID: nil)
+        )
+        selectedSessionID = id
+        selectedWorkspaceID = source.workspace.id
+        noteSessionUsed(id)
+        sessionListRevision &+= 1
+        persistSessionLayout()
+        store.bindTabSession(
+            id,
+            savedModel: source.store.currentModel,
+            savedAgent: source.store.persistedAgentSelection
+        )
+        await store.startForked(workspace: source.workspace, fromSessionID: grokID)
+        await enforceConnectionCap()
     }
 
     private func toggleBrowserToolsFromChat() {
@@ -1212,6 +1284,7 @@ extension Notification.Name {
     static let grokBuildPrepareForShutdown = Notification.Name("grokBuildPrepareForShutdown")
     static let retryConnectionRequested = Notification.Name("retryConnectionRequested")
     static let openSettingsRequested = Notification.Name("openSettingsRequested")
+    static let workflowsConfigChanged = Notification.Name("workflowsConfigChanged")
 }
 
 private struct ContentViewNotificationHandlers: ViewModifier {

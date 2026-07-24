@@ -96,7 +96,7 @@ private struct WorkflowChip: View {
         .disabled(isDisabled)
         .opacity(isDisabled ? 0.45 : 1)
         .onHover { isHovered = $0 }
-        .help(command.description.isEmpty ? WorkflowSlashCommands.slashText(for: command) : command.description)
+        .help(command.description.isEmpty ? SkillSlashCommands.slashText(for: command) : command.description)
     }
 
     private var displayName: String {
@@ -125,6 +125,11 @@ struct GoalBanner: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.primary.opacity(0.06), in: Capsule())
+                    if let budgetLabel = state.budgetLabel {
+                        Text(budgetLabel)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(state.objective)
                     .font(.caption)
@@ -169,6 +174,71 @@ struct GoalBanner: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.accentColor.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+struct SetGoalSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var objective = ""
+    @State private var budgetText = ""
+    let onSubmit: (String, Int?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Set Goal")
+                .font(.headline)
+            TextField("Objective", text: $objective)
+                .textFieldStyle(.roundedBorder)
+            TextField("Budget (optional)", text: $budgetText)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Set Goal") {
+                    let budget = Int(budgetText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    onSubmit(objective, budget)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+    }
+}
+
+struct BtwAsideBanner: View {
+    let text: String
+    var onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Aside (/btw)", systemImage: "text.bubble")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Button {
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.2), lineWidth: 1)
         )
     }
 }

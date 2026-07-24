@@ -28,6 +28,9 @@ struct ChatView: View {
     var onOpenComputerUseSettings: () -> Void = {}
     var onOpenAgentSettings: () -> Void = {}
     var onOpenMemorySettings: () -> Void = {}
+    var onOpenWorkflowSettings: () -> Void = {}
+    var onForkSession: () -> Void = {}
+    var onOpenDashboard: () -> Void = {}
     var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
@@ -49,6 +52,14 @@ struct ChatView: View {
     @State private var showRememberPrompt = false
     @State private var memoryNoteText = ""
     @State private var cachedCustomSubagentNames: [String] = []
+    @State private var showSavedWorkflows = false
+    @State private var showDeepResearch = false
+    @State private var showSetGoal = false
+    @State private var showCreateSkill = false
+    @State private var showImagine = false
+    @State private var createSkillName = ""
+    @State private var imaginePrompt = ""
+    @State private var workflowsEnabled = WorkflowsConfigStore.loadEnabled()
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -207,6 +218,13 @@ struct ChatView: View {
                     .padding(.horizontal, 12)
             }
 
+            if let aside = store.btwAsideText {
+                BtwAsideBanner(text: aside) {
+                    store.clearBtwAside()
+                }
+                .padding(.horizontal, 12)
+            }
+
             composer
         }
         .onAppear { inputFocused = true }
@@ -252,6 +270,36 @@ struct ChatView: View {
         .sheet(isPresented: $showRememberPrompt) {
             rememberPromptSheet
         }
+        .sheet(isPresented: $showSavedWorkflows) {
+            SavedWorkflowsPanel(projectRoot: store.currentWorkspace?.path) { workflow, argsJSON in
+                Task {
+                    let args = Self.parseWorkflowArgsJSON(argsJSON)
+                    _ = await store.launchSavedWorkflow(name: workflow.name, args: args)
+                }
+            }
+        }
+        .sheet(isPresented: $showDeepResearch) {
+            DeepResearchSheet { query in
+                Task { _ = await store.startDeepResearch(query) }
+            }
+        }
+        .sheet(isPresented: $showSetGoal) {
+            SetGoalSheet { objective, budget in
+                Task { _ = await store.setGoal(objective, budget: budget) }
+            }
+        }
+        .sheet(isPresented: $showCreateSkill) {
+            createSkillSheet
+        }
+        .sheet(isPresented: $showImagine) {
+            imagineSheet
+        }
+        .onAppear {
+            workflowsEnabled = WorkflowsConfigStore.loadEnabled()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workflowsConfigChanged)) { _ in
+            workflowsEnabled = WorkflowsConfigStore.loadEnabled()
+        }
         .onChange(of: store.connectionState) { _, newState in
             if case .ready = newState {
                 // Clear stale auth message if the CLI became ready again
@@ -280,6 +328,44 @@ struct ChatView: View {
             }
             .buttonStyle(.plain)
             .help("Browse sessions")
+
+            Button(action: onOpenDashboard) {
+                Image(systemName: "square.grid.2x2")
+            }
+            .buttonStyle(.plain)
+            .help("Session dashboard")
+
+            Menu {
+                if store.isResumedSessionTab || store.grokSessionId != nil {
+                    Button("Fork session") {
+                        onForkSession()
+                    }
+                }
+                if store.hasShareCommand {
+                    Button("Share session") {
+                        Task { _ = await store.shareSession() }
+                    }
+                    .disabled(store.isStreaming)
+                }
+                if store.hasGoalCommand {
+                    Button("Set goal…") {
+                        showSetGoal = true
+                    }
+                    .disabled(store.isStreaming)
+                }
+                if store.hasCreateSkillCommand {
+                    Button("Create skill…") {
+                        createSkillName = ""
+                        showCreateSkill = true
+                    }
+                    .disabled(store.isStreaming)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(store.currentWorkspace == nil)
+            .help("Session actions")
 
             Spacer()
 
@@ -474,8 +560,11 @@ struct ChatView: View {
         }
     }
 
-    private var workflowChips: [SlashCommand] {
-        WorkflowSlashCommands.filter(store.availableSlashCommands)
+    /// Skill + research + imagine chips in curated order, shown as one horizontal bar.
+    private var composerChips: [SlashCommand] {
+        SkillSlashCommands.filter(store.availableSlashCommands)
+            + ResearchSlashCommands.filter(store.availableSlashCommands)
+            + ImagineSlashCommands.filter(store.availableSlashCommands)
     }
 
     private var composer: some View {
@@ -488,13 +577,17 @@ struct ChatView: View {
                 )
             }
 
-            if !workflowChips.isEmpty {
+            if !composerChips.isEmpty {
                 WorkflowChipBar(
-                    commands: workflowChips,
+                    commands: composerChips,
                     isDisabled: store.isStreaming || store.currentWorkspace == nil
                 ) { command in
-                    Task { await sendWorkflowCommand(command) }
+                    Task { await handleComposerChip(command) }
                 }
+            }
+
+            if !store.promptQueue.isEmpty {
+                promptQueueBar
             }
 
             VStack(alignment: .leading, spacing: 16) {
@@ -599,7 +692,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .frame(maxWidth: 780, alignment: .leading)
+            .frame(maxWidth: MainWindowLayout.composerMaxWidth, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
@@ -617,25 +710,30 @@ struct ChatView: View {
     }
 
     private var projectStatusRow: some View {
-        HStack(spacing: 16) {
-            if let project = store.currentWorkspace {
-                Label(project.displayName, systemImage: "folder")
-                Button(action: onSwitchBranch) {
-                    Label(currentBranchLabel(for: project.path), systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                if let project = store.currentWorkspace {
+                    Label(project.displayName, systemImage: "folder")
+                        .lineLimit(1)
+                    Button(action: onSwitchBranch) {
+                        Label(currentBranchLabel(for: project.path), systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Branches & worktrees")
+                    agentStatusPill
+                    browserStatusPill
+                    computerUseStatusPill
+                    if showWorkflowsPill {
+                        workflowsStatusPill
+                    }
+                    tasksStatusPill
+                    if memoryEnabled {
+                        memoryStatusPill
+                    }
+                } else {
+                    Label("No project selected", systemImage: "folder")
                 }
-                .buttonStyle(.plain)
-                .help("Branches & worktrees")
-                agentStatusPill
-                browserStatusPill
-                computerUseStatusPill
-                tasksStatusPill
-                if memoryEnabled {
-                    memoryStatusPill
-                }
-            } else {
-                Label("No project selected", systemImage: "folder")
             }
-            Spacer()
         }
         .font(.caption.weight(.medium))
         .foregroundStyle(.secondary)
@@ -717,31 +815,161 @@ struct ChatView: View {
             : "Session agent (follows the Settings default). Changing it restarts this session's grok.")
     }
 
+    private var showWorkflowsPill: Bool {
+        workflowsEnabled
+            || !store.workflowRuns.isEmpty
+            || store.hasWorkflowCommand
+            || store.hasDeepResearchCommand
+    }
+
+    private var workflowsStatusPill: some View {
+        let runs = store.workflowRuns
+        let count = runs.count
+        let tint: Color = count > 0 ? .indigo : .secondary
+        let title = count > 0 ? "Workflows (\(count))" : "Workflows"
+
+        return Menu {
+            if runs.isEmpty {
+                Button("No workflow runs") {}
+                    .disabled(true)
+            } else {
+                Section("Runs") {
+                    ForEach(runs) { run in
+                        Menu(workflowMenuTitle(run)) {
+                            if !run.phase.isEmpty {
+                                Text("Phase: \(run.phase)")
+                            }
+                            if !run.progress.isEmpty {
+                                Text(run.progress)
+                            }
+                            Text("Status: \(run.status)")
+                            Divider()
+                            if run.status.lowercased() != "paused" {
+                                Button {
+                                    Task { await store.pauseWorkflowRun(run.id) }
+                                } label: {
+                                    Label("Pause", systemImage: "pause.fill")
+                                }
+                            }
+                            if run.status.lowercased() == "paused" {
+                                Button {
+                                    Task { await store.resumeWorkflowRun(run.id) }
+                                } label: {
+                                    Label("Resume", systemImage: "play.fill")
+                                }
+                            }
+                            Button(role: .destructive) {
+                                Task { await store.stopWorkflowRun(run.id) }
+                            } label: {
+                                Label("Stop", systemImage: "stop.fill")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                Task { await store.refreshWorkflowRuns() }
+            } label: {
+                Label("Refresh Runs", systemImage: "arrow.clockwise")
+            }
+            .disabled(store.isStreaming)
+
+            Button {
+                showSavedWorkflows = true
+            } label: {
+                Label("Saved Workflows…", systemImage: "doc.text")
+            }
+
+            if store.hasDeepResearchCommand {
+                Button {
+                    showDeepResearch = true
+                } label: {
+                    Label("Deep Research…", systemImage: "magnifyingglass")
+                }
+                .disabled(store.isStreaming)
+            }
+
+            Button {
+                onOpenWorkflowSettings()
+            } label: {
+                Label("Open Workflow Settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label(title, systemImage: count > 0 ? "arrow.triangle.branch" : "arrow.triangle.branch")
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(tint.opacity(count > 0 ? 0.14 : 0.10)))
+                .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(store.currentWorkspace == nil)
+        .help("Background workflow runs for this session. Pause/stop via /workflow; saved scripts live in .grok/workflows.")
+        .accessibilityLabel(title)
+    }
+
+    private func workflowMenuTitle(_ run: WorkflowRun) -> String {
+        let status = run.status.isEmpty ? "run" : run.status
+        let label = run.name.isEmpty ? run.id : run.name
+        let short = label.count > 28 ? String(label.prefix(28)) + "…" : label
+        return "\(short) · \(status)"
+    }
+
+    private static func parseWorkflowArgsJSON(_ text: String) -> [String: Any]? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let data = trimmed.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return obj
+    }
+
     private var tasksStatusPill: some View {
-        let tasks = store.scheduledTasks
-        let count = tasks.count
+        let activities = store.backgroundActivities
+        let scheduled = activities.filter { $0.kind == .scheduled }
+        let background = activities.filter { $0.kind == .backgroundCommand }
+        let monitors = activities.filter { $0.kind == .monitor }
+        let subagents = activities.filter { $0.kind == .subagent }
+        let count = activities.count
         let available = store.hasLoopCommand
         let tint: Color = count > 0 ? .accentColor : .secondary
         let title = count > 0 ? "Tasks (\(count))" : "Tasks"
 
         return Menu {
-            if tasks.isEmpty {
-                Button("No scheduled tasks") {}
+            if activities.isEmpty {
+                Button("No background tasks") {}
                     .disabled(true)
             } else {
-                Section("Scheduled tasks") {
-                    ForEach(tasks) { task in
-                        Menu(taskMenuTitle(task)) {
-                            Text(task.prompt.isEmpty ? "(no prompt)" : task.prompt)
-                            if let next = task.nextFireAt {
-                                Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))")
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                Task { await store.cancelScheduledTask(task.id) }
-                            } label: {
-                                Label("Cancel Task", systemImage: "trash")
-                            }
+                if !scheduled.isEmpty {
+                    Section("Scheduled") {
+                        ForEach(scheduled) { activity in
+                            backgroundActivityMenu(activity)
+                        }
+                    }
+                }
+                if !background.isEmpty {
+                    Section("Background commands") {
+                        ForEach(background) { activity in
+                            backgroundActivityMenu(activity)
+                        }
+                    }
+                }
+                if !monitors.isEmpty {
+                    Section("Monitors") {
+                        ForEach(monitors) { activity in
+                            backgroundActivityMenu(activity)
+                        }
+                    }
+                }
+                if !subagents.isEmpty {
+                    Section("Subagents") {
+                        ForEach(subagents) { activity in
+                            backgroundActivityMenu(activity)
                         }
                     }
                 }
@@ -770,8 +998,114 @@ struct ChatView: View {
         .fixedSize()
         .disabled(store.currentWorkspace == nil)
         .help(available
-            ? "Scheduled tasks grok is running for this session. Refresh queries grok; cancel removes a task."
-            : "Scheduling (grok /loop) — mirror of tasks observed in this session.")
+            ? "Background tasks observed in this session (scheduled, shells, monitors, subagents)."
+            : "Background tasks mirror — refresh to query grok.")
+    }
+
+    @ViewBuilder
+    private func backgroundActivityMenu(_ activity: BackgroundActivity) -> some View {
+        if activity.kind == .scheduled, let task = activity.scheduledTask {
+            Menu(taskMenuTitle(task)) {
+                Text(task.prompt.isEmpty ? "(no prompt)" : task.prompt)
+                if let next = task.nextFireAt {
+                    Text("Next: \(next.formatted(date: .abbreviated, time: .shortened))")
+                }
+                Divider()
+                Button(role: .destructive) {
+                    Task { await store.cancelScheduledTask(task.id) }
+                } label: {
+                    Label("Cancel Task", systemImage: "trash")
+                }
+            }
+        } else {
+            Menu(backgroundActivityTitle(activity)) {
+                if !activity.detail.isEmpty {
+                    Text(activity.detail)
+                }
+                if !activity.status.isEmpty {
+                    Text("Status: \(activity.status)")
+                }
+            }
+        }
+    }
+
+    private func backgroundActivityTitle(_ activity: BackgroundActivity) -> String {
+        let label = activity.title
+        let short = label.count > 32 ? String(label.prefix(32)) + "…" : label
+        return activity.status.isEmpty ? short : "\(short) · \(activity.status)"
+    }
+
+    private var promptQueueBar: some View {
+        HStack(spacing: 8) {
+            Label("Queue (\(store.promptQueue.count))", systemImage: "tray.full")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Menu {
+                ForEach(Array(store.promptQueue.enumerated()), id: \.offset) { index, prompt in
+                    Menu(prompt.count > 40 ? String(prompt.prefix(40)) + "…" : prompt) {
+                        Button("Send now") {
+                            Task { _ = await store.sendQueuedPromptNow(at: index) }
+                        }
+                        Button("Remove", role: .destructive) {
+                            store.removeQueuedPrompt(at: index)
+                        }
+                    }
+                }
+            } label: {
+                Text("Queued prompts")
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private var createSkillSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Create Skill")
+                .font(.headline)
+            TextField("Skill name", text: $createSkillName)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { showCreateSkill = false }
+                Button("Create") {
+                    let name = createSkillName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
+                    showCreateSkill = false
+                    Task { _ = await store.send("/create-skill \(name)") }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(createSkillName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+    }
+
+    private var imagineSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Imagine")
+                .font(.headline)
+            TextField("Describe the image or video…", text: $imaginePrompt, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3...6)
+            HStack {
+                Spacer()
+                Button("Cancel") { showImagine = false }
+                Button("Send /imagine") {
+                    let prompt = imaginePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !prompt.isEmpty else { return }
+                    showImagine = false
+                    Task { _ = await store.send("/imagine \(prompt)") }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(imaginePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 
     private func taskMenuTitle(_ task: ScheduledTask) -> String {
@@ -899,14 +1233,22 @@ struct ChatView: View {
                 Label("Open Browser Settings", systemImage: "gearshape")
             }
         } label: {
-            Label(title, systemImage: icon)
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(browserToolsEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
-                .foregroundStyle(tint)
+            Group {
+                if needsSetup {
+                    Label(title, systemImage: icon)
+                } else {
+                    Image(systemName: icon)
+                        .accessibilityLabel(title)
+                }
+            }
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, needsSetup ? 8 : 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(browserToolsEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
+            .foregroundStyle(tint)
         }
         .menuStyle(.borderlessButton)
+        .fixedSize()
         .help(browserStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
     }
 
@@ -952,14 +1294,22 @@ struct ChatView: View {
                 Label("Open Computer Use Settings", systemImage: "gearshape")
             }
         } label: {
-            Label(title, systemImage: icon)
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(computerUseEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
-                .foregroundStyle(tint)
+            Group {
+                if needsSetup {
+                    Label(title, systemImage: icon)
+                } else {
+                    Image(systemName: icon)
+                        .accessibilityLabel(title)
+                }
+            }
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, needsSetup ? 8 : 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(computerUseEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
+            .foregroundStyle(tint)
         }
         .menuStyle(.borderlessButton)
+        .fixedSize()
         .help(computerUseStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
     }
 
@@ -1234,9 +1584,16 @@ struct ChatView: View {
         }
     }
 
-    private func sendWorkflowCommand(_ command: SlashCommand) async {
-        _ = await store.send(WorkflowSlashCommands.slashText(for: command))
-        inputFocused = true
+    private func handleComposerChip(_ command: SlashCommand) async {
+        switch command.name {
+        case "imagine", "imagine-video":
+            showImagine = true
+        case "deep-research":
+            showDeepResearch = true
+        default:
+            _ = await store.send("/\(command.name)")
+            inputFocused = true
+        }
     }
 
     private func submit() async {
