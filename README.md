@@ -1,26 +1,39 @@
 # GrokBuild Desktop App
 
-GrokBuild Desktop App is a native SwiftUI macOS shell for the [`grok`](https://grok.com) CLI — a project-focused chat UI with persistent workspaces, resumable sessions, and settings for CLI features.
+GrokBuild Desktop App is a native SwiftUI macOS shell for the [`grok`](https://grok.com) CLI — a project-focused agent UI with persistent workspaces, resumable sessions, and settings for CLI features.
 
-![GrokBuild Desktop App showing the project sidebar, chat UI, composer, and status bar menu](docs/images/grokbuild-app.png)
+You can also install GrokBuild just to manage custom OpenAI-compatible models in **Settings → Models** (writes `~/.grok/config.toml`; no project or session needed), then use them in the grok TUI.
+
+![GrokBuild Desktop App showing the project sidebar, session UI, composer, and status bar menu](docs/images/grokbuild-app.png)
 
 ## Requirements
 
 - macOS 26 (Tahoe) or later
 - The `grok` CLI installed, usually at `~/.grok/bin/grok`
-- A logged-in CLI session — run `grok login` in Terminal before starting your first chat
+- A logged-in CLI session — run `grok login` in Terminal before starting your first session (not needed if you only manage custom models)
 
 ## Quick Start
+
+### Start with a project
 
 1. Install and sign in to the `grok` CLI (`grok login`).
 2. Download a notarized release from [GitHub Releases](https://github.com/rimusz/grok-build-desktop/releases) and move `GrokBuild.app` to `/Applications`.
 3. Open GrokBuild Desktop App and choose **Add Project**.
 4. Pick a folder. It can be a code repo, a docs folder, or a scratch workspace.
-5. Start chatting. GrokBuild Desktop App launches `grok agent stdio` for that project and streams the session in the app.
+5. Start a session. GrokBuild Desktop App launches `grok agent stdio` for that project and streams it in the app.
+
+### Custom models only
+
+If you mainly use the grok TUI or CLI and just need a UI for providers and models:
+
+1. Install the `grok` CLI and open GrokBuild Desktop App (no project or `grok login` required for this path).
+2. Open **Settings → Models**.
+3. Install a provider (endpoint + API key), then add one or more OpenAI-compatible models.
+4. Entries are written to `~/.grok/config.toml` and work with the grok CLI/TUI via `/model <id>` — and in GrokBuild sessions if you use them later.
 
 ## What GrokBuild Desktop App Is
 
-GrokBuild Desktop App owns the macOS window, project sidebar, session tabs, settings UI, browser/computer-use enablement, and local app update flow.
+GrokBuild Desktop App owns the macOS window, project sidebar, session tabs, settings UI, browser/computer-use enablement, and local app update flow. A common lightweight use is **Settings → Models** alone: manage custom providers and models for the shared `~/.grok/config.toml` without opening a project or starting a session.
 
 It is **not** a replacement for the CLI. The `grok` CLI still owns agent reasoning, ACP, MCP tools, models, skills, subagents, plan mode, permissions, memory, hooks, plugins, and `AGENTS.md` instructions.
 
@@ -32,9 +45,9 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ## Feature Highlights
 
-### Core Chat
+### Sessions
 
-- Streaming chat for `grok agent stdio` with Markdown, thinking blocks, live tool cards, permission prompts, plan/question cards, and diff review.
+- Streaming agent sessions for `grok agent stdio` with Markdown, thinking blocks, live tool cards, permission prompts, plan/question cards, and diff review.
 - Multi-tab sessions with lazy restore, resumable grok sessions, a session browser, and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
 - Composer controls for model, mode, context usage, voice dictation, file attachments, slash-command autocomplete, **skill chips** (`/design`, `/review`, …), **research/workflow chips** (`/deep-research`, `/create-workflow`), **imagine chips**, `/goal` with optional budget, prompt queue while streaming, and session dashboard.
 - Guided empty state with quick-start prompts; use **Clear** on an Empty session to remove it from the tab strip.
@@ -43,15 +56,15 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 - Persistent project sidebar with pinned projects, recent sessions, session rename/close, and one-click **Add Project** onboarding.
 - Per-tab **model** selection and per-project **reasoning effort**.
-- Git branch/worktree management from the chat status row.
+- Git branch/worktree management from the session status row.
 - `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
-- Custom OpenAI-compatible models and reusable providers written to `~/.grok/config.toml`.
+- **Custom models (standalone)** — OpenAI-compatible providers and models in **Settings → Models**, written to `~/.grok/config.toml`. Usable on its own (no project/session); models are then available in the grok CLI/TUI and in GrokBuild sessions.
 
 ### Agent Capabilities
 
-- **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the chat agent pill. These choices pass through as `grok --agent` and restart the affected session.
+- **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the agent pill. These choices pass through as `grok --agent` and restart the affected session.
 - **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
-- **Using subagents** — keep the main agent as Default and chat normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
+- **Using subagents** — keep the main agent as Default and prompt normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
 - Inspect hooks, plugins, marketplace sources (install/enable/disable), compatibility layers (Cursor/Claude/Codex), skills, MCP servers, and session permissions from Settings.
 
 ### Optional Automation
@@ -60,7 +73,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 
 - **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
-- **Memory** — experimental and off by default. Enable from Settings, browse `~/.grok/memory/`, and add "Remember" notes from the chat status bar. Slash commands like `/flush` and `/dream` remain TUI-only.
+- **Memory** — experimental and off by default. Enable from Settings, browse `~/.grok/memory/`, and add "Remember" notes from the session status bar. Slash commands like `/flush` and `/dream` remain TUI-only.
 - **Background tasks** — scheduled `/loop` tasks plus background shells, monitors, and subagents mirrored in the Tasks pill. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (inactive tabs may be stopped by LRU eviction).
 - **Rhai workflows** — enable in Settings → Workflows (`[workflows] enabled` in config.toml, shared with the grok TUI). The Workflows pill lists runs, saved `.grok/workflows/` scripts, and deep research. This is separate from skill chips in the composer.
 - **Session tools** — fork session (new tab with `--fork-session`), share link (`/share` + clipboard), `/btw` aside panel, create-skill sheet, and multi-session dashboard grouped by status.
