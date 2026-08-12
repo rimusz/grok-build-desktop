@@ -65,7 +65,7 @@ OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomMode
 | `cursor-bridge-auth.mjs` | `resolveCursorApiKey` — SDK auth uses process env `CURSOR_API_KEY`; ignore grok's xAI session JWT / `local` Bearer unless token is `crsr_…` |
 | Node ≥ 22.13 | Required on the machine (`CursorBridge.NodeRequirement` / Doctor / Settings install banner) |
 
-Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. Pref: `GrokBuild.cursorBridge.managedEnabled`. Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
+Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. Pref `GrokBuild.cursorBridge.managedEnabled` is set on Cursor provider install (not a Settings toggle). Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
 
 ## Browser backend
 

@@ -131,6 +131,17 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertTrue(CursorBridgeRuntime.Status.running.isRunning)
     }
 
+    func testBridgeManagedEnabledPrefIsInstallOwnedNotASettingsToggle() {
+        // Pref still drives launch; Settings no longer exposes a launch toggle — install sets it, remove clears it.
+        XCTAssertEqual(CursorBridgeSettingsKeys.managedEnabled, "GrokBuild.cursorBridge.managedEnabled")
+        let previous = CursorBridgeRuntime.isEnabled
+        defer { CursorBridgeRuntime.isEnabled = previous }
+        CursorBridgeRuntime.isEnabled = true
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: CursorBridgeSettingsKeys.managedEnabled))
+        CursorBridgeRuntime.isEnabled = false
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: CursorBridgeSettingsKeys.managedEnabled))
+    }
+
     func testBridgeRuntimeTreatsOnlineEndpointAsRunning() {
         XCTAssertTrue(CursorBridgeRuntime.shouldTreatAsRunning(status: .stopped, endpointOnline: true, hasAPIKey: true))
         XCTAssertTrue(CursorBridgeRuntime.shouldTreatAsRunning(status: .running, endpointOnline: false, hasAPIKey: true))

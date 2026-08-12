@@ -42,7 +42,7 @@ Full checklist: `.cursor/rules/docs-and-tests.mdc`.
 | Clean | `make clean` |
 | Unit tests | `make test` |
 
-`make run` / `make app` also run `scripts/bundle-cursor-bridge.sh` when Node ≥ 22.13 is available (installs `GrokBuild/Resources/CursorBridge` deps into the `.app`; copies `cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs` — excludes `*.test.mjs`). Managed Cursor bridge UI: Settings → Models. Bridge SDK auth contract and Node requirement: `grokbuild-grok-cli` skill + `ARCHITECTURE.md`.
+`make run` / `make app` also run `scripts/bundle-cursor-bridge.sh` when Node ≥ 22.13 is available (installs `GrokBuild/Resources/CursorBridge` deps from `registry.npmjs.org` into the `.app`; copies `cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs` — excludes `*.test.mjs`). Missing/old Node soft-skips; npm failures fail the build. Managed Cursor bridge UI: Settings → Models. Bridge SDK auth contract and Node requirement: `grokbuild-grok-cli` skill + `ARCHITECTURE.md`.
 
 ## grok CLI dependency
 

@@ -30,6 +30,7 @@ let package = Package(
                 .copy("Resources/Skills/grokbuild-computer-use"),
                 .copy("Resources/Skills/grokbuild-desktop"),
                 .copy("Resources/Skills/grokbuild-grok-web"),
+                .copy("Resources/Skills/grokbuild-ship-pr"),
             ]
         ),
         .executableTarget(

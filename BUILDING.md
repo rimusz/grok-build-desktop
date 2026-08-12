@@ -78,7 +78,7 @@ The build script (`scripts/build-macos-app.sh`) also:
 - Bundles `Resources/Skills/` into the app
 - Copies `scripts/grokbuild-install-update.sh` → `Contents/Resources/grokbuild-install-update` (in-app upgrade helper)
 - Bundles `agent-desktop` into `Contents/MacOS/` when present on the build machine (CI installs it via npm)
-- Bundles the Cursor OpenAI bridge (`Resources/CursorBridge` + `npm install`, including `cursor-bridge-auth.mjs` / validate-key script; excludes `*.test.mjs`) into `Contents/Resources/CursorBridge` when Node ≥ 22.13 is available (`scripts/bundle-cursor-bridge.sh`)
+- Bundles the Cursor OpenAI bridge (`Resources/CursorBridge` + `npm install` against `registry.npmjs.org`, including `cursor-bridge-auth.mjs` / validate-key script; excludes `*.test.mjs`) into `Contents/Resources/CursorBridge` when Node ≥ 22.13 is available (`scripts/bundle-cursor-bridge.sh`). Missing/old Node soft-skips; npm install failures fail the build so Settings cannot ship without the sidecar.
 
 ## Scripts
 
@@ -134,7 +134,15 @@ Or run the script directly:
 - Runs `codesign --force --deep --options runtime`
 
 ### Notes on entitlements
-The current bundle uses a minimal entitlement for unsigned executable memory (needed by some Swift runtime features). For full notarization you may want to review and expand the entitlements.
+
+Hardened Runtime signing (`--options runtime`, Developer ID / notarized builds) uses [`scripts/GrokBuild.entitlements`](scripts/GrokBuild.entitlements):
+
+| Entitlement | Why |
+|-------------|-----|
+| `com.apple.security.cs.allow-unsigned-executable-memory` | Some Swift runtime paths under Hardened Runtime |
+| `com.apple.security.device.audio-input` | Voice control (`AVAudioEngine`) — without this, macOS never prompts for Microphone and the app stays out of **Privacy → Microphone** ([issue #17](https://github.com/rimusz/grok-build-desktop/issues/17)) |
+
+`scripts/codesign-app-bundle.sh` applies that file for both Developer ID and ad-hoc packages. After a notarized update, users may need to re-approve Microphone once (new CDHash).
 
 ## Notarization
 

@@ -8,6 +8,13 @@ APP_BUNDLE="${1:?app bundle path required}"
 IDENTITY="${2:--}"
 BUNDLE_ID="com.grokbuild.app"
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENTITLEMENTS="$SCRIPT_DIR/GrokBuild.entitlements"
+
+if [ ! -f "$ENTITLEMENTS" ]; then
+    echo "ERROR: Missing entitlements file: $ENTITLEMENTS" >&2
+    exit 1
+fi
 
 xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 
@@ -25,23 +32,13 @@ sign_nested "agent-desktop"
 
 if [ "$IDENTITY" = "-" ]; then
     echo "==> Ad-hoc signing app bundle (required for macOS Accessibility trust)"
-    codesign --force --sign - --timestamp=none "$APP_BUNDLE"
+    # Embed the same entitlements as release so local packages match what notarized
+    # builds ship (Voice control needs device.audio-input under Hardened Runtime).
+    codesign --force --sign - --entitlements "$ENTITLEMENTS" --timestamp=none "$APP_BUNDLE"
 else
     echo "==> Signing app bundle with identity: $IDENTITY"
-    ENTITLEMENTS_PLIST="$(mktemp)"
-    trap 'rm -f "$ENTITLEMENTS_PLIST"' EXIT
-    cat > "$ENTITLEMENTS_PLIST" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-</dict>
-</plist>
-EOF
     codesign --force --deep --sign "$IDENTITY" \
         --options runtime \
-        --entitlements "$ENTITLEMENTS_PLIST" \
+        --entitlements "$ENTITLEMENTS" \
         "$APP_BUNDLE"
 fi
