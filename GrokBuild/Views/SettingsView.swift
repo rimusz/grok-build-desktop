@@ -2855,6 +2855,14 @@ private struct CustomModelsSettingsPane: View {
     @State private var showProviderRemovalConfirmation = false
     @State private var providerPendingRemoval: Provider?
 
+    // Managed Cursor bridge sidecar state.
+    @AppStorage(CursorBridgeSettingsKeys.managedEnabled) private var managedBridgeEnabled = false
+    @State private var managedBridgeStatus = CursorBridgeRuntime.status
+    @State private var cursorAPIKeyDraft = ""
+    @State private var hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+    @State private var isValidatingCursorKey = false
+    @State private var cursorNodeProbe = CursorBridge.NodeRequirement.snapshot(binaryPath: nil, versionDisplay: "")
+
     private struct DefaultModelOption: Identifiable {
         var id: String
         var label: String
@@ -2979,7 +2987,15 @@ private struct CustomModelsSettingsPane: View {
                 scrollTarget = nil
             }
         }
-        .task { reload() }
+        .task {
+            reload()
+            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            cursorNodeProbe = CursorBridgeRuntime.probeNode()
+            managedBridgeStatus = await CursorBridgeRuntime.reconcile()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: CursorBridgeRuntime.statusDidChange)) { _ in
+            managedBridgeStatus = CursorBridgeRuntime.status
+        }
         .alert("Remove Model?", isPresented: $showModelRemovalConfirmation) {
             Button("Cancel", role: .cancel) {
                 modelPendingRemoval = nil
@@ -3086,7 +3102,7 @@ private struct CustomModelsSettingsPane: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Provider Templates")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Popular OpenAI-compatible providers. Install one to add it to “Your Providers”, then enter its API key.")
+                            Text("Popular OpenAI-compatible providers — including Cursor. Install one to add it to “Your Providers”, then enter its API key.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.leading)
@@ -3146,7 +3162,11 @@ private struct CustomModelsSettingsPane: View {
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if !template.suggestedModel.isEmpty {
+            if preset.isManagedCursorBridge {
+                Text("Managed sidecar · API key stored locally · Node ≥ 22.13")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if !template.suggestedModel.isEmpty {
                 Text("e.g. \(template.suggestedModel)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -3220,6 +3240,16 @@ private struct CustomModelsSettingsPane: View {
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                if provider.isManagedCursorBridge {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(managedBridgeStatusColor)
+                            .frame(width: 7, height: 7)
+                        Text(managedBridgeStatus.summary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 if fetchErrorProviderID == provider.id, let message = fetchErrorMessage {
                     Text(message)
                         .font(.caption2)
@@ -3228,6 +3258,7 @@ private struct CustomModelsSettingsPane: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 6) {
+                // Stable button identities — avoid SwiftUI recycling labels if trailing actions change.
                 HStack(spacing: 6) {
                     let addModelDisabled = addModelDisabledReason(for: provider) != nil
                     Button("Add model") { beginNewModel(forProvider: provider) }
@@ -3235,8 +3266,10 @@ private struct CustomModelsSettingsPane: View {
                         .disabled(addModelDisabled)
                         .help(addModelDisabledReason(for: provider)
                             ?? "Add a model from the fetched list.")
+                        .id("provider-add-model-\(provider.id)")
                     Button("Edit") { beginEditingProvider(provider) }
                         .controlSize(.small)
+                        .id("provider-edit-\(provider.id)")
                     let inUse = modelsUsing(provider).count
                     Button("Remove", role: .destructive) {
                         providerPendingRemoval = provider
@@ -3311,7 +3344,13 @@ private struct CustomModelsSettingsPane: View {
 
     @ViewBuilder
     private func providerKeyBadge(for provider: Provider) -> some View {
-        if provider.hasInlineKey {
+        if provider.isManagedCursorBridge {
+            if hasStoredCursorAPIKey {
+                badge("Key saved", color: .green, systemImage: "key.fill")
+            } else {
+                badge("No key", color: .orange, systemImage: "exclamationmark.triangle")
+            }
+        } else if provider.hasInlineKey {
             badge("Key saved", color: .green, systemImage: "key.fill")
         } else if provider.isLocalEndpoint {
             badge("Local", color: .blue, systemImage: "desktopcomputer")
@@ -3326,10 +3365,26 @@ private struct CustomModelsSettingsPane: View {
         return "Add New Provider"
     }
 
+    private var isCursorProviderDraft: Bool {
+        providerDraft.isManagedCursorBridge
+            || ProviderPreset.matching(provider: providerDraft)?.isManagedCursorBridge == true
+    }
+
     /// True when the provider needs a key but none is set yet (drives the "enter your key" prompt).
+    /// For Cursor, always consult the on-disk secret (not only cached `@State`) so Save stays blocked
+    /// after Clear / missing Application Support file.
     private var providerNeedsKey: Bool {
-        !providerDraft.isLocalEndpoint
+        if isCursorProviderDraft {
+            let draft = cursorAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !draft.isEmpty { return false }
+            return !(hasStoredCursorAPIKey && CursorBridgeKeychain.hasAPIKey())
+        }
+        return !providerDraft.isLocalEndpoint
             && providerDraft.apiKey.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var canSaveCursorProvider: Bool {
+        !providerNeedsKey && !isValidatingCursorKey && cursorNodeProbe.meetsMinimum
     }
 
     private var providerEditorCard: some View {
@@ -3339,7 +3394,9 @@ private struct CustomModelsSettingsPane: View {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "key.fill")
                             .foregroundStyle(.orange)
-                        Text("Enter your \(providerDraft.name) API key, then tap **Add Provider** to install it. Nothing is saved until you do.")
+                        Text(isCursorProviderDraft
+                             ? "Paste your Cursor API key, then tap **Add Provider**. GrokBuild starts a local OpenAI bridge and stores the key in Application Support (not config.toml)."
+                             : "Enter your \(providerDraft.name) API key, then tap **Add Provider** to install it. Nothing is saved until you do.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -3351,7 +3408,7 @@ private struct CustomModelsSettingsPane: View {
                 settingRow("Provider id") {
                     TextField("openai", text: $providerDraft.id)
                         .textFieldStyle(.roundedBorder)
-                        .disabled(isEditingProvider || providerDraftFromPreset)
+                        .disabled(isEditingProvider || providerDraftFromPreset || isCursorProviderDraft)
                         .frame(maxWidth: 280)
                 }
                 settingRow("Name") {
@@ -3362,47 +3419,156 @@ private struct CustomModelsSettingsPane: View {
                 settingRow("Base URL") {
                     TextField("https://api.openai.com/v1", text: $providerDraft.baseURL)
                         .textFieldStyle(.roundedBorder)
-                }
-                settingRow("API key") {
-                    HStack(spacing: 8) {
-                        Group {
-                            if revealProviderKey {
-                                TextField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
-                            } else {
-                                SecureField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
-                            }
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 280)
-                        Button {
-                            revealProviderKey.toggle()
-                        } label: {
-                            Image(systemName: revealProviderKey ? "eye.slash" : "eye")
-                        }
-                        .buttonStyle(.borderless)
-                    }
+                        .disabled(isCursorProviderDraft)
                 }
 
-                Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Local/open servers don't need a key.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if isCursorProviderDraft {
+                    cursorProviderCredentialSection
+                } else {
+                    settingRow("API key") {
+                        HStack(spacing: 8) {
+                            Group {
+                                if revealProviderKey {
+                                    TextField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
+                                } else {
+                                    SecureField("sk-… (leave empty for local servers)", text: $providerDraft.apiKey)
+                                }
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 280)
+                            Button {
+                                revealProviderKey.toggle()
+                            } label: {
+                                Image(systemName: revealProviderKey ? "eye.slash" : "eye")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+
+                    Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Local/open servers don't need a key.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 providerFetchRow
 
                 HStack(spacing: 10) {
-                    Button(isEditingProvider ? "Save Provider" : "Add Provider") { saveProviderDraft() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(providerDraft.validationError != nil)
+                    Button(isEditingProvider ? "Save Provider" : "Add Provider") {
+                        Task { await saveProviderDraft() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(
+                        providerDraft.validationError != nil
+                            || (isCursorProviderDraft && !canSaveCursorProvider)
+                            || isValidatingCursorKey
+                    )
                     Button("Cancel") { resetProviderDraft() }
+                        .disabled(isValidatingCursorKey)
                     Spacer()
-                    if let error = providerDraft.validationError, !providerDraft.id.isEmpty {
+                    if isValidatingCursorKey {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Checking API key…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if isCursorProviderDraft, providerNeedsKey {
+                        Text("Paste a Cursor API key to save.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else if let error = providerDraft.validationError, !providerDraft.id.isEmpty {
                         Text(error)
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
                 }
             }
+            .onAppear {
+                if isCursorProviderDraft {
+                    managedBridgeStatus = CursorBridgeRuntime.status
+                    hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+                    cursorNodeProbe = CursorBridgeRuntime.probeNode()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CursorBridgeRuntime.statusDidChange)) { _ in
+                managedBridgeStatus = CursorBridgeRuntime.status
+            }
         }
+    }
+
+    @ViewBuilder
+    private var cursorProviderCredentialSection: some View {
+        if !cursorNodeProbe.meetsMinimum {
+            cursorNodeInstallBanner
+        }
+
+        Toggle("Enable Cursor bridge on launch", isOn: $managedBridgeEnabled)
+            .onChange(of: managedBridgeEnabled) { _, enabled in
+                Task { await toggleManagedBridge(enabled) }
+            }
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Cursor API key")
+                    .font(.caption.weight(.medium))
+                Spacer()
+                if hasStoredCursorAPIKey {
+                    Text("Saved locally")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 8) {
+                SecureField("key_…", text: $cursorAPIKeyDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption.monospaced())
+                    .frame(maxWidth: 320)
+                if hasStoredCursorAPIKey {
+                    Button("Clear") { clearCursorAPIKey() }
+                }
+            }
+            Text("Stored under Application Support (not Keychain, not config.toml) and passed only to the local Node sidecar. Requires Node ≥ \(CursorBridge.NodeRequirement.minimumMajor).\(CursorBridge.NodeRequirement.minimumMinor). Cursor IDE need not be open.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+
+        HStack(spacing: 8) {
+            Circle()
+                .fill(managedBridgeStatusColor)
+                .frame(width: 8, height: 8)
+            Text(managedBridgeStatus.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var cursorNodeInstallBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(cursorNodeProbe.isFound ? "Node.js is too old" : "Node.js is required")
+                    .font(.caption.weight(.semibold))
+                Text(cursorNodeProbe.detail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install with Homebrew…") { openNodeBrewInstallInTerminal() }
+                        .controlSize(.small)
+                    Button("nodejs.org…") {
+                        NSWorkspace.shared.open(CursorBridge.NodeRequirement.homepageURL)
+                    }
+                    .buttonStyle(.link)
+                    .controlSize(.small)
+                    Button("Re-check") {
+                        cursorNodeProbe = CursorBridgeRuntime.probeNode()
+                    }
+                    .controlSize(.small)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
     }
 
     /// "Fetch models" control + result/error summary inside the provider editor.
@@ -3455,9 +3621,7 @@ private struct CustomModelsSettingsPane: View {
                 }
             }
 
-            Text(usesLiveCatalog
-                 ? "Fetches the live Cline Pass catalog (no API key required)."
-                 : "Queries \(ProviderModelFetcher.modelsURL(for: providerDraft.baseURL)?.absoluteString ?? "the provider")/… to list available models. Enter the API key first (local servers need none).")
+            Text(fetchModelsHelpText(usesLiveCatalog: usesLiveCatalog))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
@@ -3474,6 +3638,16 @@ private struct CustomModelsSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private func fetchModelsHelpText(usesLiveCatalog: Bool) -> String {
+        if usesLiveCatalog {
+            return "Fetches the live Cline Pass catalog (no API key required)."
+        }
+        if isCursorProviderDraft {
+            return "Queries the local bridge \(CursorBridge.managedEndpoint.baseURL)/models once the sidecar is running."
+        }
+        return "Queries \(ProviderModelFetcher.modelsURL(for: providerDraft.baseURL)?.absoluteString ?? "the provider")/… to list available models. Enter the API key first (local servers need none)."
     }
 
     // MARK: - Model list
@@ -3707,6 +3881,24 @@ private struct CustomModelsSettingsPane: View {
                     Text("Stored as api_key in ~/.grok/config.toml (plain text on disk). Local/open servers don't need a key.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    settingRow("API backend") {
+                        Picker("", selection: $draft.apiBackend) {
+                            ForEach(ModelAPIBackend.allCases) { backend in
+                                Text(backend.displayName).tag(backend)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 280)
+                    }
+                    settingRow("Env key") {
+                        TextField("Optional — e.g. OPENAI_API_KEY", text: $draft.envKey)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 280)
+                    }
+                    Text("api_backend selects the wire format (Chat Completions, Responses, or Anthropic Messages). env_key lets grok read the key from an environment variable instead of storing it inline.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else if let provider = providers.first(where: { $0.id == draft.providerID }) {
                     HStack(spacing: 8) {
                         Image(systemName: "link")
@@ -3799,30 +3991,67 @@ private struct CustomModelsSettingsPane: View {
                     return
                 }
                 draft.model = newValue
-                syncModelID(from: newValue)
-                if let picked = selectableModelsForDraft.first(where: { $0.id == newValue }),
-                   let displayName = picked.ownedBy,
-                   !displayName.isEmpty {
-                    if draftProvider?.supportsLiveCatalogRefresh == true {
-                        draft.name = ClinePassCatalog.displayName(for: displayName)
-                    } else {
-                        draft.name = displayName
-                    }
+                // Cursor's /v1/models lists owned_by as "cursor" for every id — never use that
+                // as the display name. Prefer “Provider + model” labels (Cline / Cursor / MiniMax…).
+                if draftProvider?.isManagedCursorBridge == true {
+                    applyCursorFetchedModel(newValue)
+                } else {
+                    syncModelID(from: newValue)
+                    applyFetchedModelDisplayName(modelID: newValue)
                 }
             }
         )
     }
 
     private func modelPickerLabel(_ model: FetchedModel) -> String {
+        if draftProvider?.isManagedCursorBridge == true {
+            return "\(CursorBridge.displayName(for: model.id)) — \(model.id)"
+        }
+        if let provider = draftProvider {
+            if provider.supportsLiveCatalogRefresh {
+                let catalog = model.ownedBy?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let base = catalog.isEmpty ? ClinePassCatalog.displayLabel(for: model.id) : catalog
+                return "\(ClinePassCatalog.displayName(for: base)) — \(model.id)"
+            }
+            return "\(ProviderModelNaming.displayName(providerName: provider.name, modelID: model.id)) — \(model.id)"
+        }
         if let name = model.ownedBy, !name.isEmpty {
             return "\(name) — \(model.id)"
         }
         return model.id
     }
 
+    /// Sets `draft.name` to Provider + model (Cline keeps its catalog-based “Cline …” names).
+    private func applyFetchedModelDisplayName(modelID: String) {
+        guard let provider = draftProvider else { return }
+        if provider.supportsLiveCatalogRefresh {
+            let catalog = selectableModelsForDraft.first(where: { $0.id == modelID })?
+                .ownedBy?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let base = catalog.isEmpty ? ClinePassCatalog.displayLabel(for: modelID) : catalog
+            draft.name = ClinePassCatalog.displayName(for: base)
+            return
+        }
+        draft.name = ProviderModelNaming.displayName(providerName: provider.name, modelID: modelID)
+    }
+
+    /// Applies Cursor bridge naming: `cursor-<slug>` id + `Cursor Composer 2.5` name.
+    private func applyCursorFetchedModel(_ modelID: String) {
+        let template = CursorBridge.makeModel(modelID: modelID)
+        draft.id = uniquifiedModelID(template.id)
+        draft.name = template.name
+        draft.apiBackend = template.apiBackend
+        draft.apiKey = template.apiKey
+    }
+
     /// Derives `draft.id` from a provider model name, uniquifying against existing models.
     private func syncModelID(from modelName: String) {
-        let base = CustomModel.suggestedID(from: modelName)
+        let base: String
+        if draftProvider?.isManagedCursorBridge == true {
+            base = CursorBridge.importID(for: modelName)
+        } else {
+            base = CustomModel.suggestedID(from: modelName)
+        }
         draft.id = uniquifiedModelID(base)
     }
 
@@ -3904,6 +4133,11 @@ private struct CustomModelsSettingsPane: View {
         editingProviderID = nil
         providerDraftFromPreset = true
         revealProviderKey = false
+        if preset.isManagedCursorBridge {
+            cursorAPIKeyDraft = ""
+            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            managedBridgeStatus = CursorBridgeRuntime.status
+        }
         showingProviderEditor = true
         showingModelEditor = false
         scrollTarget = providerEditorAnchor
@@ -3924,6 +4158,11 @@ private struct CustomModelsSettingsPane: View {
         editingProviderID = provider.id
         providerDraftFromPreset = false
         revealProviderKey = false
+        if provider.isManagedCursorBridge {
+            cursorAPIKeyDraft = ""
+            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            managedBridgeStatus = CursorBridgeRuntime.status
+        }
         showingProviderEditor = true
         showingModelEditor = false
         scrollTarget = providerEditorAnchor
@@ -3934,23 +4173,96 @@ private struct CustomModelsSettingsPane: View {
         editingProviderID = nil
         providerDraftFromPreset = false
         revealProviderKey = false
+        cursorAPIKeyDraft = ""
         showingProviderEditor = false
     }
 
-    private func saveProviderDraft() {
+    @MainActor
+    private func saveProviderDraft() async {
         guard providerDraft.validationError == nil else { return }
+        var draft = providerDraft
+        let isCursor = draft.isManagedCursorBridge
+            || ProviderPreset.matching(provider: draft)?.isManagedCursorBridge == true
+        if isCursor {
+            guard await persistCursorProviderCredentials() else { return }
+            let template = ProviderPreset.cursor.provider
+            draft.id = template.id
+            draft.baseURL = template.baseURL
+            draft.apiKey = template.apiKey
+            if draft.name.trimmingCharacters(in: .whitespaces).isEmpty {
+                draft.name = template.name
+            }
+        }
         if let editingProviderID, let index = providers.firstIndex(where: { $0.id == editingProviderID }) {
-            providers[index] = providerDraft
+            providers[index] = draft
             // Propagate endpoint/credential changes to models linked to this provider.
             models = models.map { $0.providerID == editingProviderID ? $0.resolved(using: providers) : $0 }
-        } else if let index = providers.firstIndex(where: { $0.id == providerDraft.id }) {
-            providers[index] = providerDraft
+        } else if let index = providers.firstIndex(where: { $0.id == draft.id }) {
+            providers[index] = draft
         } else {
-            providers.append(providerDraft)
+            providers.append(draft)
         }
         ProviderStore.save(providers)
+        let installedCursor = draft.isManagedCursorBridge
         resetProviderDraft()
         persist()
+        if installedCursor {
+            await activateCursorProviderAfterSave()
+        }
+    }
+
+    /// Validates then saves the Cursor API key. Refuses to persist provider/key when missing or rejected.
+    @MainActor
+    private func persistCursorProviderCredentials() async -> Bool {
+        let trimmed = cursorAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate: String?
+        if !trimmed.isEmpty {
+            candidate = trimmed
+        } else if let existing = CursorBridgeKeychain.load(), !existing.isEmpty {
+            candidate = existing
+        } else {
+            hasStoredCursorAPIKey = false
+            errorMessage = CursorBridge.APIKeyValidation.missing.message
+            statusMessage = nil
+            return false
+        }
+
+        isValidatingCursorKey = true
+        defer { isValidatingCursorKey = false }
+
+        let validation = await CursorBridgeRuntime.validateAPIKey(candidate!)
+        guard validation.isValid else {
+            errorMessage = validation.message
+            statusMessage = nil
+            managedBridgeStatus = CursorBridgeRuntime.status
+            return false
+        }
+
+        if !trimmed.isEmpty {
+            do {
+                try CursorBridgeKeychain.save(trimmed)
+                cursorAPIKeyDraft = ""
+            } catch {
+                errorMessage = "Failed to save Cursor API key: \(error.localizedDescription)"
+                statusMessage = nil
+                return false
+            }
+        }
+        hasStoredCursorAPIKey = true
+        errorMessage = nil
+        return true
+    }
+
+    private func activateCursorProviderAfterSave() async {
+        managedBridgeEnabled = true
+        await CursorBridgeRuntime.setEnabled(true)
+        managedBridgeStatus = CursorBridgeRuntime.status
+        // Only refresh the available catalog — do not bulk-import into config.toml.
+        // Users add models the same way as other providers (Fetch → Add model).
+        if case .running = managedBridgeStatus,
+           let provider = providers.first(where: { $0.isManagedCursorBridge }) {
+            fetchModels(for: provider)
+        }
     }
 
     /// Models currently attached to (in use by) the given provider.
@@ -3964,6 +4276,11 @@ private struct CustomModelsSettingsPane: View {
         guard modelsUsing(provider).isEmpty else { return }
         providers.removeAll { $0.id == provider.id }
         ProviderStore.save(providers)
+        if provider.isManagedCursorBridge {
+            managedBridgeEnabled = false
+            CursorBridgeRuntime.stop()
+            managedBridgeStatus = CursorBridgeRuntime.status
+        }
         if editingProviderID == provider.id { resetProviderDraft() }
         fetchedModels[provider.id] = nil
         persist()
@@ -3999,7 +4316,10 @@ private struct CustomModelsSettingsPane: View {
         let provider = Provider(id: id, name: "", baseURL: baseURL, apiKey: apiKey)
         Task {
             do {
-                let result = try await ProviderModelFetcher.fetch(for: provider)
+                var result = try await ProviderModelFetcher.fetch(for: provider)
+                if provider.isManagedCursorBridge {
+                    result = CursorBridge.filterCatalog(result)
+                }
                 await MainActor.run {
                     fetchedModels[key] = result
                     fetchingProviderID = nil
@@ -4149,6 +4469,54 @@ private struct CustomModelsSettingsPane: View {
         }
         if editingID == model.id { resetDraft() }
         persist()
+    }
+
+    // MARK: - Cursor bridge (provider-integrated)
+
+    private var managedBridgeStatusColor: Color {
+        switch managedBridgeStatus {
+        case .running: return .green
+        case .starting: return .orange
+        case .failed: return .red
+        case .stopped: return Color.secondary.opacity(0.4)
+        }
+    }
+
+    private func openNodeBrewInstallInTerminal() {
+        let command = CursorBridge.NodeRequirement.brewInstallCommand
+        let escaped = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "tell application \"Terminal\" to do script \"\(escaped)\"\ntell application \"Terminal\" to activate"
+        if let apple = NSAppleScript(source: script) {
+            var err: NSDictionary?
+            apple.executeAndReturnError(&err)
+        }
+    }
+
+    private func clearCursorAPIKey() {
+        do {
+            try CursorBridgeKeychain.delete()
+            hasStoredCursorAPIKey = false
+            cursorAPIKeyDraft = ""
+            statusMessage = "Cursor API key removed."
+            errorMessage = nil
+            // Always tear down the sidecar — an orphan can keep answering after the secret is gone.
+            CursorBridgeRuntime.handleAPIKeyCleared()
+            managedBridgeStatus = CursorBridgeRuntime.status
+        } catch {
+            errorMessage = "Failed to clear Cursor API key: \(error.localizedDescription)"
+            statusMessage = nil
+        }
+    }
+
+    private func toggleManagedBridge(_ enabled: Bool) async {
+        await CursorBridgeRuntime.setEnabled(enabled)
+        managedBridgeStatus = CursorBridgeRuntime.status
+        if case .running = managedBridgeStatus,
+           let provider = providers.first(where: { $0.isManagedCursorBridge }) {
+            fetchModels(for: provider)
+        }
     }
 
     private func persist() {
@@ -5100,6 +5468,12 @@ private struct AppUpdatesSettingsPane: View {
         )
     }
 
+    @AppStorage(GrokSettingsKeys.steerByDefault) private var steerByDefault = false
+    @AppStorage(GrokSettingsKeys.soundOnUnfocusedFinish) private var soundOnUnfocusedFinish = false
+
+    private var steerByDefaultBinding: Binding<Bool> { $steerByDefault }
+    private var soundBinding: Binding<Bool> { $soundOnUnfocusedFinish }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -5109,6 +5483,47 @@ private struct AppUpdatesSettingsPane: View {
                     systemImage: "arrow.triangle.2.circlepath",
                     color: .blue
                 )
+
+                updatesCard(title: "Session Behavior", systemImage: "arrow.triangle.branch") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(isOn: steerByDefaultBinding) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Steer by default")
+                                    .font(.callout.weight(.medium))
+                                Text("When you send while grok is working, inject the prompt into the running turn instead of queueing it. Grok never cancels the current turn.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        Divider()
+                        Toggle(isOn: soundBinding) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Sound when a turn finishes and GrokBuild is not focused")
+                                    .font(.callout.weight(.medium))
+                                Text("Play a short chime so you notice completed replies while working in another app.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                updatesCard(title: "Diagnostics", systemImage: "stethoscope") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Run Doctor to check the grok CLI path, version, authentication, config.toml, Node.js (for the Cursor bridge), and Cursor bridge reachability.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            NotificationCenter.default.post(name: .openDoctorRequested, object: nil)
+                        } label: {
+                            Label("Open Doctor…", systemImage: "stethoscope")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 updatesCard(title: "Installed Version", systemImage: "info.circle") {
                     VStack(alignment: .leading, spacing: 8) {

@@ -19,7 +19,11 @@ let package = Package(
         .executableTarget(
             name: "GrokBuild",
             path: "GrokBuild",
-            exclude: ["GrokBuildApp.swift"], // We use AppKit entry point instead
+            exclude: [
+                "GrokBuildApp.swift", // AppKit entry point instead
+                // Packaged via scripts/bundle-cursor-bridge.sh (npm install + copy into .app)
+                "Resources/CursorBridge",
+            ],
             resources: [
                 .process("Resources/Assets.xcassets"),
                 .copy("Resources/Skills/grokbuild-browser-control"),

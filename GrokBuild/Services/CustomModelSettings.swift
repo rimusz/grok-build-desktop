@@ -1,5 +1,37 @@
 import Foundation
 
+/// The HTTP wire format grok uses to talk to a custom model's backend.
+///
+/// Maps to the `api_backend` key in a `[model.<id>]` table. Most OpenAI-compatible endpoints
+/// (including the Cursor localhost bridges) use `chat_completions`; the OpenAI Responses API and
+/// Anthropic Messages API are the other shapes grok understands. Kept as a small enum so the
+/// Models UI can offer a picker and the TOML round-trip stays lossless.
+enum ModelAPIBackend: String, CaseIterable, Identifiable, Sendable {
+    case chatCompletions = "chat_completions"
+    case responses = "responses"
+    case messages = "messages"
+
+    var id: String { rawValue }
+
+    /// The default backend when a `[model.<id>]` table omits `api_backend`.
+    static let `default`: ModelAPIBackend = .chatCompletions
+
+    var displayName: String {
+        switch self {
+        case .chatCompletions: return "OpenAI Chat Completions"
+        case .responses: return "OpenAI Responses"
+        case .messages: return "Anthropic Messages"
+        }
+    }
+
+    /// Parses a TOML value into a backend, defaulting when absent or unrecognized.
+    static func parse(_ value: String?) -> ModelAPIBackend {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else { return .default }
+        return ModelAPIBackend(rawValue: raw) ?? .default
+    }
+}
+
 /// A user-defined OpenAI-compatible model entry for `~/.grok/config.toml`.
 ///
 /// Maps to a `[model.<id>]` table, e.g.
@@ -38,6 +70,11 @@ struct CustomModel: Identifiable, Hashable, Sendable {
     /// Optional link to a saved `Provider`. GrokBuild-only; the endpoint/credential are still
     /// written into this model's own `[model.<id>]` table so the Grok CLI can read them.
     var providerID: String?
+    /// The HTTP wire format grok uses for this model (`api_backend` in config.toml).
+    var apiBackend: ModelAPIBackend
+    /// Optional environment-variable name holding the API key (`env_key` in config.toml). Lets a
+    /// user keep the secret out of the file (BYOK) while grok resolves it at launch.
+    var envKey: String
 
     init(
         id: String,
@@ -49,7 +86,9 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         supportsReasoningEffort: Bool = true,
         supportsVision: Bool = false,
         supportsThinkingDisplay: Bool = false,
-        providerID: String? = nil
+        providerID: String? = nil,
+        apiBackend: ModelAPIBackend = .default,
+        envKey: String = ""
     ) {
         self.id = id
         self.model = model
@@ -61,6 +100,8 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         self.supportsVision = supportsVision
         self.supportsThinkingDisplay = supportsThinkingDisplay
         self.providerID = providerID
+        self.apiBackend = apiBackend
+        self.envKey = envKey
     }
 
     /// `true` when this looks like a local/self-hosted endpoint that needs no API key.
@@ -202,6 +243,8 @@ struct Provider: Identifiable, Hashable, Codable, Sendable {
 
 /// Built-in provider presets for popular OpenAI-compatible endpoints.
 enum ProviderPreset: String, CaseIterable, Identifiable {
+    /// GrokBuild-managed Cursor OpenAI sidecar (local Node/`@cursor/sdk` on port 18787).
+    case cursor
     case openai
     case zai
     case minimax
@@ -221,6 +264,7 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
+        case .cursor: return "Cursor"
         case .openai: return "ChatGPT (OpenAI)"
         case .zai: return "Z.ai (GLM)"
         case .minimax: return "MiniMax"
@@ -232,6 +276,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
         case .clinePass: return "Cline Pass"
         }
     }
+
+    /// True when this preset is the GrokBuild-managed Cursor sidecar (local secret + process lifecycle).
+    var isManagedCursorBridge: Bool { self == .cursor }
 
     /// Whether GrokBuild can discover models via `GET {base_url}/models`.
     var supportsModelListingFetch: Bool {
@@ -252,6 +299,9 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var catalogDocumentationURL: URL? {
         switch self {
+        case .cursor:
+            // No Settings deep-link — key is pasted in the Cursor provider editor.
+            return nil
         case .clinePass:
             return ClinePassCatalog.documentationURL
         default:
@@ -261,6 +311,16 @@ enum ProviderPreset: String, CaseIterable, Identifiable {
 
     var provider: Provider {
         switch self {
+        case .cursor:
+            // Placeholder key for grok config.toml; the real Cursor API key is stored under
+            // Application Support and injected only into the local sidecar process.
+            return Provider(
+                id: "cursor",
+                name: "Cursor",
+                baseURL: CursorBridge.managedEndpoint.baseURL,
+                apiKey: "local",
+                suggestedModel: "composer-2.5"
+            )
         case .openai:
             return Provider(
                 id: "openai",
@@ -391,6 +451,66 @@ extension Provider {
 
     var supportsLiveCatalogRefresh: Bool {
         matchingPreset?.supportsLiveCatalogRefresh ?? false
+    }
+
+    /// True when this installed provider is the GrokBuild-managed Cursor sidecar.
+    var isManagedCursorBridge: Bool {
+        matchingPreset?.isManagedCursorBridge == true || id == ProviderPreset.cursor.provider.id
+    }
+}
+
+/// Shared “Provider + model” display names for fetched OpenAI-compatible catalogs
+/// (e.g. MiniMax + `minimax-m2.5` → `MiniMax M2.5`), matching Cline/Cursor style.
+enum ProviderModelNaming {
+    /// Parenthetical suffixes in provider titles are dropped (`ChatGPT (OpenAI)` → `ChatGPT`).
+    static func providerLabel(from providerName: String) -> String {
+        let trimmed = providerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if let idx = trimmed.firstIndex(of: "(") {
+            return trimmed[..<idx].trimmingCharacters(in: .whitespaces)
+        }
+        return trimmed
+    }
+
+    /// `providerName` + humanized model id, without double-prefixing.
+    static func displayName(providerName: String, modelID: String) -> String {
+        let provider = providerLabel(from: providerName)
+        let label = humanizeModelID(modelID, strippingProviderSlug: CustomModel.suggestedID(from: provider))
+        guard !provider.isEmpty else { return label }
+        guard !label.isEmpty else { return provider }
+        if label.lowercased().hasPrefix(provider.lowercased() + " ") { return label }
+        if label.caseInsensitiveCompare(provider) == .orderedSame { return provider }
+        return "\(provider) \(label)"
+    }
+
+    /// Title-cases a model slug, optionally stripping a leading provider token (`minimax-m2.5` → `M2.5`).
+    static func humanizeModelID(_ modelID: String, strippingProviderSlug: String = "") -> String {
+        var slug = modelID.split(separator: "/").last.map(String.init) ?? modelID
+        slug = slug.trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerSlug = strippingProviderSlug.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !providerSlug.isEmpty {
+            let lower = slug.lowercased()
+            if lower.hasPrefix(providerSlug + "-") {
+                slug = String(slug.dropFirst(providerSlug.count + 1))
+            } else if lower.hasPrefix(providerSlug + "_") {
+                slug = String(slug.dropFirst(providerSlug.count + 1))
+            }
+        }
+        return titleCaseSlug(slug)
+    }
+
+    static func titleCaseSlug(_ slug: String) -> String {
+        let acronyms: Set<String> = ["glm", "gpt", "llm", "moe"]
+        return slug
+            .split(whereSeparator: { $0 == "-" || $0 == "_" })
+            .map { part -> String in
+                let token = String(part)
+                if token.allSatisfy({ $0.isNumber || $0 == "." }) { return token }
+                let lower = token.lowercased()
+                if acronyms.contains(lower) { return lower.uppercased() }
+                return token.prefix(1).uppercased() + token.dropFirst()
+            }
+            .joined(separator: " ")
     }
 }
 
@@ -564,9 +684,18 @@ enum ProviderStore {
 
     static func load() -> [Provider] {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let providers = try? JSONDecoder().decode([Provider].self, from: data) else {
+              var providers = try? JSONDecoder().decode([Provider].self, from: data) else {
             return []
         }
+        // Rename legacy "Cursor (local bridge)" label to plain "Cursor".
+        let cursorID = ProviderPreset.cursor.provider.id
+        let cursorName = ProviderPreset.cursor.provider.name
+        var changed = false
+        for index in providers.indices where providers[index].id == cursorID && providers[index].name != cursorName {
+            providers[index].name = cursorName
+            changed = true
+        }
+        if changed { save(providers) }
         return providers
     }
 
@@ -624,7 +753,9 @@ enum CustomModelStore {
                 contextTokens: parseInt(fields["grokbuild_context_tokens"]),
                 supportsReasoningEffort: parseBool(fields["grokbuild_supports_reasoning_effort"]) ?? true,
                 supportsVision: parseBool(fields["grokbuild_supports_vision"]) ?? false,
-                supportsThinkingDisplay: parseBool(fields["grokbuild_supports_thinking"]) ?? false
+                supportsThinkingDisplay: parseBool(fields["grokbuild_supports_thinking"]) ?? false,
+                apiBackend: ModelAPIBackend.parse(fields["api_backend"]),
+                envKey: fields["env_key"] ?? ""
             ))
             currentModelID = nil
             fields = [:]
@@ -721,6 +852,13 @@ enum CustomModelStore {
             }
             if !model.apiKey.trimmingCharacters(in: .whitespaces).isEmpty {
                 result += "api_key = \(quote(model.apiKey))\n"
+            }
+            if !model.envKey.trimmingCharacters(in: .whitespaces).isEmpty {
+                result += "env_key = \(quote(model.envKey))\n"
+            }
+            // Only write api_backend when it deviates from grok's default, to keep files tidy.
+            if model.apiBackend != .default {
+                result += "api_backend = \(quote(model.apiBackend.rawValue))\n"
             }
             if let contextTokens = model.contextTokens {
                 result += "grokbuild_context_tokens = \(contextTokens)\n"

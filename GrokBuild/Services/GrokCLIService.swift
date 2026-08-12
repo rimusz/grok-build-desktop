@@ -374,6 +374,32 @@ enum GrokSettingsKeys {
     static let denyRules = "grokbuild.denyRules"
     static let selectedAgent = "grokbuild.selectedAgent"
     static let memoryEnabled = "grokbuild.memoryEnabled"
+    /// When true, sending a prompt mid-turn steers the running turn instead of queueing it.
+    static let steerByDefault = "grokbuild.steerByDefault"
+    /// When true, play a chime when a turn finishes and the window is not focused.
+    static let soundOnUnfocusedFinish = "grokbuild.soundOnUnfocusedFinish"
+}
+
+/// Whether a mid-turn prompt should steer the running turn or be queued for after it.
+///
+/// grok never cancels a turn on new input; "steer" injects the prompt into the running turn,
+/// while "queue" holds it until the turn completes. Pure so the decision is unit-testable.
+enum SteerDecision: String, Sendable, Equatable {
+    case steer
+    case queue
+
+    /// Resolves the action for a mid-turn send.
+    ///
+    /// - `isStreaming`: a turn is currently in progress. When false the prompt sends normally and
+    ///   this decision is irrelevant, but callers may still ask; we return `.queue` (a no-op path).
+    /// - `steerByDefault`: the app setting.
+    /// - `explicitSteer`: an explicit user choice (e.g. the "Steer" menu action) overrides the
+    ///   default when provided.
+    static func resolve(isStreaming: Bool, steerByDefault: Bool, explicitSteer: Bool? = nil) -> SteerDecision {
+        guard isStreaming else { return .queue }
+        if let explicitSteer { return explicitSteer ? .steer : .queue }
+        return steerByDefault ? .steer : .queue
+    }
 }
 
 /// Best-effort sign-in detection used only at launch, before any grok process runs.

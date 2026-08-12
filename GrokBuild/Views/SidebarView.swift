@@ -6,6 +6,8 @@ struct SidebarSession: Identifiable, Hashable {
     let workspaceID: Workspace.ID
     let title: String
     let isRunning: Bool
+    /// Activity/attention status for the sidebar badge. Defaults to `.idle`.
+    var status: SessionActivityStatus = .idle
 }
 
 struct SidebarView: View {
@@ -352,6 +354,7 @@ private struct SessionSidebarRow: View {
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
                 Spacer()
+                statusBadge
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -362,6 +365,34 @@ private struct SessionSidebarRow: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch session.status {
+        case .idle:
+            EmptyView()
+        case .working:
+            Image(systemName: session.status.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.blue)
+                .accessibilityLabel(session.status.accessibilityLabel)
+        case .needsInput:
+            Image(systemName: session.status.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.orange)
+                .accessibilityLabel(session.status.accessibilityLabel)
+        case .finishedUnread:
+            Image(systemName: session.status.symbolName)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.green)
+                .accessibilityLabel(session.status.accessibilityLabel)
+        case .error:
+            Image(systemName: session.status.symbolName)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.red)
+                .accessibilityLabel(session.status.accessibilityLabel)
+        }
     }
 }
 

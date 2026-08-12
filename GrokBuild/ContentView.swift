@@ -30,6 +30,13 @@ struct ContentView: View {
     @State private var selectedSettingsTab: SettingsTab = .agents
     @State private var showSessions = false
     @State private var showSessionDashboard = false
+    @State private var showDoctor = false
+    /// Session tabs with a finished-but-unseen reply (cleared on focus). Drives the sidebar badge.
+    @State private var unreadSessionIDs: Set<UUID> = []
+    /// Last message count observed per session (secondary unread signal).
+    @State private var lastSeenMessageCounts: [UUID: Int] = [:]
+    /// Prior `isStreaming` per session — primary unread signal (true → false while unfocused).
+    @State private var lastSeenStreaming: [UUID: Bool] = [:]
     @State private var showPreview = false
     @State private var gitCheckoutRequest: GitCheckoutRequest?
     @State private var gitError: String?
@@ -212,6 +219,32 @@ struct ContentView: View {
         .sheet(isPresented: $showSessionDashboard) {
             SessionDashboardPanel(entries: dashboardEntries) { sessionID in
                 selectSession(sessionID)
+            }
+        }
+        .sheet(isPresented: $showDoctor) {
+            DoctorSheet()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openDoctorRequested)) { _ in
+            showDoctor = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { _ in
+            // Mark background sessions that finished a turn (or grew while idle) as unread.
+            for session in liveSessions {
+                let count = session.store.messages.count
+                let previousCount = lastSeenMessageCounts[session.id] ?? 0
+                let wasStreaming = lastSeenStreaming[session.id] ?? false
+                let isStreaming = session.store.isStreaming
+                if session.id == selectedSessionID {
+                    unreadSessionIDs.remove(session.id)
+                } else if BackgroundSessionUnread.shouldMark(
+                    wasStreaming: wasStreaming,
+                    isStreaming: isStreaming,
+                    messageCountGrew: count > previousCount
+                ) {
+                    unreadSessionIDs.insert(session.id)
+                }
+                lastSeenMessageCounts[session.id] = count
+                lastSeenStreaming[session.id] = isStreaming
             }
         }
         .sheet(item: $gitCheckoutRequest) { request in
@@ -566,7 +599,11 @@ struct ContentView: View {
                         title: sessionTitle(for: session),
                         isRunning: session.store.connectionState == .busy
                             || session.store.connectionState == .starting
-                            || session.store.isStreaming
+                            || session.store.isStreaming,
+                        status: session.store.activityStatus(
+                            hasUnreadCompletion: session.id != selectedSessionID
+                                && unreadSessionIDs.contains(session.id)
+                        )
                     )
                 )
             }
@@ -1006,6 +1043,9 @@ struct ContentView: View {
 
     private func selectSession(_ id: UUID) {
         guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        // Focusing a session clears its unread badge.
+        unreadSessionIDs.remove(id)
+        lastSeenMessageCounts[id] = session.store.messages.count
         if session.store.messages.isEmpty {
             session.store.restorePersistedMessages(
                 for: id,
@@ -1285,6 +1325,7 @@ extension Notification.Name {
     static let retryConnectionRequested = Notification.Name("retryConnectionRequested")
     static let openSettingsRequested = Notification.Name("openSettingsRequested")
     static let workflowsConfigChanged = Notification.Name("workflowsConfigChanged")
+    static let openDoctorRequested = Notification.Name("openDoctorRequested")
 }
 
 private struct ContentViewNotificationHandlers: ViewModifier {

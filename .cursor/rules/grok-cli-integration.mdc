@@ -1,6 +1,6 @@
 ---
-description: grok CLI integration — process lifecycle, commands, updates, auth
-globs: GrokBuild/Services/{GrokProcess,GrokCLIService,ChatStore,UpdateChecker}.swift
+description: grok CLI integration — process lifecycle, commands, updates, auth, custom models / Cursor bridge
+globs: GrokBuild/Services/{GrokProcess,GrokCLIService,ChatStore,UpdateChecker,CustomModelSettings,CursorBridge,CursorBridgeRuntime,CursorBridgeKeychain,DoctorReport}.swift,GrokBuild/Resources/CursorBridge/**
 alwaysApply: false
 ---
 
@@ -12,10 +12,12 @@ alwaysApply: false
 - `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
 - `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings.
 - `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
+- `CustomModelStore` / `ProviderStore` — OpenAI-compatible models/providers in `~/.grok/config.toml` (Settings → Models). Display names: `ProviderModelNaming` (Provider + model).
+- `CursorBridgeRuntime` + `CursorBridge` + `CursorBridgeKeychain` — managed Cursor OpenAI sidecar on `127.0.0.1:18787` (bundled Node/`@cursor/sdk`). Real key is **not** in config.toml (`api_key = "local"`); SDK auth via env `CURSOR_API_KEY` and `cursor-bridge-auth.mjs` (`resolveCursorApiKey` — ignore grok session JWT Bearer). Requires Node ≥ 22.13.
 
 ## After changing these services
 
-Run `make test` and update `ARCHITECTURE.md`, `README.md` (if user-visible), and this rule or `grokbuild-grok-cli` skill when integration contracts change.
+Run `make test` and update `ARCHITECTURE.md`, `README.md` (if user-visible), and this rule or `grokbuild-grok-cli` skill when integration contracts change. Cursor bridge JS auth tests: `node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs`.
 
 ## CLI location
 
@@ -29,3 +31,4 @@ Strip `grok ` prefix and `(hash)` from `grok --version` via `GrokCLIService.form
 
 - Shell out with raw `Process` elsewhere — use `GrokCLIService` or `GrokProcess`.
 - Cache CLI version indefinitely in UI; refresh when About opens or on explicit update checks.
+- Put the Cursor user API key into `~/.grok/config.toml` or trust grok's `Authorization` Bearer for the managed bridge (it may be the xAI session JWT).

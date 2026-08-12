@@ -9,7 +9,7 @@ description: Builds, runs, and tests the GrokBuild macOS SwiftPM app. Use when d
 
 ```bash
 make run          # build release + launch via open
-make test         # swift test
+make test         # swift test + Cursor bridge auth node tests (when Node present)
 swift build       # debug build
 xed .             # open Package.swift in Xcode (optional)
 ```
@@ -41,6 +41,8 @@ Full checklist: `.cursor/rules/docs-and-tests.mdc`.
 | DMG | `make dmg` |
 | Clean | `make clean` |
 | Unit tests | `make test` |
+
+`make run` / `make app` also run `scripts/bundle-cursor-bridge.sh` when Node ≥ 22.13 is available (installs `GrokBuild/Resources/CursorBridge` deps into the `.app`; copies `cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs` — excludes `*.test.mjs`). Managed Cursor bridge UI: Settings → Models. Bridge SDK auth contract and Node requirement: `grokbuild-grok-cli` skill + `ARCHITECTURE.md`.
 
 ## grok CLI dependency
 

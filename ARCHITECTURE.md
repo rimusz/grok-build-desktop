@@ -46,6 +46,28 @@ GrokBuild is a **menu-bar macOS app** (SwiftUI + AppKit) that is a **UI shell ov
 
 ---
 
+## Competitive posture
+
+GrokBuild is the **open-source native SwiftUI shell** for `grok agent stdio`. We steal UX ideas from peers but stay thin and grok-only.
+
+| Peer | Shape | What we take / avoid |
+|------|-------|----------------------|
+| grok-build-vscode (+ Electron/AFK Pilot) | Closest ACP GUI + remote | Take session UX (status dots, steer, `@` mentions). Avoid Electron and depending on their remote stack. |
+| Xnative / AskHere | Closed-source native Mac | Compete on openness + Settings depth + Browser/Computer Use. No code reuse. |
+| Grok-UI | Browser ops command center | Take ops surfaces (**Doctor**, live git, usage ledger, privacy). Not a multi-host fleet. |
+| OpenMausBot | Multi-CLI messaging app | Take roster/unread affordances. Stay grok-only (no Claude/Codex drivers). |
+| xai-org/grok-build | Official CLI/TUI | Source of truth for ACP/events/slash. Never reimplement the agent. |
+
+**Non-goals:** Electron rewrite, Windows port, multi-provider agent fleet, or TUI scraping. A thin **optional** Cursor OpenAI `/v1` sidecar (Node + `@cursor/sdk`, inference-only) *is* in scope; GrokBuild does not become a second full Cursor Agents product UI (see [Custom models](#custom-models) → Cursor bridge).
+
+### ACP event inventory (what we parse vs gaps)
+
+Parsed today (`GrokProcess.AcpEvent`, mapped in `ChatStore.consumeOutput`): `messageChunk`, `thoughtChunk`, `toolCall` / `toolCallUpdate`, `plan` / `planFileContent`, `exitPlanRequest`, `questionRequest`, `permissionRequest`, `modeChanged`, `contextUsage` (`_meta.totalTokens`), `availableCommands`, `schedulerActivity`, `workflowActivity`, `backgroundActivity`, `error`, `rawLine`.
+
+Gaps vs peers (advertising-driven; add only when the CLI emits them): **billed cost / usage breakdown** (input/cache/output/USD) — grok only reports `_meta.totalTokens` today, so the context indicator shows tokens, not cost; **explicit subagent lifecycle** beyond `spawn_subagent` tool activity; **workflow phase/agent-allocation** richer than `workflowActivity`. Steering reuses `session/prompt` (grok never cancels a turn) rather than a dedicated event.
+
+---
+
 ## Design rules for agents
 
 1. **Stay thin** — UI and local state only; wrap the CLI, don't replace it.
@@ -261,6 +283,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `pendingPermissions` | Tool permission prompts |
 | `pendingExitPlan` / `pendingQuestions` | Plan / ask-user flows |
 | `fileAttachments` | Composer chips; hidden chips are excluded from the prompt |
+| `imageAttachments` | Pasted/dropped images sent as ACP `image` (vision) content blocks |
 | `authRequiredMessage` | Login banner text |
 | `grokSessionId` | `process.sessionId` — persisted for resume |
 
@@ -277,6 +300,15 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `shutdown()` | Stop process (app update / prepare for shutdown) |
 | `retryConnection()` | Restart after CLI update |
 | `send(_:)` | User message → ACP prompt (attachments become plain paths under `Attached file(s):`, not `@` reads) |
+| `compactContext()` | Sends `/compact` from the context-usage popover (no-op while streaming) |
+
+### Composer input helpers
+
+- **`@` file mentions** — typing `@` shows a fuzzy file picker (`FileMentionMatch` / `FileMentionFilter` / `FileMentionIndex` in `Services/FileMention.swift`; popover `FileMentionListView`). The index enumerates workspace files (cap 2000, skips `.git`/`node_modules`/`.build`/etc.) off the main thread on workspace change; selecting inserts `@<relative-path> `.
+- **Image paste / drop** — pasted or dropped images (png/jpeg/gif/webp) attach as **vision** content, not path chips. Detection + MIME mapping in `Services/ImageAttachment.swift` (`ImageAttachmentSupport`); `GrokProcess.send(_:images:)` appends ACP `image` blocks (`PromptImageContent`). Non-image files still attach as plain paths. Chips: `ImageChipBar`.
+- **Inline media** — assistant/`/imagine` output with image/video paths or markdown image URLs renders inline via `InlineMediaParser` (`Services/InlineMedia.swift`) → `MarkdownBlock.media` → `InlineMediaView` (NSImage / AsyncImage / AVKit `VideoPlayer`, link fallback).
+- **Context popover** — `ContextUsageIndicator` (in `ChatView.swift`) is a button opening a popover with token used/limit (`ContextUsageFormatter`) and a **Compact** button (`ChatStore.compactContext`). Billed USD isn't in ACP, so tokens only.
+- **Workflow run cards** — `WorkflowRunsCard` (`ComposerViews.swift`) shows live `workflowRuns` with phase/progress, agent-budget bar (`WorkflowRun.budgetFraction`), and Pause/Resume/Stop wired to existing `ChatStore.pause/resume/stopWorkflowRun` (`/workflow pause|resume|stop`).
 
 ### `restartProcess` — what gets injected
 
@@ -414,11 +446,14 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.noSubagents` | | `--no-subagents` |
 | `grokbuild.allowRules` / `denyRules` | | Newline-separated `--allow` / `--deny` rules |
 | `grokbuild.selectedAgent` | `GrokSettingsKeys` | **Default** session agent for **new** tabs (empty = grok default; otherwise a discovered agent name). Per-tab overrides live in `SavedSessionRecord.agent`. |
+| `grokbuild.steerByDefault` | `GrokSettingsKeys` | Steer the running turn by default on mid-turn send (Settings → App). Default off |
+| `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
 | `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.customModelProviders` | `ProviderStore` | Reusable custom model providers (UserDefaults) |
+| `GrokBuild.cursorBridge.managedEnabled` | `CursorBridgeSettingsKeys` | Start the bundled Cursor OpenAI sidecar on launch (Settings → Models) |
 | `grokbuild.updates.autoCheckEnabled` | `UpdateSettingsStore` | Background update checks |
 | `grokbuild.updates.dismissedVersion` | | Skipped GrokBuild version |
 | `grokbuild.updates.dismissedCLIVersion` | | Skipped grok CLI version |
@@ -432,6 +467,8 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `~/.grok/prompts/<name>.md` | Instruction bodies for custom subagent roles (referenced by `prompt_file`) |
 | `~/.grok/skills/` | Installed skills (bundled skills copied by installers) |
 | `~/.grokbuild/computer-use/` | Cursor MCP helper binaries |
+| `~/Library/Application Support/GrokBuild/Secrets/cursor-api-key` (0600) | Cursor API key for the managed bridge (`CursorBridgeKeychain`; migrates/deletes legacy Keychain item to avoid ad-hoc re-sign prompts) |
+| `~/Library/Application Support/GrokBuild/cursor-bridge-workspace/` | Scratch cwd for the managed Cursor SDK sidecar |
 | `~/Library/Application Support/GrokBuild/Updates/` | Downloaded app update zips |
 | `~/Library/Application Support/GrokBuild/instance.pid` | Single-instance lock |
 
@@ -524,9 +561,23 @@ grok's **Rhai workflow engine** (`.grok/workflows/`, `/workflow`, `/workflows`) 
 | Store | `ChatStore.startForked(workspace:fromSessionID:)` |
 | UI | `ContentView.forkCurrentSession()` → new tab; `ChatView` session menu **Fork session** |
 
-### Prompt queue
+### Prompt queue + Steer (mid-turn)
 
-While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Send now` / `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped.
+While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Steer into current turn` when streaming, `Send now`, `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped. Mid-turn steer/queue folds file/image chip notes into the text via `consumeComposerAttachments` and clears the chips so they cannot stick to a later prompt (vision pixels are text-noted only on that path — ACP image blocks apply to non-streaming sends).
+
+**Steer** injects a prompt into the *running* turn without cancelling it (grok never cancels on new input). `SteerDecision.resolve(isStreaming:steerByDefault:explicitSteer:)` (in `GrokCLIService.swift`) is the pure decision; `ChatStore.steerRunningTurn` / `steerQueuedPromptNow` append the user message and call `GrokProcess.steer(_:)` (fire-and-forget `session/prompt`, id untracked). The **Steer by default** app setting (`GrokSettingsKeys.steerByDefault`, Settings → App) makes a mid-turn composer send steer instead of queue.
+
+### Session status + unread badges
+
+`SessionActivityStatus` (`Services/SessionStatus.swift`): `idle` / `working` / `needsInput` / `finishedUnread` / `error`, resolved by the pure `SessionStatusResolver.resolve(SessionStatusInputs)`. `ChatStore.activityStatus(hasUnreadCompletion:)` feeds `SidebarSession.status` (dot badge in `SessionSidebarRow`). Unread is tracked in `ContentView` (`unreadSessionIDs` / `lastSeenStreaming` / `lastSeenMessageCounts`) via `BackgroundSessionUnread.shouldMark`: prefer streaming `true → false` on `.liveSessionMessagesChanged` (assistant placeholder is created at turn start, so message count often does not grow on completion); focusing (`selectSession`) clears unread.
+
+### Turn-completion sound
+
+`TurnCompletionSound` (`Services/TurnCompletionSound.swift`) — optional chime when a turn finishes and GrokBuild is not the active app. Pure rule `shouldPlay(enabled:appActive:)`; `playIfNeeded()` reads live `NSApp.isActive`. Toggle: `GrokSettingsKeys.soundOnUnfocusedFinish` (Settings → App). Called from `ChatStore.finishPrompt` on success.
+
+### Doctor + onboarding
+
+`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), and Node.js install (Homebrew Terminal command or nodejs.org) when the Node check warns. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**).
 
 ### `/btw` aside
 
@@ -592,6 +643,11 @@ grok owns memory storage, indexing, search, and first-turn injection ([`13-memor
 | Metadata | GrokBuild-owned TOML keys (`grokbuild_context_tokens`, `grokbuild_supports_*`) drive UI hints only |
 | Chat | Merged into `ChatStore.availableModels` via `mergeCustomModels()` |
 | Cline Pass | Same **Fetch models** button as other providers (required before Add model); live list from `https://api.cline.bot/api/v1/ai/cline/recommended-models` (`clinePass` array, no API key) via `ProviderModelFetcher.fetchClinePassRecommended`. Picker lists models **alphabetically** by slug-derived display name. No hardcoded model table |
+| Display names | Fetch → Add model sets `name` as **Provider + model** via `ProviderModelNaming` (e.g. `MiniMax M2.5`); Cline uses `Cline …`, Cursor uses `Cursor …` |
+
+**`api_backend` + `env_key` (depth).** `CustomModel` carries `apiBackend` (`ModelAPIBackend`: `chat_completions` / `responses` / `messages`; default omitted from TOML to keep files tidy) and `envKey` (`env_key` — grok reads the key from an env var instead of inline). Both round-trip through `CustomModelStore` and are editable in the model editor (Settings → Models). This is the shared path for BYOK and localhost bridges.
+
+**Cursor bridge.** Installed like any other provider: Settings → Models → **1. Add Provider** → **Cursor** (`ProviderPreset.cursor`). Paste a Cursor API key (`CursorBridgeKeychain` → Application Support `Secrets/cursor-api-key`; config.toml keeps `api_key = "local"`), save/install, and GrokBuild enables `CursorBridgeRuntime` — bundled Node script `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`) on `127.0.0.1:18787`. Auth for SDK calls uses process env `CURSOR_API_KEY` via `cursor-bridge-auth.mjs` (`resolveCursorApiKey`) — grok often sends the xAI session JWT as `Authorization: Bearer …` even with `api_key = "local"`; the bridge ignores that JWT (and placeholders) unless the Bearer token is a Cursor `crsr_…` key. On start it **fetches** the `/v1/models` catalog only; models are added the same way as other providers (**Fetch models** → **Add model**). Added models get `providerID = cursor`, table id `cursor-<slug>` (`CursorBridge.importID`), and display name like `Cursor Composer 2.5` (same “Provider + model” pattern as Cline) — not the catalog `owned_by` field. Catalog aliases `default` / `auto` / `auto-smart` are filtered out of Fetch / Add model. `CursorBridgeRuntime.reconcile` / orphan reattach avoid false “exited unexpectedly” after relaunch when port `18787` is still live — but only while a Cursor API key is still saved; clearing the key (or launching with none) stops owned + orphan listeners so the UI cannot show Running with a No key badge. Saving/installing the Cursor provider requires a key (Add/Save stays disabled otherwise); before persist and before `startIfNeeded` spawns/reattaches, `CursorBridgeRuntime.validateAPIKey` runs bundled `cursor-validate-key.mjs` (`Cursor.models.list`) and rejects bad keys without starting the sidecar. The bridge starts via **Save Provider** / **Enable Cursor bridge on launch** (no separate Start control or API-keys deep-link in Settings — those caused a brief “Start bridge” flash over Add model while status was `.starting`). Packaging: `scripts/bundle-cursor-bridge.sh`. Requires Node ≥ 22.13 on the machine (`CursorBridge.NodeRequirement` + `CursorBridgeRuntime.probeNode`); Settings and Doctor surface a warning with **Install with Homebrew…** / **nodejs.org…** when missing or too old. Cursor IDE need not be open. Preference: `GrokBuild.cursorBridge.managedEnabled`. No external community-bridge detect/import. Inference-only: grok keeps its ACP tools. Cursor subscription/ToS is the user's responsibility. `[compat.cursor]` (rules/skills) and the Computer Use Cursor MCP are unrelated.
 
 OpenAI-compatible provider URLs; not a replacement for grok-native models. Custom model metadata is a UI fallback: ACP-reported model names/context limits stay authoritative when the CLI provides them. Reasoning-effort support is **opt-out** — `grokbuild_supports_reasoning_effort` defaults to `true` for new models and for existing config.toml entries missing the key, so the effort control keeps showing until the user disables it. Models explicitly marked as not supporting reasoning effort do not receive `--reasoning-effort` at launch, and the composer hides the effort picker for them.
 
@@ -786,6 +842,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
 | `.subagentRolesChanged` | Custom subagent roles saved in Settings | `ChatView` refreshes `cachedCustomSubagentNames` in the agent pill |
+| `.openDoctorRequested` | Settings → App → Open Doctor… | `ContentView` presents `DoctorSheet` |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
 
@@ -877,6 +934,14 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatView.memoryStatusPill`, `ChatStore.remember`/`isMemoryEnabled` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Custom models** | `CustomModelStore`, `~/.grok/config.toml` |
+| **Cursor bridge / api_backend** | `ProviderPreset.cursor`, `CursorBridge.swift`, `CursorBridgeRuntime.swift`, `CursorBridgeKeychain.swift`, `Resources/CursorBridge/`, `ModelAPIBackend` + `CustomModel.apiBackend/envKey`, Add Provider flow in `CustomModelsSettingsPane` |
+| **Session status / steer / sound** | `SessionStatus.swift`, `SteerDecision` (`GrokCLIService.swift`), `ChatStore.steerRunningTurn`, `TurnCompletionSound.swift`, `SidebarSession.status` |
+| **@ file mentions** | `Services/FileMention.swift`, `FileMentionListView`, `ChatView` (`mentionMatch`, `loadFileMentionIndex`) |
+| **Image vision attachments** | `Services/ImageAttachment.swift`, `ChatStore.addImageAttachment`, `GrokProcess.send(_:images:)`, `ImageChipBar` |
+| **Inline media preview** | `Services/InlineMedia.swift`, `MarkdownBlock.media`, `InlineMediaView` (`RichMessageView.swift`) |
+| **Context usage popover** | `ContextUsageFormatter.swift`, `ContextUsageIndicator` + `ChatStore.compactContext` |
+| **Workflow run cards** | `WorkflowRunsCard` (`ComposerViews.swift`), `WorkflowRun.budgetFraction/isActive`, `ChatStore.pause/resume/stopWorkflowRun` |
+| **Doctor** | `DoctorReport.swift`, `DoctorSheet.swift`, `.openDoctorRequested` |
 | **Settings tab** | `SettingsView` — search pane struct by tab |
 | **MCP injection** | `ChatStore.restartProcess` → `browserMCPConfig` / `computerUseMCPConfig` |
 | **Skill install** | `BrowserSkillInstaller`, `ComputerUseSkillInstaller` |
@@ -911,6 +976,8 @@ make test    # Tests/GrokBuildTests/
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
+| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse), Doctor report mapping, unfocused-finish sound rule |
+| `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.
 

@@ -18,10 +18,11 @@ GrokBuild stays close to the CLI. Do not reimplement CLI features (ACP, MCP, ski
 When changing app behavior that touches the CLI:
 
 1. Prefer existing services: `GrokProcess`, `GrokCLIService`, `ChatStore`, `UpdateChecker`.
-2. Feature subsystems have their own services: `AgentBrowserService` (browser tools), `ComputerUseService` (desktop automation via bundled `agent-desktop`), `CustomModelStore` (OpenAI-compatible models in `~/.grok/config.toml`).
+2. Feature subsystems have their own services: `AgentBrowserService` (browser tools), `ComputerUseService` (desktop automation via bundled `agent-desktop`), `CustomModelStore` / `ProviderStore` (OpenAI-compatible models in `~/.grok/config.toml`), `CursorBridgeRuntime` (managed Cursor OpenAI sidecar — key via `CursorBridgeKeychain`, not config.toml).
 3. Keep workspace/session state in `WorkspaceStore` and `SessionLayoutStore`.
 4. Post status via `.grokStatusChanged` when auth or process state changes.
 5. Bundled grok skills live in `GrokBuild/Resources/Skills/` (`grokbuild-browser-control`, `grokbuild-computer-use`, `grokbuild-desktop`, `grokbuild-grok-web`) and are copied into the app bundle at build time.
+6. Cursor bridge / custom-model contracts: `.cursor/skills/grokbuild-grok-cli/SKILL.md` and `.cursor/rules/grok-cli-integration.mdc`.
 
 ## Code style
 

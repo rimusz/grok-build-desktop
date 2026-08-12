@@ -163,6 +163,68 @@ struct SlashAutocompleteView: View {
     }
 }
 
+// MARK: - File mention autocomplete
+
+struct FileMentionListView: View {
+    let paths: [String]
+    let activeIndex: Int
+    var onSelect: (String) -> Void
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(paths.enumerated()), id: \.offset) { index, path in
+                        Button {
+                            onSelect(path)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "doc")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text((path as NSString).lastPathComponent)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    if (path as NSString).lastPathComponent != path {
+                                        Text(path)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(index == activeIndex ? Color.accentColor.opacity(0.14) : Color.clear)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .id("mention-\(index)")
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .onChange(of: activeIndex) { _, newIndex in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    proxy.scrollTo("mention-\(newIndex)", anchor: .center)
+                }
+            }
+        }
+        .frame(width: 520)
+        .frame(maxHeight: 280)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+    }
+}
+
 enum SlashAutocomplete {
     static func match(in text: String) -> (query: String, range: Range<String.Index>)? {
         guard let regex = try? NSRegularExpression(pattern: #"(?:^|\n)/(\S*)$"#) else { return nil }

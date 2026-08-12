@@ -53,6 +53,164 @@ private struct FileChipView: View {
     }
 }
 
+// MARK: - Image (vision) chips
+
+struct ImageChipBar: View {
+    let attachments: [ImageAttachment]
+    var onRemove: (UUID) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    ImageChipView(attachment: attachment, onRemove: { onRemove(attachment.id) })
+                }
+            }
+        }
+    }
+}
+
+private struct ImageChipView: View {
+    let attachment: ImageAttachment
+    var onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let image = NSImage(data: attachment.data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            } else {
+                Image(systemName: "photo")
+                    .frame(width: 28, height: 28)
+            }
+            Text(attachment.displayName)
+                .font(.caption)
+                .lineLimit(1)
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(Color.accentColor.opacity(0.10), in: Capsule())
+        .help("Vision image — sent to the model as multimodal content")
+    }
+}
+
+// MARK: - Workflow run cards
+
+struct WorkflowRunsCard: View {
+    let runs: [WorkflowRun]
+    var isStreaming: Bool
+    var onPause: (String) -> Void
+    var onResume: (String) -> Void
+    var onStop: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                Text("Workflow runs")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            ForEach(runs) { run in
+                WorkflowRunRow(
+                    run: run,
+                    isStreaming: isStreaming,
+                    onPause: { onPause(run.id) },
+                    onResume: { onResume(run.id) },
+                    onStop: { onStop(run.id) }
+                )
+            }
+        }
+        .padding(12)
+        .background(Color.indigo.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.indigo.opacity(0.25), lineWidth: 1)
+        )
+    }
+}
+
+private struct WorkflowRunRow: View {
+    let run: WorkflowRun
+    var isStreaming: Bool
+    var onPause: () -> Void
+    var onResume: () -> Void
+    var onStop: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(run.name.isEmpty ? run.id : run.name)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                statusBadge
+                Spacer(minLength: 8)
+                controls
+            }
+            if !run.phase.isEmpty || !run.progress.isEmpty {
+                Text([run.phase, run.progress].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let fraction = run.budgetFraction {
+                ProgressView(value: fraction)
+                    .tint(.indigo)
+                if let spent = run.agentBudgetSpent, let total = run.agentBudgetTotal {
+                    Text("Agent budget: \(spent)/\(total)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var statusBadge: some View {
+        Text(run.status.isEmpty ? "running" : run.status)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        HStack(spacing: 6) {
+            if run.isActive {
+                if run.isPaused {
+                    Button(action: onResume) {
+                        Image(systemName: "play.fill")
+                    }
+                    .help("Resume (/workflow resume)")
+                } else {
+                    Button(action: onPause) {
+                        Image(systemName: "pause.fill")
+                    }
+                    .help("Pause (/workflow pause)")
+                }
+                Button(role: .destructive, action: onStop) {
+                    Image(systemName: "stop.fill")
+                }
+                .help("Stop (/workflow stop)")
+            }
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+        .disabled(isStreaming)
+    }
+}
+
 // MARK: - Workflow chips
 
 struct WorkflowChipBar: View {

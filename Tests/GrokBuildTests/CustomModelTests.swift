@@ -194,6 +194,43 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(CustomModelStore.maxModels, 28)
     }
 
+    // MARK: - api_backend + env_key (Cursor bridge / BYOK depth)
+
+    func testApiBackendAndEnvKeyRoundTripThroughRewrite() {
+        let model = CustomModel(
+            id: "cursor-composer-2.5",
+            model: "composer-2.5",
+            baseURL: "http://127.0.0.1:18787/v1",
+            name: "Composer 2.5 (Cursor bridge)",
+            apiKey: "local",
+            apiBackend: .responses,
+            envKey: "CURSOR_BRIDGE_KEY"
+        )
+        let rewritten = CustomModelStore.rewrite("", models: [model], defaultModelID: nil)
+        XCTAssertTrue(rewritten.contains(#"api_backend = "responses""#))
+        XCTAssertTrue(rewritten.contains(#"env_key = "CURSOR_BRIDGE_KEY""#))
+
+        let reparsed = CustomModelStore.parse(rewritten).models.first
+        XCTAssertEqual(reparsed?.apiBackend, .responses)
+        XCTAssertEqual(reparsed?.envKey, "CURSOR_BRIDGE_KEY")
+    }
+
+    func testDefaultApiBackendIsNotWrittenAndParsesBack() {
+        let model = CustomModel(id: "m", model: "x", baseURL: "https://x/v1")
+        let rewritten = CustomModelStore.rewrite("", models: [model], defaultModelID: nil)
+        // chat_completions is the default; keep the file tidy by omitting it.
+        XCTAssertFalse(rewritten.contains("api_backend"))
+        XCTAssertEqual(CustomModelStore.parse(rewritten).models.first?.apiBackend, .chatCompletions)
+    }
+
+    func testApiBackendParseFallsBackToDefault() {
+        XCTAssertEqual(ModelAPIBackend.parse(nil), .chatCompletions)
+        XCTAssertEqual(ModelAPIBackend.parse(""), .chatCompletions)
+        XCTAssertEqual(ModelAPIBackend.parse("nonsense"), .chatCompletions)
+        XCTAssertEqual(ModelAPIBackend.parse("responses"), .responses)
+        XCTAssertEqual(ModelAPIBackend.parse(" Messages "), .messages)
+    }
+
     func testRewritePreservesUnrelatedSectionsAndUpdatesModels() {
         let original = """
         [cli]
@@ -290,6 +327,7 @@ final class CustomModelTests: XCTestCase {
 
     func testProviderPresetsCoverRequestedProviders() {
         let names = Set(ProviderPreset.allCases.map { $0.displayName })
+        XCTAssertTrue(names.contains("Cursor"))
         XCTAssertTrue(names.contains("ChatGPT (OpenAI)"))
         XCTAssertTrue(names.contains("Kimi (Moonshot)"))
         XCTAssertTrue(names.contains("Qwen (DashScope)"))
@@ -301,6 +339,18 @@ final class CustomModelTests: XCTestCase {
         // placeholder its OpenAI endpoint expects.
         XCTAssertTrue(ProviderPreset.ollama.provider.isLocalEndpoint)
         XCTAssertEqual(ProviderPreset.ollama.provider.apiKey, "ollama")
+    }
+
+    func testCursorPresetIsManagedLocalBridge() {
+        let preset = ProviderPreset.cursor
+        XCTAssertTrue(preset.isManagedCursorBridge)
+        XCTAssertTrue(preset.provider.isManagedCursorBridge)
+        XCTAssertTrue(preset.provider.isLocalEndpoint)
+        XCTAssertEqual(preset.provider.id, "cursor")
+        XCTAssertEqual(preset.provider.baseURL, "http://127.0.0.1:18787/v1")
+        XCTAssertEqual(preset.provider.apiKey, "local")
+        XCTAssertEqual(preset.provider.suggestedModel, "composer-2.5")
+        XCTAssertNil(preset.catalogDocumentationURL)
     }
 
     func testEachProviderPresetHasAStartingModel() {
@@ -340,6 +390,31 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(ClinePassCatalog.displayName(for: "Kimi K2.7 Code"), "Cline Kimi K2.7 Code")
         XCTAssertEqual(ClinePassCatalog.displayName(for: "GLM-5.2"), "Cline GLM-5.2")
         XCTAssertEqual(ClinePassCatalog.displayName(for: "Cline GLM-5.2"), "Cline GLM-5.2")
+    }
+
+    func testProviderModelNamingMatchesProviderPlusModel() {
+        XCTAssertEqual(
+            ProviderModelNaming.displayName(providerName: "MiniMax", modelID: "minimax-m2.5"),
+            "MiniMax M2.5"
+        )
+        XCTAssertEqual(
+            ProviderModelNaming.displayName(providerName: "MiniMax", modelID: "MiniMax-M3"),
+            "MiniMax M3"
+        )
+        XCTAssertEqual(
+            ProviderModelNaming.displayName(providerName: "Z.ai (GLM)", modelID: "glm-5.2"),
+            "Z.ai GLM 5.2"
+        )
+        XCTAssertEqual(
+            ProviderModelNaming.displayName(providerName: "ChatGPT (OpenAI)", modelID: "gpt-4o"),
+            "ChatGPT GPT 4o"
+        )
+        XCTAssertEqual(ProviderModelNaming.providerLabel(from: "Ollama (local)"), "Ollama")
+        // Already prefixed — do not double up.
+        XCTAssertEqual(
+            ProviderModelNaming.displayName(providerName: "MiniMax", modelID: "MiniMax M2.5"),
+            "MiniMax M2.5"
+        )
     }
 
     func testClinePassDisplayLabelDerivesFromSlug() {

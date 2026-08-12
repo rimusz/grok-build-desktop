@@ -63,3 +63,6 @@ playground.xcworkspace
 
 .vscode/
 .env
+
+# Cursor bridge npm install (bundled into .app at package time)
+GrokBuild/Resources/CursorBridge/node_modules/
