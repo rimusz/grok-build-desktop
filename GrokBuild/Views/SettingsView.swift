@@ -5455,9 +5455,11 @@ private struct AppUpdatesSettingsPane: View {
 
     @AppStorage(GrokSettingsKeys.steerByDefault) private var steerByDefault = false
     @AppStorage(GrokSettingsKeys.soundOnUnfocusedFinish) private var soundOnUnfocusedFinish = false
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     private var steerByDefaultBinding: Binding<Bool> { $steerByDefault }
     private var soundBinding: Binding<Bool> { $soundOnUnfocusedFinish }
+    private var privacyBinding: Binding<Bool> { $privacyMode }
 
     var body: some View {
         ScrollView {
@@ -5487,6 +5489,17 @@ private struct AppUpdatesSettingsPane: View {
                                 Text("Sound when a turn finishes and GrokBuild is not focused")
                                     .font(.callout.weight(.medium))
                                 Text("Play a short chime so you notice completed replies while working in another app.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        Divider()
+                        Toggle(isOn: privacyBinding) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Privacy Mode")
+                                    .font(.callout.weight(.medium))
+                                Text("Redact project paths, project names, and session titles in the UI for screenshots. Stored data is unchanged.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

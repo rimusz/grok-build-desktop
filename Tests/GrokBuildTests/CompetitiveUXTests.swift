@@ -478,4 +478,103 @@ final class CompetitiveUXTests: XCTestCase {
         let stopped = WorkflowRun(id: "w", name: "w", phase: "", status: "stopped", progress: "", agentBudgetSpent: nil, agentBudgetTotal: nil)
         XCTAssertFalse(stopped.isActive)
     }
+
+    // MARK: - Privacy Mode
+
+    func testPrivacyModeRedactsPathWhenEnabled() {
+        XCTAssertEqual(
+            PrivacyMode.redactPath("/Users/me/Projects/demo", enabled: true),
+            "••••/demo"
+        )
+        XCTAssertEqual(
+            PrivacyMode.redactPath("/Users/me/Projects/demo", enabled: false),
+            "/Users/me/Projects/demo"
+        )
+    }
+
+    func testPrivacyModeRedactsLabelsWhenEnabled() {
+        XCTAssertEqual(
+            PrivacyMode.redactLabel("My Project", placeholder: "Project", enabled: true),
+            "Project"
+        )
+        XCTAssertEqual(
+            PrivacyMode.redactLabel("My Session", placeholder: "Session", enabled: false),
+            "My Session"
+        )
+    }
+
+    // MARK: - Worktree detection
+
+    func testGitServiceDetectsLinkedWorktree() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("grokbuild-wt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        // Primary checkout: .git is a directory
+        try fm.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        XCTAssertFalse(GitService.isWorktree(at: root, fileManager: fm))
+
+        let wt = fm.temporaryDirectory.appendingPathComponent("grokbuild-wt2-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: wt) }
+        try fm.createDirectory(at: wt, withIntermediateDirectories: true)
+        // Linked worktree: .git is a file
+        try "gitdir: /tmp/fake/.git/worktrees/wt".write(to: wt.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(GitService.isWorktree(at: wt, fileManager: fm))
+    }
+
+    // MARK: - Chat rewind / clear
+
+    @MainActor
+    func testChatStoreRewindKeepsPrefixAndDropsRest() {
+        let store = ChatStore()
+        let a = Message(role: .user, content: "one")
+        let b = Message(role: .assistant, content: "two")
+        let c = Message(role: .user, content: "three")
+        store.restorePersistedMessages([a, b, c])
+        XCTAssertTrue(store.rewind(to: b.id))
+        XCTAssertEqual(store.messages.map(\.id), [a.id, b.id])
+        XCTAssertFalse(store.rewind(to: UUID()))
+    }
+
+    @MainActor
+    func testChatStoreClearTranscriptEmptiesMessages() {
+        let store = ChatStore()
+        store.restorePersistedMessages([
+            Message(role: .user, content: "hello"),
+            Message(role: .assistant, content: "world")
+        ])
+        store.clearTranscript()
+        XCTAssertTrue(store.messages.isEmpty)
+    }
+
+    // MARK: - Pinned sessions persistence
+
+    func testSessionLayoutSnapshotRoundTripsPinnedSessionIDs() throws {
+        let sessionID = UUID()
+        let workspaceID = UUID()
+        let snapshot = SessionLayoutSnapshot(
+            records: [],
+            sessionOrderByWorkspace: [workspaceID: [sessionID]],
+            selectedSessionID: sessionID,
+            selectedWorkspaceID: workspaceID,
+            pinnedSessionIDs: [sessionID]
+        )
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(SessionLayoutSnapshot.self, from: data)
+        XCTAssertEqual(decoded.pinnedSessionIDs, [sessionID])
+    }
+
+    func testSessionLayoutSnapshotDefaultsPinnedSessionIDsWhenMissing() throws {
+        let json = """
+        {
+          "records": [],
+          "sessionOrderByWorkspace": [],
+          "selectedSessionID": null,
+          "selectedWorkspaceID": null
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SessionLayoutSnapshot.self, from: json)
+        XCTAssertEqual(decoded.pinnedSessionIDs, [])
+    }
+
 }

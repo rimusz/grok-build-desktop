@@ -26,6 +26,30 @@ final class ChatStore {
     func clearMessages() {
         messages.removeAll()
     }
+
+    /// Clears the visible transcript and notifies observers (keeps the live grok session).
+    func clearTranscript() {
+        clearMessages()
+        clearTurnState()
+        isStreaming = false
+        isGrokking = false
+        streamingMessageID = nil
+        notifyMessagesChanged()
+    }
+
+    /// Chat-only rewind: keep messages up to and including `messageID`, drop the rest.
+    @discardableResult
+    func rewind(to messageID: UUID) -> Bool {
+        guard let idx = messages.firstIndex(where: { $0.id == messageID }) else { return false }
+        messages = Array(messages.prefix(through: idx))
+        clearTurnState()
+        isStreaming = false
+        isGrokking = false
+        streamingMessageID = nil
+        lastError = nil
+        notifyMessagesChanged()
+        return true
+    }
     private(set) var isStreaming = false
     private(set) var lastError: String?
     /// Set when a model switch fails/times out; shown as a dismissible banner in the chat.

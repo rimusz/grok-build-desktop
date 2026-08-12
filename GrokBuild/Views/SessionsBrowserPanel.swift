@@ -8,6 +8,7 @@ struct ProjectSessionsGroup: Identifiable {
 }
 
 struct SessionsBrowserPanel: View {
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
     let workspaces: [Workspace]
     var highlightedWorkspaceID: Workspace.ID?
     let liveSessionsByGrokID: [String: UUID]
@@ -196,10 +197,10 @@ struct SessionsBrowserPanel: View {
 
     private func projectHeader(_ workspace: Workspace) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(workspace.displayName)
+            Text(PrivacyMode.redactLabel(workspace.displayName, placeholder: "Project", enabled: privacyMode))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(highlightedWorkspaceID == workspace.id ? .primary : .secondary)
-            Text(workspace.path.path)
+            Text(PrivacyMode.redactPath(workspace.path.path, enabled: privacyMode))
                 .font(.caption2.monospaced())
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
@@ -217,7 +218,7 @@ struct SessionsBrowserPanel: View {
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
-                Text(displayName(for: session))
+                Text(PrivacyMode.redactLabel(displayName(for: session), placeholder: "Session", enabled: privacyMode))
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)

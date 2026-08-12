@@ -378,6 +378,8 @@ enum GrokSettingsKeys {
     static let steerByDefault = "grokbuild.steerByDefault"
     /// When true, play a chime when a turn finishes and the window is not focused.
     static let soundOnUnfocusedFinish = "grokbuild.soundOnUnfocusedFinish"
+    /// When true, redact project paths/names and session titles in the UI (screenshots).
+    static let privacyMode = "grokbuild.privacyMode"
 }
 
 /// Whether a mid-turn prompt should steer the running turn or be queued for after it.

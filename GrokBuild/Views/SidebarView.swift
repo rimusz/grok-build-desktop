@@ -8,6 +8,10 @@ struct SidebarSession: Identifiable, Hashable {
     let isRunning: Bool
     /// Activity/attention status for the sidebar badge. Defaults to `.idle`.
     var status: SessionActivityStatus = .idle
+    /// Pinned to the top of its project session list.
+    var isPinned: Bool = false
+    /// Workspace path is a linked git worktree.
+    var isWorktree: Bool = false
 }
 
 struct SidebarView: View {
@@ -27,6 +31,12 @@ struct SidebarView: View {
     var onNewSessionForWorkspace: (Workspace) -> Void = { _ in }
     var onRenameSession: (UUID, String) -> Void = { _, _ in }
     var onCloseSession: (UUID) -> Void = { _ in }
+    var onPinSession: (UUID) -> Void = { _ in }
+    var onUnpinSession: (UUID) -> Void = { _ in }
+    var onMarkSessionUnread: (UUID) -> Void = { _ in }
+    var onMarkSessionRead: (UUID) -> Void = { _ in }
+    var onDuplicateSession: (UUID) -> Void = { _ in }
+    var onClearSessionTranscript: (UUID) -> Void = { _ in }
     var onMoveWorkspace: (IndexSet, Int) -> Void = { _, _ in }
     var onPinWorkspace: (Workspace) -> Void = { _ in }
     var onUnpinWorkspace: (Workspace) -> Void = { _ in }
@@ -97,6 +107,7 @@ struct SidebarView: View {
                                 workspace: ws,
                                 isPinned: pinnedWorkspaceIDs.contains(ws.id),
                                 isSelected: selectedWorkspaceID == ws.id,
+                                isWorktree: GitService.isWorktree(at: ws.path),
                                 hasSessions: !projectSessions.isEmpty,
                                 areSessionsHidden: hiddenSessionWorkspaceIDs.contains(ws.id),
                                 onToggleSessions: {
@@ -234,6 +245,21 @@ struct SidebarView: View {
                 renamingSessionID = session.id
                 renameText = session.title
             }
+            if session.isPinned {
+                Button("Unpin Session") { onUnpinSession(session.id) }
+            } else {
+                Button("Pin Session") { onPinSession(session.id) }
+            }
+            if session.status == .finishedUnread {
+                Button("Mark as Read") { onMarkSessionRead(session.id) }
+            } else {
+                Button("Mark as Unread") { onMarkSessionUnread(session.id) }
+            }
+            Button("Duplicate Session") { onDuplicateSession(session.id) }
+            Divider()
+            Button("Clear Transcript", role: .destructive) {
+                onClearSessionTranscript(session.id)
+            }
             Button("Close Session", role: .destructive) {
                 onCloseSession(session.id)
             }
@@ -261,7 +287,7 @@ struct SidebarView: View {
             onSwitchBranch(ws)
         }
 
-        Button("New Worktree…") {
+        Button("New Worktree Session…") {
             onCreateWorktree(ws)
         }
 
@@ -337,6 +363,7 @@ private struct SessionSidebarRow: View {
     let session: SidebarSession
     let isSelected: Bool
     var onSelect: () -> Void
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     var body: some View {
         Button(action: onSelect) {
@@ -349,10 +376,25 @@ private struct SessionSidebarRow: View {
                 }
                 .frame(width: 10)
 
-                Text(session.title)
+                if session.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Pinned")
+                }
+                Text(PrivacyMode.redactLabel(session.title, placeholder: "Session", enabled: privacyMode))
                     .font(.callout.weight(isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
+                if session.isWorktree {
+                    Text("WT")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.18)))
+                        .accessibilityLabel("Worktree")
+                }
                 Spacer()
                 statusBadge
             }
@@ -400,9 +442,11 @@ private struct WorkspaceRow: View {
     let workspace: Workspace
     var isPinned: Bool = false
     var isSelected: Bool = false
+    var isWorktree: Bool = false
     var hasSessions: Bool = false
     var areSessionsHidden: Bool = false
     var onToggleSessions: () -> Void = {}
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -410,9 +454,18 @@ private struct WorkspaceRow: View {
                 .foregroundStyle(isPinned ? .orange : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(workspace.displayName)
+                    Text(PrivacyMode.redactLabel(workspace.displayName, placeholder: "Project", enabled: privacyMode))
                         .font(isSelected ? .body.weight(.semibold) : .body)
                         .foregroundStyle(isSelected ? .primary : .secondary)
+                    if isWorktree {
+                        Text("WT")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.secondary.opacity(0.18)))
+                            .accessibilityLabel("Worktree")
+                    }
                     if hasSessions {
                         Image(systemName: areSessionsHidden ? "chevron.right" : "chevron.down")
                             .font(.caption.weight(.semibold))
@@ -427,7 +480,7 @@ private struct WorkspaceRow: View {
                             .help(areSessionsHidden ? "Show sessions" : "Hide sessions")
                     }
                 }
-                Text(workspace.path.path)
+                Text(PrivacyMode.redactPath(workspace.path.path, enabled: privacyMode))
                     .font(.caption2.monospaced())
                     .foregroundStyle(isSelected ? .secondary : .tertiary)
                     .lineLimit(1)
