@@ -434,6 +434,85 @@ final class CustomModelTests: XCTestCase {
         )
     }
 
+    func testCustomModelsSortAlphabeticallyByProviderThenModel() {
+        let providers = [
+            Provider(id: "cursor", name: "Cursor", baseURL: "http://127.0.0.1:18787/v1"),
+            Provider(id: "minimax", name: "MiniMax", baseURL: "https://api.minimax.io/v1"),
+            Provider(id: "clinepass", name: "Cline Pass", baseURL: "https://api.cline.bot/api/v1")
+        ]
+        let models = [
+            CustomModel(id: "minimax-m2", model: "minimax-m2.5", baseURL: "", name: "MiniMax M2.5", providerID: "minimax"),
+            CustomModel(id: "cursor-grok", model: "grok-4.5-fast", baseURL: "", name: "Cursor Grok 4.5 Fast", providerID: "cursor"),
+            CustomModel(id: "cline-glm", model: "cline-pass/glm-5.2", baseURL: "", name: "Cline GLM-5.2", providerID: "clinepass"),
+            CustomModel(id: "cursor-composer", model: "composer-2.5", baseURL: "", name: "Cursor Composer 2.5", providerID: "cursor")
+        ]
+        XCTAssertEqual(
+            CustomModelListOrdering.sortedAlphabetically(models, providers: providers).map(\.id),
+            ["cline-glm", "cursor-composer", "cursor-grok", "minimax-m2"]
+        )
+    }
+
+    func testCustomModelsSortByProviderPlusModelNotStoredSlugName() {
+        let providers = [
+            Provider(id: "openai", name: "ChatGPT (OpenAI)", baseURL: "https://api.openai.com/v1"),
+            Provider(id: "minimax", name: "MiniMax", baseURL: "https://api.minimax.io/v1"),
+            Provider(id: "clinepass", name: "Cline Pass", baseURL: "https://api.cline.bot/api/v1")
+        ]
+        let models = [
+            CustomModel(id: "minimax-m2.7", model: "minimax-m2.7", baseURL: "", name: "minimax-m2.7", providerID: "minimax"),
+            CustomModel(id: "gpt-4o", model: "gpt-4o", baseURL: "", name: "gpt-4o", providerID: "openai"),
+            CustomModel(id: "cline-kimi", model: "cline-pass/kimi-k3", baseURL: "", name: "Cline Kimi K3", providerID: "clinepass")
+        ]
+        // Stored names would sort Cline → gpt-4o → minimax. Provider + model is ChatGPT → Cline → MiniMax.
+        XCTAssertEqual(
+            CustomModelListOrdering.sortedAlphabetically(models, providers: providers).map(\.id),
+            ["gpt-4o", "cline-kimi", "minimax-m2.7"]
+        )
+        XCTAssertEqual(
+            CustomModelListOrdering.sortLabel(for: models[0], providers: providers),
+            "MiniMax M2.7"
+        )
+        XCTAssertEqual(
+            CustomModelListOrdering.sortLabel(for: models[1], providers: providers),
+            "ChatGPT GPT 4o"
+        )
+    }
+
+    func testCustomModelsWithoutDisplayNameUseProviderPlusModel() {
+        let providers = [
+            Provider(id: "zai", name: "Z.ai (GLM)", baseURL: "https://api.z.ai/api/coding/paas/v4")
+        ]
+        let models = [
+            CustomModel(id: "glm-4", model: "glm-4.7", baseURL: "", providerID: "zai"),
+            CustomModel(id: "glm-5", model: "glm-5.2", baseURL: "", providerID: "zai")
+        ]
+        XCTAssertEqual(
+            CustomModelListOrdering.sortedAlphabetically(models, providers: providers).map(\.id),
+            ["glm-4", "glm-5"]
+        )
+        XCTAssertEqual(
+            CustomModelListOrdering.sortLabel(for: models[1], providers: providers),
+            "Z.ai GLM 5.2"
+        )
+    }
+
+    func testFetchedModelsSortAlphabeticallyByProviderPlusModel() {
+        let provider = Provider(id: "minimax", name: "MiniMax", baseURL: "https://api.minimax.io/v1")
+        let fetched = [
+            FetchedModel(id: "minimax-m2.5"),
+            FetchedModel(id: "abab6.5s-chat"),
+            FetchedModel(id: "MiniMax-M3")
+        ]
+        XCTAssertEqual(
+            CustomModelListOrdering.sortedAlphabetically(fetched, provider: provider).map(\.id),
+            ["abab6.5s-chat", "minimax-m2.5", "MiniMax-M3"]
+        )
+        XCTAssertEqual(
+            CustomModelListOrdering.fetchedSortLabel(for: fetched[0], provider: provider),
+            "MiniMax M2.5"
+        )
+    }
+
     func testClinePassDisplayLabelDerivesFromSlug() {
         XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/kimi-k3"), "Kimi K3")
         XCTAssertEqual(ClinePassCatalog.displayLabel(for: "cline-pass/glm-5.2"), "GLM 5.2")

@@ -540,6 +540,54 @@ struct FetchedModel: Identifiable, Hashable, Sendable {
     var ownedBy: String?
 }
 
+/// Settings list order: A–Z by “Provider + model” (then id), matching the labels shown in the UI.
+enum CustomModelListOrdering {
+    /// Sort key is always Provider + model (not the raw config.toml `name`, which may be a slug).
+    static func sortLabel(for model: CustomModel, providers: [Provider]) -> String {
+        let modelID = model.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackID = modelID.isEmpty ? model.id : modelID
+        if let providerID = model.providerID,
+           let provider = providers.first(where: { $0.id == providerID }) {
+            return fetchedSortLabel(for: FetchedModel(id: fallbackID), provider: provider)
+        }
+        let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? fallbackID : name
+    }
+
+    static func sortedAlphabetically(_ models: [CustomModel], providers: [Provider]) -> [CustomModel] {
+        models.sorted { lhs, rhs in
+            let left = sortLabel(for: lhs, providers: providers)
+            let right = sortLabel(for: rhs, providers: providers)
+            let order = left.localizedCaseInsensitiveCompare(right)
+            if order != .orderedSame { return order == .orderedAscending }
+            return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+        }
+    }
+
+    /// Same “Provider + model” label the Add-model picker shows (without the trailing id).
+    static func fetchedSortLabel(for model: FetchedModel, provider: Provider) -> String {
+        if provider.isManagedCursorBridge {
+            return CursorBridge.displayName(for: model.id)
+        }
+        if provider.matchingPreset == .clinePass {
+            let catalog = model.ownedBy?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let base = catalog.isEmpty ? ClinePassCatalog.displayLabel(for: model.id) : catalog
+            return ClinePassCatalog.displayName(for: base)
+        }
+        return ProviderModelNaming.displayName(providerName: provider.name, modelID: model.id)
+    }
+
+    static func sortedAlphabetically(_ models: [FetchedModel], provider: Provider) -> [FetchedModel] {
+        models.sorted { lhs, rhs in
+            let left = fetchedSortLabel(for: lhs, provider: provider)
+            let right = fetchedSortLabel(for: rhs, provider: provider)
+            let order = left.localizedCaseInsensitiveCompare(right)
+            if order != .orderedSame { return order == .orderedAscending }
+            return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
+        }
+    }
+}
+
 /// Fetches the list of available models from an OpenAI-compatible provider.
 ///
 /// Calls `GET {base_url}/models` with `Authorization: Bearer <key>` and decodes the
