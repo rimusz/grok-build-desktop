@@ -6,7 +6,7 @@ final class PackagingEntitlementsTests: XCTestCase {
     func testGrokBuildEntitlementsIncludeAudioInputForHardenedRuntime() throws {
         let url = try entitlementsURL()
         let data = try Data(contentsOf: url)
-        let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
+        let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
         guard let dict = plist as? [String: Any] else {
             return XCTFail("Expected entitlements dictionary at \(url.path)")
         }

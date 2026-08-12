@@ -12,7 +12,9 @@ set -euo pipefail
 DEST_RESOURCES="${1:?destination Contents/Resources directory required}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_DIR="$ROOT_DIR/GrokBuild/Resources/CursorBridge"
-NPM_REGISTRY="${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}"
+# Always use public npmjs — do not honor NPM_CONFIG_REGISTRY (private mirrors have
+# shipped broken Cursor bridge bundles when install 403'd and packaging soft-failed).
+NPM_REGISTRY="https://registry.npmjs.org/"
 
 if [ ! -f "$SRC_DIR/cursor-openai-bridge.mjs" ] || [ ! -f "$SRC_DIR/package.json" ]; then
     echo "WARNING: Cursor bridge sources missing at $SRC_DIR" >&2
@@ -35,7 +37,7 @@ fi
 echo "==> Installing Cursor bridge dependencies in $SRC_DIR (registry: $NPM_REGISTRY)"
 (
     cd "$SRC_DIR"
-    # Pin public npmjs so a stale lockfile / private mirror cannot leave the .app
+    # Hardcoded public npmjs so a stale lockfile / private mirror cannot leave the .app
     # without CursorBridge (Settings would show "bridge script is missing").
     npm install --omit=dev --no-fund --no-audit --registry="$NPM_REGISTRY"
 )
