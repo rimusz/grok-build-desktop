@@ -12,7 +12,7 @@ alwaysApply: false
 - `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
 - `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings.
 - `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
-- `CustomModelStore` / `ProviderStore` — OpenAI-compatible models/providers in `~/.grok/config.toml` (Settings → Models). Display names: `ProviderModelNaming` (Provider + model).
+- `CustomModelStore` / `ProviderStore` — OpenAI-compatible models/providers in `~/.grok/config.toml` (Settings → Models). Display names: `ProviderModelNaming` (Provider + model). Settings lists: `CustomModelListOrdering` (A–Z by Provider + model).
 - `CursorBridgeRuntime` + `CursorBridge` + `CursorBridgeKeychain` — managed Cursor OpenAI sidecar on `127.0.0.1:18787` (bundled Node/`@cursor/sdk`). Real key is **not** in config.toml (`api_key = "local"`); SDK auth via env `CURSOR_API_KEY` and `cursor-bridge-auth.mjs` (`resolveCursorApiKey` — ignore grok session JWT Bearer). Requires Node ≥ 22.13.
 
 ## After changing these services

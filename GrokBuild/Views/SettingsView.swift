@@ -1952,7 +1952,12 @@ private struct AgentsSettingsPane: View {
     /// Model ids available in the role editor picker (built-ins + custom models from config.toml).
     private var modelOptions: [String] {
         var options = ["grok-build"]
-        for model in CustomModelStore.load().models where !options.contains(model.id) {
+        let snapshot = CustomModelStore.load()
+        let sorted = CustomModelListOrdering.sortedAlphabetically(
+            snapshot.models,
+            providers: ProviderStore.load()
+        )
+        for model in sorted where !options.contains(model.id) {
             options.append(model.id)
         }
         return options
@@ -2893,9 +2898,14 @@ private struct CustomModelsSettingsPane: View {
     private var isAnyEditorOpen: Bool { showingProviderEditor || showingModelEditor }
     private var isAtModelLimit: Bool { models.count >= CustomModelStore.maxModels }
 
+    /// Installed custom models A–Z by Provider + model (Settings list + default picker).
+    private var displayedModels: [CustomModel] {
+        CustomModelListOrdering.sortedAlphabetically(models, providers: providers)
+    }
+
     private var defaultModelOptions: [DefaultModelOption] {
         var options = builtInDefaultModels
-        for model in models {
+        for model in displayedModels {
             let label = model.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? model.id
                 : "\(model.name) (\(model.id))"
@@ -2922,7 +2932,7 @@ private struct CustomModelsSettingsPane: View {
     }
 
     private func selectableModels(for provider: Provider) -> [FetchedModel] {
-        fetchedModels[provider.id] ?? []
+        CustomModelListOrdering.sortedAlphabetically(fetchedModels[provider.id] ?? [], provider: provider)
     }
 
     /// True when a provider has a non-empty fetched-model list ready for "Add model".
@@ -3654,14 +3664,14 @@ private struct CustomModelsSettingsPane: View {
                     .foregroundStyle(isAtModelLimit ? .orange : .secondary)
 
                 Group {
-                    if models.isEmpty {
+                    if displayedModels.isEmpty {
                         Text("No models yet. Use “Add model” on a provider above.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(models) { model in
+                        ForEach(displayedModels) { model in
                             modelRow(model)
-                            if model.id != models.last?.id {
+                            if model.id != displayedModels.last?.id {
                                 Divider()
                             }
                         }
