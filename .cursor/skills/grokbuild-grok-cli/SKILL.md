@@ -53,7 +53,7 @@ grok owns subagent orchestration (main agent delegates to subagents in parallel;
 
 ## Custom models & Cursor bridge
 
-OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomModelStore` / `ProviderStore` (Settings → **Models**). Display names from Fetch → Add model use **Provider + model** (`ProviderModelNaming`, e.g. `MiniMax M2.5`); Cline uses `Cline …`, Cursor uses `Cursor …`. Settings lists installed models, the default-model picker (after built-ins), the Add-model fetched picker, and the Agents role-editor model picker **A–Z by Provider + model** (`CustomModelListOrdering`; computed from provider + model id, not a stored slug `name`).
+OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomModelStore` / `ProviderStore` (Settings → **Models**). Display names from Fetch → Add model use **Provider + model** (`ProviderModelNaming`, e.g. `MiniMax M2.5`); Cline uses `Cline …`, Cursor uses `Cursor …`. Settings lists installed models, the default-model picker (after built-ins), the Add-model fetched picker, and the Agents role-editor model picker **A–Z by Provider + model** (`CustomModelListOrdering`; computed from provider + model id, not a stored slug `name`). **Create custom provider…** includes a Spark LAN example (`CustomProviderExample`); Fetch models skips the key only for loopback URLs (`Provider.isLocalEndpoint`: localhost, 127.0.0.1, 0.0.0.0, host.docker.internal), so Tailscale hosts like `http://spark:8001/v1` need a dummy key.
 
 **Managed Cursor bridge** (not Cursor IDE Compatibility / Computer Use MCP):
 

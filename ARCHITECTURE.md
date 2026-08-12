@@ -654,6 +654,7 @@ grok owns memory storage, indexing, search, and first-turn injection ([`13-memor
 | Cline Pass | Same **Fetch models** button as other providers (required before Add model); live list from `https://api.cline.bot/api/v1/ai/cline/recommended-models` (`clinePass` array, no API key) via `ProviderModelFetcher.fetchClinePassRecommended`. No hardcoded model table |
 | Display names | Fetch → Add model sets `name` as **Provider + model** via `ProviderModelNaming` (e.g. `MiniMax M2.5`); Cline uses `Cline …`, Cursor uses `Cursor …` |
 | Settings list order | Installed models, the default-model picker (after built-ins), the Add-model fetched picker, and the Agents role-editor model picker are **A–Z by Provider + model** (`CustomModelListOrdering`; computed from the provider + model id, not a slug stored in `name`; tie-break on id). `config.toml` table order is unchanged until the user saves for another reason |
+| Custom provider example | **Create custom provider…** shows an NVIDIA DGX Spark fill-in (`CustomProviderExample.sparkDeepSeek`: `http://spark:8001/v1`, dummy key `not-needed`). Fetch models skips the key only for loopback URLs (`Provider.isLocalEndpoint`: localhost, 127.0.0.1, 0.0.0.0, host.docker.internal), so LAN/Tailscale hosts need a dummy key; Spark ignores it |
 
 **`api_backend` + `env_key` (depth).** `CustomModel` carries `apiBackend` (`ModelAPIBackend`: `chat_completions` / `responses` / `messages`; default omitted from TOML to keep files tidy) and `envKey` (`env_key` — grok reads the key from an env var instead of inline). Both round-trip through `CustomModelStore` and are editable in the model editor (Settings → Models). This is the shared path for BYOK and localhost bridges.
 
@@ -950,7 +951,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatView.memoryStatusPill`, `ChatStore.remember`/`isMemoryEnabled` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Voice control / mic entitlements** | `VoiceInputService`, `scripts/GrokBuild.entitlements`, `scripts/codesign-app-bundle.sh` (`device.audio-input` for Hardened Runtime) |
-| **Custom models** | `CustomModelStore`, `CustomModelListOrdering`, `~/.grok/config.toml` |
+| **Custom models** | `CustomModelStore`, `CustomModelListOrdering`, `CustomProviderExample`, `~/.grok/config.toml` |
 | **Cursor bridge / api_backend** | `ProviderPreset.cursor`, `CursorBridge.swift`, `CursorBridgeRuntime.swift`, `CursorBridgeKeychain.swift`, `Resources/CursorBridge/`, `ModelAPIBackend` + `CustomModel.apiBackend/envKey`, Add Provider flow in `CustomModelsSettingsPane` |
 | **Session status / steer / sound** | `SessionStatus.swift`, `SteerDecision` (`GrokCLIService.swift`), `ChatStore.steerRunningTurn`, `TurnCompletionSound.swift`, `SidebarSession.status` |
 | **@ file mentions** | `Services/FileMention.swift`, `FileMentionListView`, `ChatView` (`mentionMatch`, `loadFileMentionIndex`) |
