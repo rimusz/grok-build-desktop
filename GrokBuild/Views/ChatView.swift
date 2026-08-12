@@ -49,6 +49,7 @@ struct ChatView: View {
     @AppStorage(BrowserSettingsKeys.appliedEnabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
     @AppStorage(ComputerUseSettingsKeys.appliedEnabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
     @AppStorage(GrokSettingsKeys.memoryEnabled) private var memoryEnabled = GrokPermissionSettings.defaults.memoryEnabled
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     @State private var showMemoryBrowser = false
     @State private var showRememberPrompt = false
@@ -62,6 +63,7 @@ struct ChatView: View {
     @State private var createSkillName = ""
     @State private var imaginePrompt = ""
     @State private var workflowsEnabled = WorkflowsConfigStore.loadEnabled()
+    @State private var rewindTargetID: UUID?
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -158,7 +160,9 @@ struct ChatView: View {
                         ForEach(store.messages) { msg in
                             MessageBubble(
                                 message: msg,
-                                isStreaming: store.isStreaming && msg.id == store.streamingMessageID
+                                isStreaming: store.isStreaming && msg.id == store.streamingMessageID,
+                                onRewind: { rewindTargetID = msg.id },
+                                rewindDisabled: store.isStreaming
                             )
                             .id(msg.id)
                         }
@@ -256,6 +260,26 @@ struct ChatView: View {
         .onDisappear {
             thinkingScrollTask?.cancel()
             thinkingScrollTask = nil
+        }
+        .confirmationDialog(
+            "Rewind conversation?",
+            isPresented: Binding(
+                get: { rewindTargetID != nil },
+                set: { if !$0 { rewindTargetID = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Rewind", role: .destructive) {
+                if let id = rewindTargetID {
+                    _ = store.rewind(to: id)
+                }
+                rewindTargetID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                rewindTargetID = nil
+            }
+        } message: {
+            Text("Messages after this point are removed from the transcript. This does not restore files on disk.")
         }
         .confirmationDialog(
             "Change reasoning effort?",
@@ -780,7 +804,7 @@ struct ChatView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 if let project = store.currentWorkspace {
-                    Label(project.displayName, systemImage: "folder")
+                    Label(PrivacyMode.redactLabel(project.displayName, placeholder: "Project", enabled: privacyMode), systemImage: "folder")
                         .lineLimit(1)
                     Button(action: onSwitchBranch) {
                         Label(currentBranchLabel(for: project.path), systemImage: "point.topleft.down.curvedto.point.bottomright.up")

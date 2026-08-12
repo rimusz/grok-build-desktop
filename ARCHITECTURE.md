@@ -433,7 +433,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Key | Store | Contents |
 |-----|-------|----------|
 | `GrokBuild.projects.v1` | `WorkspaceStore` | `[Workspace]` JSON |
-| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden |
+| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden, **`pinnedSessionIDs`** (sidebar session pins; max `SessionLayoutStore.maxPinnedSessions`) |
 | `GrokBuild.sessionMessages.v1` | `SessionMessageStore` | Per live-session-tab chat transcript (`[Message]` JSON by session UUID); saved on `.liveSessionMessagesChanged` (user send + turn complete) and during full `persistSessionLayout(saveMessages: true)` passes such as app quit via `.grokBuildPrepareForShutdown` |
 | `GrokBuild.workspaceLayout.v1` | `SessionLayoutStore` | Pin order, workspace order, **`agentSettingsByWorkspace`** |
 | `grokbuild.sessionSelections.v1` | `ChatStore` | Per grok session id: mode |
@@ -447,6 +447,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.allowRules` / `denyRules` | | Newline-separated `--allow` / `--deny` rules |
 | `grokbuild.selectedAgent` | `GrokSettingsKeys` | **Default** session agent for **new** tabs (empty = grok default; otherwise a discovered agent name). Per-tab overrides live in `SavedSessionRecord.agent`. |
 | `grokbuild.steerByDefault` | `GrokSettingsKeys` | Steer the running turn by default on mid-turn send (Settings → App). Default off |
+| `grokbuild.privacyMode` | `GrokSettingsKeys` | Display-only Privacy Mode (Settings → App). Redacts project paths/names and session titles in the UI; never mutates persisted data |
 | `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
 | `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
@@ -574,6 +575,14 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 ### Turn-completion sound
 
 `TurnCompletionSound` (`Services/TurnCompletionSound.swift`) — optional chime when a turn finishes and GrokBuild is not the active app. Pure rule `shouldPlay(enabled:appActive:)`; `playIfNeeded()` reads live `NSApp.isActive`. Toggle: `GrokSettingsKeys.soundOnUnfocusedFinish` (Settings → App). Called from `ChatStore.finishPrompt` on success.
+
+### Privacy Mode
+
+`PrivacyMode` (`Services/PrivacyMode.swift`) — display-only redaction for screenshots/screen shares. Toggle: `GrokSettingsKeys.privacyMode` (Settings → App → **Privacy Mode**). Views that redact (`SidebarView` rows, `ChatView` project label, `SessionsBrowserPanel`) observe the key via `@AppStorage` and call `redactPath` / `redactLabel` so the UI updates immediately when the toggle changes. Persisted titles, paths, and transcripts are never rewritten.
+
+### Session polish (sidebar + rewind)
+
+Sidebar session context menu (`SidebarView`): rename, pin/unpin session (`SessionLayoutSnapshot.pinnedSessionIDs`, sorted above unpinned in `ContentView.visibleSessionIDs`), mark unread/read, duplicate (new empty tab with “(copy)” title), clear transcript (`ChatStore.clearTranscript`), close. Project menu includes **New Worktree Session…** (`onCreateWorktree` → `GitCheckoutSheet` with create focus). Linked worktrees show a **WT** badge via `GitService.isWorktree(at:)` (`.git` is a file). Chat-only **Rewind to Here…** on each message (`MessageBubble` context menu → confirmation) truncates the transcript with `ChatStore.rewind(to:)` (no file restore).
 
 ### Doctor + onboarding
 
@@ -871,7 +880,8 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 Used from sidebar status row and `GitCheckoutSheet`:
 
 - List branches, checkout, create branch
-- Worktree add/open
+- Worktree add/open (`ContentView.createWorktree` / project **New Worktree Session…**)
+- `isWorktree(at:)` — true when `.git` is a file (linked worktree); drives the sidebar **WT** badge
 - Shown in `ContentView` via `gitCheckoutRequest` sheet
 
 Not a full git UI — thin wrapper over `git` CLI in workspace path.
@@ -921,7 +931,10 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Per-tab session agent** | `SavedSessionRecord.agent`, `ChatStore.setSessionAgent` / `effectiveAgentSelection`, `ChatView.agentStatusPill`, `.liveSessionAgentChanged` |
 | **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
-| **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU) |
+| **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU, pin/unread/duplicate/clear) |
+| **Session pin / WT badge** | `SessionLayoutSnapshot.pinnedSessionIDs`, `GitService.isWorktree`, `SidebarView` |
+| **Chat rewind / clear transcript** | `ChatStore.rewind(to:)`, `clearTranscript()`, message context menu in `ChatView` |
+| **Privacy Mode** | `PrivacyMode.swift`, `GrokSettingsKeys.privacyMode`, Settings → App |
 | **Session restore at launch** | `ContentView.restorePersistedSessions`, `SessionRestorePolicy`, `SessionTranscriptRecovery`, `ensureSessionStarted` |
 | **Add/remove project** | `WorkspaceStore`, `WorkspacePicker` |
 | **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
@@ -979,7 +992,7 @@ make test    # Tests/GrokBuildTests/
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
-| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse), Doctor report mapping, unfocused-finish sound rule |
+| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, chat rewind/clear, pinned-session layout decode |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.

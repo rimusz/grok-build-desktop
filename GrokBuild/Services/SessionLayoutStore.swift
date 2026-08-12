@@ -78,6 +78,8 @@ struct SessionLayoutSnapshot: Codable {
     var selectedSessionIDByWorkspace: [UUID: UUID]
     var expandedSessionWorkspaceIDs: Set<UUID>
     var hiddenSessionWorkspaceIDs: Set<UUID>
+    /// Session tab IDs pinned to the top of their project group in the sidebar.
+    var pinnedSessionIDs: [UUID]
 
     init(
         records: [SavedSessionRecord],
@@ -86,7 +88,8 @@ struct SessionLayoutSnapshot: Codable {
         selectedWorkspaceID: UUID?,
         selectedSessionIDByWorkspace: [UUID: UUID] = [:],
         expandedSessionWorkspaceIDs: Set<UUID> = [],
-        hiddenSessionWorkspaceIDs: Set<UUID> = []
+        hiddenSessionWorkspaceIDs: Set<UUID> = [],
+        pinnedSessionIDs: [UUID] = []
     ) {
         self.records = records
         self.sessionOrderByWorkspace = sessionOrderByWorkspace
@@ -95,6 +98,7 @@ struct SessionLayoutSnapshot: Codable {
         self.selectedSessionIDByWorkspace = selectedSessionIDByWorkspace
         self.expandedSessionWorkspaceIDs = expandedSessionWorkspaceIDs
         self.hiddenSessionWorkspaceIDs = hiddenSessionWorkspaceIDs
+        self.pinnedSessionIDs = pinnedSessionIDs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -105,6 +109,7 @@ struct SessionLayoutSnapshot: Codable {
         case selectedSessionIDByWorkspace
         case expandedSessionWorkspaceIDs
         case hiddenSessionWorkspaceIDs
+        case pinnedSessionIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -116,6 +121,7 @@ struct SessionLayoutSnapshot: Codable {
         selectedSessionIDByWorkspace = try container.decodeIfPresent([UUID: UUID].self, forKey: .selectedSessionIDByWorkspace) ?? [:]
         expandedSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .expandedSessionWorkspaceIDs) ?? []
         hiddenSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .hiddenSessionWorkspaceIDs) ?? []
+        pinnedSessionIDs = try container.decodeIfPresent([UUID].self, forKey: .pinnedSessionIDs) ?? []
     }
 }
 
@@ -156,6 +162,7 @@ struct WorkspaceAgentSettings: Codable, Hashable {
 enum SessionLayoutStore {
     static let maxSidebarSessions = 10
     static let maxPinnedProjects = 5
+    static let maxPinnedSessions = 20
     private static let sessionKey = "GrokBuild.sessionLayout.v2"
     private static let workspaceLayoutKey = "GrokBuild.workspaceLayout.v1"
 

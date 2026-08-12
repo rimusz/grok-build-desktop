@@ -40,6 +40,14 @@ enum GitService {
         }
     }
 
+    /// True when `directory` is a linked git worktree (`.git` is a file), not the primary checkout.
+    static func isWorktree(at directory: URL, fileManager: FileManager = .default) -> Bool {
+        let git = directory.appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard fileManager.fileExists(atPath: git.path, isDirectory: &isDir) else { return false }
+        return !isDir.boolValue
+    }
+
     @discardableResult
     static func run(_ args: [String], in directory: URL) async throws -> String {
         try await runExecutable("/usr/bin/git", args: args, in: directory)

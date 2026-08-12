@@ -111,6 +111,14 @@ struct ContentView: View {
                 onCloseSession: { id in
                     closeSession(id: id)
                 },
+                onPinSession: { pinSession($0) },
+                onUnpinSession: { unpinSession($0) },
+                onMarkSessionUnread: { unreadSessionIDs.insert($0) },
+                onMarkSessionRead: { unreadSessionIDs.remove($0) },
+                onDuplicateSession: { id in
+                    Task { await duplicateSession(id) }
+                },
+                onClearSessionTranscript: { clearSessionTranscript(id: $0) },
                 onMoveWorkspace: { source, destination in
                     workspaceStore.moveWorkspaces(from: source, to: destination)
                 },
@@ -505,6 +513,7 @@ struct ContentView: View {
         let closing = liveSessions[index]
         let store = closing.store
         liveSessions.remove(at: index)
+        sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
 
         if selectedSessionID == id {
             if let sibling = liveSessions.last(where: { $0.workspace.id == closing.workspace.id }) {
@@ -603,7 +612,9 @@ struct ContentView: View {
                         status: session.store.activityStatus(
                             hasUnreadCompletion: session.id != selectedSessionID
                                 && unreadSessionIDs.contains(session.id)
-                        )
+                        ),
+                        isPinned: sessionLayout.pinnedSessionIDs.contains(session.id),
+                        isWorktree: GitService.isWorktree(at: session.workspace.path)
                     )
                 )
             }
@@ -618,6 +629,10 @@ struct ContentView: View {
         for session in eligible where !order.contains(session.id) {
             order.append(session.id)
         }
+        let pinned = sessionLayout.pinnedSessionIDs
+        let pinnedOrdered = pinned.filter { order.contains($0) }
+        let rest = order.filter { !pinned.contains($0) }
+        order = pinnedOrdered + rest
         if order.count > SessionLayoutStore.maxSidebarSessions {
             let selected = selectedSessionID
             var trimmed = Array(order.prefix(SessionLayoutStore.maxSidebarSessions))
@@ -714,6 +729,7 @@ struct ContentView: View {
             selectedByWorkspace[selectedSession.workspace.id] = selectedSessionID
         }
 
+        let pinnedSessionIDs = sessionLayout.pinnedSessionIDs.filter { recordIDs.contains($0) }
         sessionLayout = SessionLayoutSnapshot(
             records: records,
             sessionOrderByWorkspace: order,
@@ -721,7 +737,8 @@ struct ContentView: View {
             selectedWorkspaceID: selectedWorkspaceID,
             selectedSessionIDByWorkspace: selectedByWorkspace,
             expandedSessionWorkspaceIDs: expandedSessionWorkspaceIDs,
-            hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs
+            hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs,
+            pinnedSessionIDs: pinnedSessionIDs
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }
@@ -1130,7 +1147,43 @@ struct ContentView: View {
         Task { await createLiveSession(for: workspace) }
     }
 
-    @discardableResult
+    private func pinSession(_ id: UUID) {
+        var pinned = sessionLayout.pinnedSessionIDs
+        guard !pinned.contains(id) else { return }
+        if pinned.count >= SessionLayoutStore.maxPinnedSessions {
+            pinned.removeFirst()
+        }
+        pinned.append(id)
+        sessionLayout.pinnedSessionIDs = pinned
+        persistSessionLayout(saveMessages: false)
+        sessionListRevision &+= 1
+    }
+
+    private func unpinSession(_ id: UUID) {
+        sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
+        persistSessionLayout(saveMessages: false)
+        sessionListRevision &+= 1
+    }
+
+    private func clearSessionTranscript(id: UUID) {
+        guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        session.store.clearTranscript()
+        SessionMessageStore.save(session.store.messages, for: id)
+        sessionListRevision &+= 1
+    }
+
+    private func duplicateSession(_ id: UUID) async {
+        guard let session = liveSessions.first(where: { $0.id == id }) else { return }
+        let title = sessionTitle(for: session)
+        let newID = await createLiveSession(for: session.workspace)
+        let copyTitle: String = {
+            let base = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if base.isEmpty { return "Session copy" }
+            return base.hasSuffix(" (copy)") ? base : "\(base) (copy)"
+        }()
+        renameSession(id: newID, to: copyTitle)
+    }
+
     private func createLiveSession(for workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async -> UUID {
         purgeEmptySessions(in: workspace.id)
         let id = UUID()
