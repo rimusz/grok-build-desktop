@@ -341,6 +341,23 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(ProviderPreset.ollama.provider.apiKey, "ollama")
     }
 
+    func testSparkCustomProviderExampleUsesDummyKeyBecauseHostIsNotLocal() {
+        let example = CustomProviderExample.sparkDeepSeek
+        XCTAssertNil(example.validationError)
+        XCTAssertEqual(example.id, "spark-deepseek")
+        XCTAssertEqual(example.name, "Spark DeepSeek")
+        XCTAssertEqual(example.baseURL, "http://spark:8001/v1")
+        XCTAssertEqual(example.apiKey, "not-needed")
+        XCTAssertEqual(example.suggestedModel, "deepseek-v4-flash")
+        XCTAssertFalse(example.isLocalEndpoint, "Tailscale hostname spark is not treated as local")
+        XCTAssertTrue(example.hasInlineKey, "Dummy key is required so Fetch models is enabled")
+        XCTAssertEqual(ProviderModelFetcher.resolveKey(apiKey: example.apiKey), "not-needed")
+        XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("dummy key"))
+        XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("localhost"))
+        XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("http://spark:"))
+        XCTAssertTrue(CustomProviderExample.sparkExampleSummary.contains("Spark"))
+    }
+
     func testCursorPresetIsManagedLocalBridge() {
         let preset = ProviderPreset.cursor
         XCTAssertTrue(preset.isManagedCursorBridge)

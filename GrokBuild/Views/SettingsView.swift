@@ -3386,9 +3386,50 @@ private struct CustomModelsSettingsPane: View {
         !providerNeedsKey && !isValidatingCursorKey && cursorNodeProbe.meetsMinimum
     }
 
+    /// Spark (and similar LAN/Tailscale hosts) example — only on a blank custom-provider editor.
+    private var showsCustomProviderSparkExample: Bool {
+        !isEditingProvider && !providerDraftFromPreset && !isCursorProviderDraft
+    }
+
+    private var customProviderSparkExampleCard: some View {
+        let example = CustomProviderExample.sparkDeepSeek
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "lightbulb")
+                    .foregroundStyle(.purple)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(CustomProviderExample.sparkExampleSummary)
+                        .font(.caption.weight(.semibold))
+                    Text(CustomProviderExample.dummyKeyHelp)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(example.id)  ·  \(example.name)  ·  \(example.baseURL)  ·  API key \(example.apiKey)")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            Button("Fill Spark example") {
+                applySparkCustomProviderExample()
+            }
+            .controlSize(.small)
+            .accessibilityLabel("Fill Spark example")
+            .accessibilityHint("Fills provider id, name, base URL, and a dummy API key for NVIDIA DGX Spark DeepSeek on port 8001.")
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.10)))
+    }
+
     private var providerEditorCard: some View {
         settingsCard(title: providerEditorTitle, systemImage: "plus.square.on.square", tint: .purple) {
             VStack(alignment: .leading, spacing: 12) {
+                if showsCustomProviderSparkExample {
+                    customProviderSparkExampleCard
+                }
+
                 if providerDraftFromPreset && providerNeedsKey {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "key.fill")
@@ -3444,7 +3485,7 @@ private struct CustomModelsSettingsPane: View {
                         }
                     }
 
-                    Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Local/open servers don't need a key.")
+                    Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Loopback URLs (localhost / 127.0.0.1) can leave the key empty; LAN or Tailscale hosts need a dummy key so Fetch models is enabled.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -4145,6 +4186,11 @@ private struct CustomModelsSettingsPane: View {
         showingProviderEditor = true
         showingModelEditor = false
         scrollTarget = providerEditorAnchor
+    }
+
+    private func applySparkCustomProviderExample() {
+        providerDraft = CustomProviderExample.sparkDeepSeek
+        revealProviderKey = true
     }
 
     private func beginEditingProvider(_ provider: Provider) {

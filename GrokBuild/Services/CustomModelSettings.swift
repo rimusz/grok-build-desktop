@@ -241,6 +241,26 @@ struct Provider: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// Fill-in examples for **Settings → Models → Create custom provider…** (not built-in presets).
+enum CustomProviderExample {
+    /// NVIDIA DGX Spark serving DeepSeek over Tailscale. Hostname is machine-specific, so this
+    /// is an editor example rather than a `ProviderPreset`. Spark (and similar LAN servers) ignore
+    /// the dummy key; Fetch still requires one because `http://spark:…` is not treated as local.
+    static let sparkDeepSeek = Provider(
+        id: "spark-deepseek",
+        name: "Spark DeepSeek",
+        baseURL: "http://spark:8001/v1",
+        apiKey: "not-needed",
+        suggestedModel: "deepseek-v4-flash"
+    )
+
+    static let dummyKeyHelp =
+        "Use a dummy key. GrokBuild treats only localhost / 127.0.0.1 as “local,” so Fetch models stays disabled on http://spark:… until a key is present. Spark ignores it (same as AGNT)."
+
+    static let sparkExampleSummary =
+        "Example — local NVIDIA DGX Spark (one model at a time). DeepSeek on :8001:"
+}
+
 /// Built-in provider presets for popular OpenAI-compatible endpoints.
 enum ProviderPreset: String, CaseIterable, Identifiable {
     /// GrokBuild-managed Cursor OpenAI sidecar (local Node/`@cursor/sdk` on port 18787).
