@@ -255,7 +255,7 @@ enum CustomProviderExample {
     )
 
     static let dummyKeyHelp =
-        "Use a dummy key. GrokBuild treats only localhost / 127.0.0.1 as “local,” so Fetch models stays disabled on http://spark:… until a key is present. Spark ignores it (same as AGNT)."
+        "Use a dummy key. Fetch models skips the key only for loopback URLs (localhost, 127.0.0.1, 0.0.0.0, host.docker.internal). LAN or Tailscale hosts like http://spark:… need a dummy key so Fetch is enabled. Spark ignores it."
 
     static let sparkExampleSummary =
         "Example — local NVIDIA DGX Spark (one model at a time). DeepSeek on :8001:"

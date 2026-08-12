@@ -3396,7 +3396,8 @@ private struct CustomModelsSettingsPane: View {
         !providerNeedsKey && !isValidatingCursorKey && cursorNodeProbe.meetsMinimum
     }
 
-    /// Spark (and similar LAN/Tailscale hosts) example — only on a blank custom-provider editor.
+    /// Help card on a new custom-provider editor (not presets, Cursor, or Edit). Stays visible
+    /// after Fill so the dummy-key copy remains while the user decides whether to save.
     private var showsCustomProviderSparkExample: Bool {
         !isEditingProvider && !providerDraftFromPreset && !isCursorProviderDraft
     }
@@ -3495,7 +3496,7 @@ private struct CustomModelsSettingsPane: View {
                         }
                     }
 
-                    Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Loopback URLs (localhost / 127.0.0.1) can leave the key empty; LAN or Tailscale hosts need a dummy key so Fetch models is enabled.")
+                    Text("The API key is shared by every model using this provider and is written into each model's config.toml table (plain text on disk). Loopback URLs (localhost, 127.0.0.1, 0.0.0.0, host.docker.internal) can leave the key empty; LAN or Tailscale hosts need a dummy key so Fetch models is enabled.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -354,7 +354,9 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(ProviderModelFetcher.resolveKey(apiKey: example.apiKey), "not-needed")
         XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("dummy key"))
         XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("localhost"))
+        XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("host.docker.internal"))
         XCTAssertTrue(CustomProviderExample.dummyKeyHelp.contains("http://spark:"))
+        XCTAssertFalse(CustomProviderExample.dummyKeyHelp.contains("AGNT"))
         XCTAssertTrue(CustomProviderExample.sparkExampleSummary.contains("Spark"))
     }
 
