@@ -31,9 +31,10 @@ Script: `scripts/release.sh`. Requires `gh auth login`.
 1. Bump `VERSION`
 2. **`make test`** — must pass; add tests if release/updater logic changed
 3. `make app` or `make dmg` to verify packaging
-4. **Update docs** — `BUILDING.md`, `README.md` (install/updates), `ARCHITECTURE.md` (in-app updates section), `scripts/README.md` if scripts changed
-5. Commit on feature branch; user creates tag/PR
-6. Do not force-push `main` or skip git hooks unless asked
+4. Confirm signed entitlements include `com.apple.security.device.audio-input` (`codesign -d --entitlements - dist/GrokBuild.app`) — required for Voice control under Hardened Runtime (issue #17)
+5. **Update docs** — `BUILDING.md`, `README.md` (install/updates), `ARCHITECTURE.md` (in-app updates section), `scripts/README.md` if scripts changed
+6. Commit on feature branch; user creates tag/PR
+7. Do not force-push `main` or skip git hooks unless asked
 
 ## Update checking in app
 

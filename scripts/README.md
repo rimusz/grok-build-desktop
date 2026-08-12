@@ -33,7 +33,8 @@ Output: `dist/GrokBuild.app`, optionally `dist/GrokBuild-{tag}-macOS.dmg`. Copie
 
 | Script | Purpose |
 |--------|---------|
-| [`codesign-app-bundle.sh`](codesign-app-bundle.sh) | Sign `GrokBuild.app` and nested binaries (`GrokBuild`, `GrokBuildComputerUseMCP`, `agent-desktop`) with a shared bundle ID for Accessibility. Ad-hoc (`-`) when no identity is passed. |
+| [`codesign-app-bundle.sh`](codesign-app-bundle.sh) | Sign `GrokBuild.app` and nested binaries (`GrokBuild`, `GrokBuildComputerUseMCP`, `agent-desktop`) with a shared bundle ID for Accessibility. Ad-hoc (`-`) when no identity is passed. Uses [`GrokBuild.entitlements`](GrokBuild.entitlements) (includes `device.audio-input` for Voice control under Hardened Runtime). |
+| [`GrokBuild.entitlements`](GrokBuild.entitlements) | App entitlements plist applied by `codesign-app-bundle.sh` (unsigned-executable-memory + microphone audio-input). |
 | [`notarize.sh`](notarize.sh) | Submit `.app`, `.dmg`, or `.zip` to Apple notary service, wait, staple, clean up temp zip. Used by `make notarize` and notarized release flows. |
 
 **`codesign-app-bundle.sh`**
@@ -43,6 +44,7 @@ Output: `dist/GrokBuild.app`, optionally `dist/GrokBuild-{tag}-macOS.dmg`. Copie
 ./scripts/codesign-app-bundle.sh /path/to/GrokBuild.app "Developer ID Application: ..."
 ```
 
+Entitlements live in `scripts/GrokBuild.entitlements` (must include `com.apple.security.device.audio-input` for notarized Voice control).
 **`notarize.sh`**
 
 ```bash
@@ -104,7 +106,7 @@ These are copied into the app bundle during packaging; they are not usually run 
 | Script | Purpose |
 |--------|---------|
 | [`bundle-agent-desktop.sh`](bundle-agent-desktop.sh) | Locate `agent-desktop` on the system (or `AGENT_DESKTOP_PATH`) and copy it into `Contents/MacOS/` for Computer Use. Called by both build scripts. |
-| [`bundle-cursor-bridge.sh`](bundle-cursor-bridge.sh) | `npm install` in `GrokBuild/Resources/CursorBridge` and copy the sidecar (`cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs`, `node_modules`) into `Contents/Resources/CursorBridge`. Requires Node ≥ 22.13 (major **and** minor checked); soft-fails if Node/npm is missing or too old. Excludes `*.test.mjs` from the app bundle. |
+| [`bundle-cursor-bridge.sh`](bundle-cursor-bridge.sh) | `npm install` in `GrokBuild/Resources/CursorBridge` (pinned to `registry.npmjs.org`) and copy the sidecar (`cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs`, `node_modules`) into `Contents/Resources/CursorBridge`. Requires Node ≥ 22.13 (major **and** minor checked); soft-skips if Node/npm is missing or too old; **fails the build** if npm install/copy fails when Node is present. Excludes `*.test.mjs` from the app bundle. |
 | [`grokbuild-browser-mcp`](grokbuild-browser-mcp) | Python MCP stdio server exposing browser tools via `agent-browser`. Copied to `Contents/Resources/grokbuild-browser-mcp`. |
 
 **`bundle-agent-desktop.sh`**

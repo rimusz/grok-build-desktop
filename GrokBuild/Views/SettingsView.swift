@@ -2856,7 +2856,6 @@ private struct CustomModelsSettingsPane: View {
     @State private var providerPendingRemoval: Provider?
 
     // Managed Cursor bridge sidecar state.
-    @AppStorage(CursorBridgeSettingsKeys.managedEnabled) private var managedBridgeEnabled = false
     @State private var managedBridgeStatus = CursorBridgeRuntime.status
     @State private var cursorAPIKeyDraft = ""
     @State private var hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
@@ -3500,11 +3499,6 @@ private struct CustomModelsSettingsPane: View {
         if !cursorNodeProbe.meetsMinimum {
             cursorNodeInstallBanner
         }
-
-        Toggle("Enable Cursor bridge on launch", isOn: $managedBridgeEnabled)
-            .onChange(of: managedBridgeEnabled) { _, enabled in
-                Task { await toggleManagedBridge(enabled) }
-            }
 
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -4254,7 +4248,7 @@ private struct CustomModelsSettingsPane: View {
     }
 
     private func activateCursorProviderAfterSave() async {
-        managedBridgeEnabled = true
+        // Install/Save always enables the sidecar — no separate launch toggle in Settings.
         await CursorBridgeRuntime.setEnabled(true)
         managedBridgeStatus = CursorBridgeRuntime.status
         // Only refresh the available catalog — do not bulk-import into config.toml.
@@ -4277,7 +4271,7 @@ private struct CustomModelsSettingsPane: View {
         providers.removeAll { $0.id == provider.id }
         ProviderStore.save(providers)
         if provider.isManagedCursorBridge {
-            managedBridgeEnabled = false
+            CursorBridgeRuntime.isEnabled = false
             CursorBridgeRuntime.stop()
             managedBridgeStatus = CursorBridgeRuntime.status
         }
@@ -4507,15 +4501,6 @@ private struct CustomModelsSettingsPane: View {
         } catch {
             errorMessage = "Failed to clear Cursor API key: \(error.localizedDescription)"
             statusMessage = nil
-        }
-    }
-
-    private func toggleManagedBridge(_ enabled: Bool) async {
-        await CursorBridgeRuntime.setEnabled(enabled)
-        managedBridgeStatus = CursorBridgeRuntime.status
-        if case .running = managedBridgeStatus,
-           let provider = providers.first(where: { $0.isManagedCursorBridge }) {
-            fetchModels(for: provider)
         }
     }
 

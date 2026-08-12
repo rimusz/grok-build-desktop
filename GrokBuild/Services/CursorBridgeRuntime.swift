@@ -4,6 +4,8 @@ import Foundation
 /// UserDefaults keys for the GrokBuild-managed Cursor bridge sidecar.
 enum CursorBridgeSettingsKeys {
     /// When true, GrokBuild starts the bundled OpenAI `/v1` sidecar on launch (if an API key is set).
+    /// Set automatically when the Cursor provider is installed; cleared when that provider is removed.
+    /// Not exposed as a Settings toggle.
     static let managedEnabled = "GrokBuild.cursorBridge.managedEnabled"
 }
 
