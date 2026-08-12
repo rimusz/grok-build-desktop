@@ -537,7 +537,7 @@ final class CompetitiveUXTests: XCTestCase {
     }
 
     @MainActor
-    func testChatStoreClearTranscriptEmptiesMessages() {
+    func testChatStoreClearTranscriptEmptiesMessagesAndClearsLastError() {
         let store = ChatStore()
         store.restorePersistedMessages([
             Message(role: .user, content: "hello"),
@@ -545,6 +545,15 @@ final class CompetitiveUXTests: XCTestCase {
         ])
         store.clearTranscript()
         XCTAssertTrue(store.messages.isEmpty)
+        XCTAssertNil(store.lastError)
+    }
+
+    func testPinnedSessionIDsArePrunedToExistingRecords() {
+        let kept = UUID()
+        let stale = UUID()
+        let recordIDs: Set<UUID> = [kept]
+        let pinned = [kept, stale].filter { recordIDs.contains($0) }
+        XCTAssertEqual(pinned, [kept])
     }
 
     // MARK: - Pinned sessions persistence

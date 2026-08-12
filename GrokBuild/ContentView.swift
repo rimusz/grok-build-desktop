@@ -513,6 +513,7 @@ struct ContentView: View {
         let closing = liveSessions[index]
         let store = closing.store
         liveSessions.remove(at: index)
+        sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
 
         if selectedSessionID == id {
             if let sibling = liveSessions.last(where: { $0.workspace.id == closing.workspace.id }) {
@@ -728,6 +729,7 @@ struct ContentView: View {
             selectedByWorkspace[selectedSession.workspace.id] = selectedSessionID
         }
 
+        let pinnedSessionIDs = sessionLayout.pinnedSessionIDs.filter { recordIDs.contains($0) }
         sessionLayout = SessionLayoutSnapshot(
             records: records,
             sessionOrderByWorkspace: order,
@@ -736,7 +738,7 @@ struct ContentView: View {
             selectedSessionIDByWorkspace: selectedByWorkspace,
             expandedSessionWorkspaceIDs: expandedSessionWorkspaceIDs,
             hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs,
-            pinnedSessionIDs: sessionLayout.pinnedSessionIDs
+            pinnedSessionIDs: pinnedSessionIDs
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }

@@ -34,6 +34,7 @@ final class ChatStore {
         isStreaming = false
         isGrokking = false
         streamingMessageID = nil
+        lastError = nil
         notifyMessagesChanged()
     }
 
