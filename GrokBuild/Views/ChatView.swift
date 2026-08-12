@@ -35,6 +35,8 @@ struct ChatView: View {
 
     @State private var input: String = ""
     @State private var isFileDropTargeted = false
+    @State private var fileMentionIndex: [String] = []
+    @State private var mentionActiveIndex = 0
     @State private var slashActiveIndex = 0
     @State private var slashSkillsExpanded = false
     @State private var slashCommandsExpanded = false
@@ -91,6 +93,19 @@ struct ChatView: View {
 
     private var showSlashPopover: Bool {
         !slashMenuEntries.isEmpty && inputFocused
+    }
+
+    private var mentionMatch: (query: String, range: Range<String.Index>)? {
+        FileMentionMatch.match(in: input)
+    }
+
+    private var filteredMentions: [String] {
+        guard let match = mentionMatch else { return [] }
+        return FileMentionFilter.filter(fileMentionIndex, query: match.query, limit: 8)
+    }
+
+    private var showMentionPopover: Bool {
+        mentionMatch != nil && !filteredMentions.isEmpty && inputFocused && !showSlashPopover
     }
 
     var body: some View {
@@ -171,6 +186,16 @@ struct ChatView: View {
                             ) {
                                 toolActivityExpanded.toggle()
                             }
+                        }
+
+                        if !store.workflowRuns.isEmpty {
+                            WorkflowRunsCard(
+                                runs: store.workflowRuns,
+                                isStreaming: store.isStreaming,
+                                onPause: { id in Task { await store.pauseWorkflowRun(id) } },
+                                onResume: { id in Task { await store.resumeWorkflowRun(id) } },
+                                onStop: { id in Task { await store.stopWorkflowRun(id) } }
+                            )
                         }
 
                         if let plan = store.pendingExitPlan {
@@ -577,6 +602,13 @@ struct ChatView: View {
                 )
             }
 
+            if !store.imageAttachments.isEmpty {
+                ImageChipBar(
+                    attachments: store.imageAttachments,
+                    onRemove: { store.removeImageAttachment(id: $0) }
+                )
+            }
+
             if !composerChips.isEmpty {
                 WorkflowChipBar(
                     commands: composerChips,
@@ -592,6 +624,14 @@ struct ChatView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 6) {
+                    if showMentionPopover {
+                        FileMentionListView(
+                            paths: filteredMentions,
+                            activeIndex: mentionActiveIndex,
+                            onSelect: pickMention
+                        )
+                    }
+
                     if showSlashPopover {
                         SlashAutocompleteView(
                             entries: slashMenuEntries,
@@ -614,7 +654,9 @@ struct ChatView: View {
                     .lineLimit(2, reservesSpace: true)
                     .submitLabel(.send)
                     .onSubmit {
-                        if showSlashPopover {
+                        if showMentionPopover {
+                            activateMention(at: mentionActiveIndex)
+                        } else if showSlashPopover {
                             activateSlashEntry(at: slashActiveIndex)
                         } else {
                             Task { await submit() }
@@ -624,14 +666,21 @@ struct ChatView: View {
                         slashActiveIndex = 0
                         slashSkillsExpanded = false
                         slashCommandsExpanded = false
+                        mentionActiveIndex = 0
                     }
                     .onKeyPress { press in
+                        if press.key == .tab, showMentionPopover, !filteredMentions.isEmpty {
+                            activateMention(at: mentionActiveIndex)
+                            return .handled
+                        }
                         if press.key == .tab, showSlashPopover, !slashMenuEntries.isEmpty {
                             activateSlashEntry(at: slashActiveIndex)
                             return .handled
                         }
                         if press.key == .return && !press.modifiers.contains(.shift) {
-                            if showSlashPopover {
+                            if showMentionPopover {
+                                activateMention(at: mentionActiveIndex)
+                            } else if showSlashPopover {
                                 activateSlashEntry(at: slashActiveIndex)
                             } else {
                                 Task { await submit() }
@@ -641,6 +690,10 @@ struct ChatView: View {
                         return .ignored
                     }
                     .onKeyPress(.upArrow) {
+                        if showMentionPopover, !filteredMentions.isEmpty {
+                            moveMentionSelection(by: -1)
+                            return .handled
+                        }
                         if showSlashPopover, !slashMenuEntries.isEmpty {
                             moveSlashSelection(by: -1)
                             return .handled
@@ -651,6 +704,10 @@ struct ChatView: View {
                         return .handled
                     }
                     .onKeyPress(.downArrow) {
+                        if showMentionPopover, !filteredMentions.isEmpty {
+                            moveMentionSelection(by: 1)
+                            return .handled
+                        }
                         if showSlashPopover, !slashMenuEntries.isEmpty {
                             moveSlashSelection(by: 1)
                             return .handled
@@ -668,9 +725,13 @@ struct ChatView: View {
 
                 ContextUsageIndicator(
                     label: store.currentModelContextLabel,
-                    fraction: store.contextUsageFraction
+                    fraction: store.contextUsageFraction,
+                    usedTokens: store.usedContextTokens,
+                    limitTokens: store.currentModelContextLimit,
+                    canCompact: store.currentWorkspace != nil && !store.isStreaming,
+                    onCompact: { Task { await store.compactContext() } }
                 )
-                .help("Context usage")
+                .help("Context usage — click for details and Compact")
 
                 Spacer()
 
@@ -698,8 +759,11 @@ struct ChatView: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(isFileDropTargeted ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: isFileDropTargeted ? 1.5 : 1)
             }
-            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isFileDropTargeted) { providers in
+            .onDrop(of: [UTType.fileURL.identifier, UTType.image.identifier], isTargeted: $isFileDropTargeted) { providers in
                 handleFileDrop(providers)
+            }
+            .onPasteCommand(of: [UTType.image]) { providers in
+                handleImagePaste(providers)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -707,6 +771,9 @@ struct ChatView: View {
         }
         .padding(12)
         .background(.bar)
+        .task(id: store.currentWorkspace?.id) {
+            loadFileMentionIndex()
+        }
     }
 
     private var projectStatusRow: some View {
@@ -1043,6 +1110,11 @@ struct ChatView: View {
             Menu {
                 ForEach(Array(store.promptQueue.enumerated()), id: \.offset) { index, prompt in
                     Menu(prompt.count > 40 ? String(prompt.prefix(40)) + "…" : prompt) {
+                        if store.isStreaming {
+                            Button("Steer into current turn") {
+                                _ = store.steerQueuedPromptNow(at: index)
+                            }
+                        }
                         Button("Send now") {
                             Task { _ = await store.sendQueuedPromptNow(at: index) }
                         }
@@ -1347,7 +1419,7 @@ struct ChatView: View {
                     .font(.title2)
             }
             .buttonStyle(.plain)
-            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.hasVisibleFileAttachments ||
+            .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !store.hasSendableAttachments ||
                       store.currentWorkspace == nil ||
                       store.authRequiredMessage != nil)
             .keyboardShortcut(.return, modifiers: .command)
@@ -1605,16 +1677,45 @@ struct ChatView: View {
     }
 
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                let url = fileURL(from: item)
-                guard let url else { return }
-                Task { @MainActor in
-                    appendDroppedFile(url)
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let url = fileURL(from: item)
+                    guard let url else { return }
+                    Task { @MainActor in
+                        appendDroppedFile(url)
+                    }
                 }
+            } else {
+                loadPastedImage(from: provider)
             }
         }
         return true
+    }
+
+    private func handleImagePaste(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            loadPastedImage(from: provider)
+        }
+    }
+
+    /// Loads raw image bytes from a pasteboard/drag provider and attaches them as vision content.
+    private func loadPastedImage(from provider: NSItemProvider) {
+        let candidates: [(UTType, String)] = [
+            (.png, "image/png"),
+            (.jpeg, "image/jpeg"),
+            (.gif, "image/gif"),
+        ]
+        for (type, mime) in candidates where provider.hasItemConformingToTypeIdentifier(type.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
+                guard let data, !data.isEmpty else { return }
+                Task { @MainActor in
+                    store.addImageAttachment(data: data, mimeType: mime, displayName: "Pasted image")
+                    inputFocused = true
+                }
+            }
+            return
+        }
     }
 
     private func chooseFiles() {
@@ -1646,7 +1747,11 @@ struct ChatView: View {
 
     @MainActor
     private func appendDroppedFile(_ url: URL) {
-        store.addFileAttachment(path: url.path)
+        if ImageAttachmentSupport.isImagePath(url.path) {
+            store.addImageAttachment(path: url.path)
+        } else {
+            store.addFileAttachment(path: url.path)
+        }
         inputFocused = true
     }
 
@@ -1654,6 +1759,35 @@ struct ChatView: View {
         guard let match = slashMatch else { return }
         input = SlashAutocomplete.apply(command: command, to: input, matchRange: match.range)
         inputFocused = true
+    }
+
+    private func pickMention(_ path: String) {
+        guard let match = mentionMatch else { return }
+        input = FileMentionMatch.apply(path: path, to: input, matchRange: match.range)
+        mentionActiveIndex = 0
+        inputFocused = true
+    }
+
+    private func moveMentionSelection(by delta: Int) {
+        let count = filteredMentions.count
+        guard count > 0 else { return }
+        mentionActiveIndex = (mentionActiveIndex + delta + count) % count
+    }
+
+    private func activateMention(at index: Int) {
+        guard filteredMentions.indices.contains(index) else { return }
+        pickMention(filteredMentions[index])
+    }
+
+    private func loadFileMentionIndex() {
+        guard let root = store.currentWorkspace?.path else {
+            fileMentionIndex = []
+            return
+        }
+        Task.detached(priority: .utility) {
+            let files = FileMentionIndex.enumerate(root: root)
+            await MainActor.run { fileMentionIndex = files }
+        }
     }
 
     private func moveSlashSelection(by delta: Int) {
@@ -1736,6 +1870,12 @@ private struct QuickStartChip: View {
 private struct ContextUsageIndicator: View {
     let label: String
     let fraction: Double
+    var usedTokens: Int? = nil
+    var limitTokens: Int? = nil
+    var canCompact: Bool = false
+    var onCompact: () -> Void = {}
+
+    @State private var isPopoverOpen = false
 
     private var ringColor: Color {
         switch fraction {
@@ -1746,25 +1886,75 @@ private struct ContextUsageIndicator: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                Circle()
-                    .stroke(Color.primary.opacity(0.15), lineWidth: 2)
-                Circle()
-                    .trim(from: 0, to: max(0.04, fraction))
-                    .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 14, height: 14)
+        Button {
+            isPopoverOpen.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.primary.opacity(0.15), lineWidth: 2)
+                    Circle()
+                        .trim(from: 0, to: max(0.04, fraction))
+                        .stroke(ringColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 14, height: 14)
 
-            Text(label)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                Text(label)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.06), in: Capsule())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
-        .background(Color.primary.opacity(0.06), in: Capsule())
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPopoverOpen, arrowEdge: .top) {
+            popoverContent
+        }
+        .accessibilityLabel("Context usage")
+        .accessibilityValue(label)
+        .accessibilityIdentifier("grok-context-usage")
+    }
+
+    private var popoverContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Context Usage")
+                .font(.subheadline.weight(.semibold))
+
+            Text(ContextUsageFormatter.summary(used: usedTokens, limit: limitTokens))
+                .font(.callout)
+                .monospacedDigit()
+
+            if let percent = ContextUsageFormatter.percent(used: usedTokens, limit: limitTokens) {
+                ProgressView(value: Double(percent), total: 100)
+                    .tint(ringColor)
+                Text("\(percent)% of the model's context window used")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Billed cost (USD) isn't reported over the grok agent connection, so only token usage is shown.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            Button {
+                onCompact()
+                isPopoverOpen = false
+            } label: {
+                Label("Compact context", systemImage: "arrow.down.right.and.arrow.up.left")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(!canCompact)
+            .help("Run /compact to summarize the conversation and free context")
+        }
+        .padding(14)
+        .frame(width: 300)
     }
 }
 

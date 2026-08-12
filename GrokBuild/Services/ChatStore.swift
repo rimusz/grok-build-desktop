@@ -64,6 +64,8 @@ final class ChatStore {
     /// Local goal state updated when the user sends `/goal …`; cleared on new session.
     private(set) var goalState: SessionGoalState?
     private(set) var fileAttachments: [FileAttachment] = []
+    /// Pasted/dropped images queued as vision content for the next prompt.
+    private(set) var imageAttachments: [ImageAttachment] = []
     private(set) var isYolo: Bool = false
 
     var grokSessionId: String? { process.sessionId }
@@ -279,6 +281,7 @@ final class ChatStore {
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
+        imageAttachments.removeAll()
         goalState = nil
         clearWorkflowRunState()
         clearBackgroundTaskState()
@@ -362,6 +365,7 @@ final class ChatStore {
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
+        imageAttachments.removeAll()
         goalState = nil
         clearWorkflowRunState()
         if currentWorkspace != nil {
@@ -386,6 +390,7 @@ final class ChatStore {
         pendingExitPlan = nil
         pendingQuestions.removeAll()
         fileAttachments.removeAll()
+        imageAttachments.removeAll()
         goalState = nil
         messages.removeAll()
         clearWorkflowRunState()
@@ -580,6 +585,56 @@ final class ChatStore {
         promptQueue.append(trimmed)
     }
 
+    /// App setting: steer the running turn by default when sending mid-turn.
+    static var steerByDefaultEnabled: Bool {
+        UserDefaults.standard.bool(forKey: GrokSettingsKeys.steerByDefault)
+    }
+
+    /// Injects a prompt into the running turn without cancelling it (grok "steering").
+    /// Records the prompt in the transcript so the injected instruction is visible.
+    @discardableResult
+    func steerRunningTurn(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isStreaming else { return false }
+        guard process.steer(trimmed) else { return false }
+        if commandHistory.last != trimmed { commandHistory.append(trimmed) }
+        messages.append(Message(role: .user, content: trimmed))
+        notifyMessagesChanged()
+        return true
+    }
+
+    /// True when grok is blocked waiting on the user (permission / plan / question prompts).
+    var isAwaitingUser: Bool {
+        !pendingPermissions.isEmpty || pendingExitPlan != nil || !pendingQuestions.isEmpty
+    }
+
+    /// True when the session is in a failed connection / process state.
+    var hasErrorState: Bool {
+        if case .failed = connectionState { return true }
+        return false
+    }
+
+    /// Derives the sidebar/tab activity status. `hasUnreadCompletion` is tracked by the UI
+    /// (cleared on focus), so it is passed in rather than owned here.
+    func activityStatus(hasUnreadCompletion: Bool) -> SessionActivityStatus {
+        SessionStatusResolver.resolve(SessionStatusInputs(
+            isStreaming: isStreaming,
+            isAwaitingUser: isAwaitingUser,
+            hasError: hasErrorState,
+            hasUnreadCompletion: hasUnreadCompletion
+        ))
+    }
+
+    /// Steers a queued prompt into the running turn (used by the queue "Steer" action).
+    @discardableResult
+    func steerQueuedPromptNow(at index: Int) -> Bool {
+        guard promptQueue.indices.contains(index), isStreaming else { return false }
+        let text = promptQueue[index]
+        guard steerRunningTurn(text) else { return false }
+        if promptQueue.indices.contains(index) { promptQueue.remove(at: index) }
+        return true
+    }
+
     func sendQueuedPromptNow(at index: Int) async -> Bool {
         guard promptQueue.indices.contains(index) else { return false }
         guard !isStreaming else {
@@ -760,7 +815,9 @@ final class ChatStore {
 
     private func deliverPrompt(_ text: String, waitForCompletion: Bool, fromQueue: Bool = false) async -> Bool {
         var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || fileAttachments.contains(where: { !$0.isHidden }) else { return false }
+        guard !trimmed.isEmpty
+                || fileAttachments.contains(where: { !$0.isHidden })
+                || !imageAttachments.isEmpty else { return false }
         guard currentWorkspace != nil else {
             lastError = "Select a project first."
             return false
@@ -771,6 +828,14 @@ final class ChatStore {
                 return false
             }
             if !fromQueue {
+                // Steer the running turn when enabled, otherwise queue for after it.
+                let decision = SteerDecision.resolve(
+                    isStreaming: true,
+                    steerByDefault: Self.steerByDefaultEnabled
+                )
+                if decision == .steer, steerRunningTurn(trimmed) {
+                    return true
+                }
                 enqueuePrompt(trimmed)
                 return true
             }
@@ -803,6 +868,12 @@ final class ChatStore {
         if let attachmentBlock = AttachmentPromptBuilder.build(from: fileAttachments) {
             trimmed = trimmed.isEmpty ? attachmentBlock : "\(attachmentBlock)\n\n\(trimmed)"
         }
+        let promptImages = imageAttachments.map {
+            PromptImageContent(mimeType: $0.mimeType, base64: $0.base64)
+        }
+        if let imageNote = AttachmentPromptBuilder.imageNote(from: imageAttachments) {
+            trimmed = trimmed.isEmpty ? imageNote : "\(trimmed)\n\n\(imageNote)"
+        }
         if let goalCommand = GoalCommand.parse(from: trimmed) {
             SessionGoalStateMutation.apply(goalCommand, to: &goalState)
         }
@@ -810,6 +881,7 @@ final class ChatStore {
             pendingBtw = true
         }
         fileAttachments.removeAll()
+        imageAttachments.removeAll()
 
         let userMsg = Message(role: .user, content: trimmed)
         messages.append(userMsg)
@@ -831,14 +903,14 @@ final class ChatStore {
         let assistantID = assistant.id
 
         if waitForCompletion {
-            let ok = await process.send(payload)
+            let ok = await process.send(payload, images: promptImages)
             finishPrompt(assistantID: assistantID, ok: ok)
             return ok
         }
 
         Task { [weak self] in
             guard let self else { return }
-            let ok = await self.process.send(payload)
+            let ok = await self.process.send(payload, images: promptImages)
             self.finishPrompt(assistantID: assistantID, ok: ok)
         }
 
@@ -861,6 +933,7 @@ final class ChatStore {
             connectionState = .ready
             postStatusUpdate("ready")
             notifyMessagesChanged()
+            TurnCompletionSound.playIfNeeded()
             drainPromptQueueIfNeeded()
             return
         }
@@ -969,6 +1042,40 @@ final class ChatStore {
 
     func removeFileAttachment(id: UUID) {
         fileAttachments.removeAll { $0.id == id }
+    }
+
+    /// Attach an image file as vision content (not a path chip). Silently ignores unreadable or
+    /// unsupported files.
+    func addImageAttachment(path: String) {
+        guard let mimeType = ImageAttachmentSupport.mimeType(forPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return }
+        imageAttachments.append(ImageAttachment(
+            displayName: ImageAttachmentSupport.displayName(forPath: path),
+            mimeType: mimeType,
+            data: data
+        ))
+    }
+
+    /// Attach raw pasted/dropped image bytes as vision content.
+    func addImageAttachment(data: Data, mimeType: String, displayName: String) {
+        guard !data.isEmpty else { return }
+        imageAttachments.append(ImageAttachment(displayName: displayName, mimeType: mimeType, data: data))
+    }
+
+    func removeImageAttachment(id: UUID) {
+        imageAttachments.removeAll { $0.id == id }
+    }
+
+    /// True when a prompt can be sent from attachments alone (visible file chip or any image).
+    var hasSendableAttachments: Bool {
+        hasVisibleFileAttachments || !imageAttachments.isEmpty
+    }
+
+    /// Sends `/compact` to summarize context. No-op while streaming or without a workspace.
+    @discardableResult
+    func compactContext() async -> Bool {
+        guard currentWorkspace != nil, !isStreaming else { return false }
+        return await send("/compact")
     }
 
     func toggleFileAttachmentHidden(id: UUID) {

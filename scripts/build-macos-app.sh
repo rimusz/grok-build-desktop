@@ -100,8 +100,9 @@ if [ -f "$ROOT_DIR/Package.swift" ]; then
         echo "==> Copied bundled skills"
     fi
 
-    chmod +x "$SCRIPT_DIR/bundle-agent-desktop.sh" "$SCRIPT_DIR/codesign-app-bundle.sh"
+    chmod +x "$SCRIPT_DIR/bundle-agent-desktop.sh" "$SCRIPT_DIR/bundle-cursor-bridge.sh" "$SCRIPT_DIR/codesign-app-bundle.sh"
     "$SCRIPT_DIR/bundle-agent-desktop.sh" "$APP_BUNDLE/Contents/MacOS" || true
+    "$SCRIPT_DIR/bundle-cursor-bridge.sh" "$APP_BUNDLE/Contents/Resources" || true
 
     # Copy menu bar icon
     # Looks in these locations (in order):

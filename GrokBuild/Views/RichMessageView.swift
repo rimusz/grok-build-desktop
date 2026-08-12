@@ -1,16 +1,19 @@
 import SwiftUI
 import WebKit
+import AVKit
 
 enum MarkdownBlock: Identifiable, Hashable {
     case text(String)
     case mermaid(String)
     case latex(String, display: Bool)
+    case media(InlineMediaRef)
 
     var id: String {
         switch self {
         case .text(let s): return "t-\(s.hashValue)"
         case .mermaid(let s): return "m-\(s.hashValue)"
         case .latex(let s, let d): return "l-\(d)-\(s.hashValue)"
+        case .media(let ref): return "media-\(ref.isVideo)-\(ref.source.hashValue)"
         }
     }
 }
@@ -68,6 +71,11 @@ enum MarkdownBlockParser {
         }
 
         if let m = matchInlineMath(in: text) {
+            if best == nil || m.range.lowerBound < best!.range.lowerBound { best = m }
+        }
+
+        if let media = InlineMediaParser.firstMedia(in: text) {
+            let m = Match(range: media.range, block: .media(media.ref))
             if best == nil || m.range.lowerBound < best!.range.lowerBound { best = m }
         }
 
@@ -130,6 +138,8 @@ struct RichMessageView: View {
                     SizedMermaidWebView(source: source)
                 case .latex(let expr, let display):
                     SizedLaTeXWebView(latex: expr, displayMode: display)
+                case .media(let ref):
+                    InlineMediaView(ref: ref)
                 }
             }
         }
@@ -146,6 +156,93 @@ struct RichMessageView: View {
             return attr
         }
         return AttributedString(chunk)
+    }
+}
+
+/// Renders an inline image or video preview from an assistant/`imagine` media reference,
+/// falling back to a tappable link when the source can't be loaded.
+struct InlineMediaView: View {
+    let ref: InlineMediaRef
+
+    private var resolvedURL: URL? {
+        if let url = URL(string: ref.source), let scheme = url.scheme,
+           scheme == "http" || scheme == "https" {
+            return url
+        }
+        if ref.source.hasPrefix("/") {
+            let path = (ref.source as NSString).expandingTildeInPath
+            return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
+        if ref.source.hasPrefix("~") {
+            let path = (ref.source as NSString).expandingTildeInPath
+            return FileManager.default.fileExists(atPath: path) ? URL(fileURLWithPath: path) : nil
+        }
+        return nil
+    }
+
+    var body: some View {
+        Group {
+            if let url = resolvedURL {
+                if ref.isVideo {
+                    VideoPlayer(player: AVPlayer(url: url))
+                        .frame(maxWidth: 420, minHeight: 200, maxHeight: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                } else {
+                    imageView(for: url)
+                }
+            } else {
+                fallbackLink
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func imageView(for url: URL) -> some View {
+        if url.isFileURL {
+            if let image = NSImage(contentsOf: url) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 420, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                fallbackLink
+            }
+        } else {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 420, maxHeight: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                case .failure:
+                    fallbackLink
+                case .empty:
+                    ProgressView().frame(width: 40, height: 40)
+                @unknown default:
+                    fallbackLink
+                }
+            }
+        }
+    }
+
+    private var fallbackLink: some View {
+        Group {
+            if let url = URL(string: ref.source), url.scheme != nil {
+                Link(destination: url) {
+                    Label(ref.source, systemImage: ref.isVideo ? "film" : "photo")
+                        .font(.caption)
+                }
+            } else {
+                Label(ref.source, systemImage: ref.isVideo ? "film" : "photo")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
     }
 }
 

@@ -94,6 +94,10 @@ build: ## Build using SwiftPM (Release) - recommended
 test: ## Run unit tests
 	@echo "$(GREEN)==> Running unit tests...$(NC)"
 	@swift test
+	@if command -v node >/dev/null 2>&1; then \
+		echo "$(GREEN)==> Cursor bridge auth unit tests...$(NC)"; \
+		node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs; \
+	fi
 
 run: build ## Build release + launch the menu bar app
 	@$(MAKE) run-app BUILD_CONFIG=release

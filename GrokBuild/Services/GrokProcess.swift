@@ -28,6 +28,12 @@ enum GrokProcessState: Sendable, Equatable {
     }
 }
 
+/// A vision/multimodal image block for a `session/prompt` (base64 + MIME type).
+struct PromptImageContent: Sendable {
+    let mimeType: String
+    let base64: String
+}
+
 struct GrokLaunchOptions: Sendable {
     var agent: String? = nil  // advanced: for custom --agent profiles only (built-in personas removed)
     var extraArgs: [String] = []
@@ -519,16 +525,27 @@ final class GrokProcess: @unchecked Sendable {
     // MARK: - Public API
 
     @discardableResult
-    func send(_ text: String) async -> Bool {
+    func send(_ text: String, images: [PromptImageContent] = []) async -> Bool {
         guard let sid = sessionId, state == .ready || state == .busy else { return false }
         state = .busy
         notifyStatus()
         outputContinuation?.yield("<<USER>> \(text)\n")
 
+        var prompt: [[String: Any]] = []
+        if !text.isEmpty {
+            prompt.append(["type": "text", "text": text])
+        }
+        for image in images {
+            prompt.append(["type": "image", "data": image.base64, "mimeType": image.mimeType])
+        }
+        if prompt.isEmpty {
+            prompt.append(["type": "text", "text": text])
+        }
+
         do {
             _ = try await sendRequest(method: "session/prompt", params: [
                 "sessionId": sid,
-                "prompt": [["type": "text", "text": text]]
+                "prompt": prompt
             ])
             state = .ready
             notifyStatus()
@@ -538,6 +555,30 @@ final class GrokProcess: @unchecked Sendable {
             notifyStatus()
             return false
         }
+    }
+
+    /// Injects a prompt into the currently running turn without cancelling it (grok "steering").
+    ///
+    /// Fire-and-forget: grok never cancels a turn on new input, so the in-flight `session/prompt`
+    /// still owns turn completion. We send an additional `session/prompt` and do not track its id
+    /// (the response is unmatched and harmlessly dropped) so this returns immediately.
+    @discardableResult
+    func steer(_ text: String) -> Bool {
+        guard let sid = sessionId, state == .busy else { return false }
+        let id: Int = {
+            ioLock.lock()
+            defer { ioLock.unlock() }
+            let current = nextRequestId
+            nextRequestId += 1
+            return current
+        }()
+        outputContinuation?.yield("<<STEER>> \(text)\n")
+        return writeJson([
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/prompt",
+            "params": ["sessionId": sid, "prompt": [["type": "text", "text": text]]]
+        ])
     }
 
     func interrupt() {

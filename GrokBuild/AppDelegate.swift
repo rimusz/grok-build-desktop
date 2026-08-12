@@ -65,9 +65,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Open a main window on launch
         openMainWindow()
+
+        // Optional Cursor OpenAI sidecar (Settings → Models → Cursor bridge).
+        if CursorBridgeRuntime.isEnabled {
+            Task { await CursorBridgeRuntime.startIfNeeded() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        CursorBridgeRuntime.stop()
         NotificationCenter.default.post(name: .grokBuildPrepareForShutdown, object: nil)
         // Closing the fd releases the flock.
         // We also clean the PID file only if we are the owner.

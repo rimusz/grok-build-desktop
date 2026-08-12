@@ -11,6 +11,21 @@ struct WorkflowRun: Identifiable, Equatable, Codable {
     var agentBudgetTotal: Int?
 }
 
+extension WorkflowRun {
+    /// Budget completion (0…1) when both spent and total are known, else nil.
+    var budgetFraction: Double? {
+        guard let total = agentBudgetTotal, total > 0, let spent = agentBudgetSpent else { return nil }
+        return min(1, max(0, Double(spent) / Double(total)))
+    }
+
+    var isPaused: Bool { status.lowercased() == "paused" }
+
+    /// True unless the run reached a terminal state; drives whether controls stay actionable.
+    var isActive: Bool {
+        !["stopped", "completed", "cancelled", "canceled", "failed"].contains(status.lowercased())
+    }
+}
+
 /// Detects and parses grok `workflow` tool activity from ACP `session/update` payloads.
 enum WorkflowToolParsing {
     static func workflowName(inUpdate update: [String: Any]) -> String? {

@@ -1,6 +1,6 @@
 ---
 name: grokbuild-grok-cli
-description: Works with grok CLI integration in GrokBuild — auth state, version checks, session resume, permission settings, and bundled browser skill. Use when changing GrokProcess, GrokCLIService, UpdateChecker, or grok-related settings UI.
+description: Works with grok CLI integration in GrokBuild — auth state, version checks, session resume, permission settings, custom models / Cursor bridge, and bundled browser skill. Use when changing GrokProcess, GrokCLIService, UpdateChecker, CustomModelStore, CursorBridge*, or grok-related settings UI.
 ---
 
 # Grok CLI in GrokBuild
@@ -50,6 +50,22 @@ grok owns subagent orchestration (main agent delegates to subagents in parallel;
 - **Storage:** `SubagentRole` + `SubagentRoleStore` in `CustomModelSettings.swift` mirror `CustomModelStore` — minimal targeted TOML edits that preserve all other content and unmanaged role keys (for example `default_capability_mode`); each instruction is written to `~/.grok/prompts/<name>.md` and referenced via `prompt_file`. Relative `prompt_file` values resolve from the user's home directory. Removing a role deletes its GrokBuild-managed prompt file.
 - **UI:** `SubagentRoleEditor` sheet (name/model/instruction/description). Model picker options come from `CustomModelStore.load()` + `grok-build`. Reserved names (`general`, `general-purpose`, `explore`, `plan`, `vision`, `verify`, `computer`) are rejected. Roles are a separate concept from the read-only discovered-agents list — `grok inspect --json` does not report them — but custom role names are shown under **Run as custom role** in Settings' default-agent picker and the chat agent pill menu. Choosing one in those pickers runs the whole session as that role; to spawn it as a child subagent, ask for it in chat.
 - **Why edit the file directly:** grok's `/agents` (`/config-agents`) TUI manager is a pager builtin, not exposed over `grok agent stdio` (same limitation as `/remember`). Covered by `AgentsAndCapabilitiesTests`.
+
+## Custom models & Cursor bridge
+
+OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomModelStore` / `ProviderStore` (Settings → **Models**). Display names from Fetch → Add model use **Provider + model** (`ProviderModelNaming`, e.g. `MiniMax M2.5`); Cline uses `Cline …`, Cursor uses `Cursor …`.
+
+**Managed Cursor bridge** (not Cursor IDE Compatibility / Computer Use MCP):
+
+| Piece | Role |
+|-------|------|
+| `ProviderPreset.cursor` | Install provider; config.toml `api_key = "local"`, `base_url = http://127.0.0.1:18787/v1` |
+| `CursorBridgeKeychain` | Real Cursor user key → Application Support `Secrets/cursor-api-key` (0600) |
+| `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start |
+| `cursor-bridge-auth.mjs` | `resolveCursorApiKey` — SDK auth uses process env `CURSOR_API_KEY`; ignore grok's xAI session JWT / `local` Bearer unless token is `crsr_…` |
+| Node ≥ 22.13 | Required on the machine (`CursorBridge.NodeRequirement` / Doctor / Settings install banner) |
+
+Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. Pref: `GrokBuild.cursorBridge.managedEnabled`. Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
 
 ## Browser backend
 
@@ -105,10 +121,10 @@ Browser **quick presets** (`BrowserPreset` in `BrowserSettings.swift`) apply run
 
 Same session, before finishing:
 
-1. **`make test`** — extend `UpdateCheckerTests`, integration tests, or service tests as appropriate.
-2. **`ARCHITECTURE.md`** — GrokProcess/ACP flow, persistence keys, notifications, feature subsystem table.
+1. **`make test`** — extend `UpdateCheckerTests`, `CustomModelTests`, `CompetitiveUXTests`, or other service tests as appropriate. Bridge auth helper: `node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs` (also run by `make test` when Node is present).
+2. **`ARCHITECTURE.md`** — GrokProcess/ACP flow, custom models / Cursor bridge, persistence keys, notifications.
 3. **`README.md`** — if user-visible CLI/settings behavior changed.
-4. **This skill** + `grok-cli-integration.mdc` — if APIs or update-check behavior changed.
+4. **This skill** + `grok-cli-integration.mdc` — if APIs, custom-model, or Cursor bridge contracts changed.
 5. **Bundled skill `SKILL.md`** — if install path, tools, or agent instructions changed.
 
 ## Workspace instructions

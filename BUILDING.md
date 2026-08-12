@@ -78,6 +78,7 @@ The build script (`scripts/build-macos-app.sh`) also:
 - Bundles `Resources/Skills/` into the app
 - Copies `scripts/grokbuild-install-update.sh` → `Contents/Resources/grokbuild-install-update` (in-app upgrade helper)
 - Bundles `agent-desktop` into `Contents/MacOS/` when present on the build machine (CI installs it via npm)
+- Bundles the Cursor OpenAI bridge (`Resources/CursorBridge` + `npm install`, including `cursor-bridge-auth.mjs` / validate-key script; excludes `*.test.mjs`) into `Contents/Resources/CursorBridge` when Node ≥ 22.13 is available (`scripts/bundle-cursor-bridge.sh`)
 
 ## Scripts
 

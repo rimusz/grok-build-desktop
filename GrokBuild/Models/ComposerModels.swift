@@ -310,6 +310,17 @@ enum AttachmentPromptBuilder {
         }
         return "Attached files:\n" + paths.map { "- \($0)" }.joined(separator: "\n")
     }
+
+    /// A short note describing attached vision images (the actual pixels ride as ACP image
+    /// content blocks; this just makes the transcript/prompt self-describing).
+    static func imageNote(from images: [ImageAttachment]) -> String? {
+        guard !images.isEmpty else { return nil }
+        let names = images.map(\.displayName)
+        if names.count == 1 {
+            return "Attached image: \(names[0])"
+        }
+        return "Attached images: " + names.joined(separator: ", ")
+    }
 }
 
 struct ExitPlanRequest: Identifiable, Hashable, @unchecked Sendable {

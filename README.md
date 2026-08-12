@@ -49,6 +49,9 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 - Streaming agent sessions for `grok agent stdio` with Markdown, thinking blocks, live tool cards, permission prompts, plan/question cards, and diff review.
 - Multi-tab sessions with lazy restore, resumable grok sessions, a session browser, and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
+- **Session status badges** on the sidebar — working, needs-input, finished-unread, or error — cleared when you focus the session, so parallel tabs show which one needs you.
+- **Steer mid-turn** — send a prompt while grok is working to inject it into the running turn instead of queueing (grok never cancels the turn). Turn it on for every send with **Settings → App → Steer by default**, or pick **Steer into current turn** from the queue menu.
+- **Sound on finish** — optionally chime when a turn ends and GrokBuild is not focused (**Settings → App**).
 - Composer controls for model, mode, context usage, voice dictation, file attachments, slash-command autocomplete, **skill chips** (`/design`, `/review`, …), **research/workflow chips** (`/deep-research`, `/create-workflow`), **imagine chips**, `/goal` with optional budget, prompt queue while streaming, and session dashboard.
 - Guided empty state with quick-start prompts; use **Clear** on an Empty session to remove it from the tab strip.
 
@@ -58,7 +61,9 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 - Per-tab **model** selection and per-project **reasoning effort**.
 - Git branch/worktree management from the session status row.
 - `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
-- **Custom models (standalone)** — OpenAI-compatible providers and models in **Settings → Models**, written to `~/.grok/config.toml`. Usable on its own (no project/session); models are then available in the grok CLI/TUI and in GrokBuild sessions.
+- **Custom models (standalone)** — OpenAI-compatible providers and models in **Settings → Models**, written to `~/.grok/config.toml`. Usable on its own (no project/session); models are then available in the grok CLI/TUI and in GrokBuild sessions. Each model can set an **API backend** (Chat Completions / Responses / Anthropic Messages) and an optional **env key** so the secret stays out of the file.
+- **Cursor models via a local bridge** — in **Settings → Models → Add Provider**, install **Cursor**, paste a [Cursor API key](https://cursor.com/dashboard?tab=integrations) (stored locally under Application Support, not in config.toml — models keep a placeholder `api_key`), and save. Save stays disabled without a key; GrokBuild validates the key with Cursor before saving or starting the local OpenAI `/v1` sidecar on port `18787` (bundled Node/`@cursor/sdk`; the sidecar uses that saved key for Cursor, not grok's xAI session token; Cursor IDE need not be open; system Node ≥ 22.13 required — Settings and Doctor suggest Homebrew or nodejs.org if missing). Fetch the catalog, then **Add model** (same as other providers; display names like **Cursor Composer 2.5**). Grok routes inference to the bridge while keeping its own tools. Cursor's subscription/ToS is your responsibility. Unrelated to **Settings → Compatibility → Cursor** (rules/skills) and the Computer Use Cursor MCP.
+- **Doctor** — **Settings → App → Open Doctor…** checks the grok CLI path, version, authentication, `config.toml`, Browser/Computer Use readiness, Node.js (≥ 22.13 for the Cursor bridge), and (optionally) whether a local Cursor bridge is reachable, with one-click paths to install the CLI, run `grok login`, or install Node (Homebrew / nodejs.org).
 
 ### Agent Capabilities
 
