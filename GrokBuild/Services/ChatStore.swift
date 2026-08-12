@@ -828,15 +828,19 @@ final class ChatStore {
                 return false
             }
             if !fromQueue {
+                // Fold attachment notes into the payload and clear chips so they cannot stick
+                // to a later send. Mid-turn steer/queue is text-only (no ACP image blocks).
+                let payload = consumeComposerAttachments(into: trimmed)
+                guard !payload.isEmpty else { return false }
                 // Steer the running turn when enabled, otherwise queue for after it.
                 let decision = SteerDecision.resolve(
                     isStreaming: true,
                     steerByDefault: Self.steerByDefaultEnabled
                 )
-                if decision == .steer, steerRunningTurn(trimmed) {
+                if decision == .steer, steerRunningTurn(payload) {
                     return true
                 }
-                enqueuePrompt(trimmed)
+                enqueuePrompt(payload)
                 return true
             }
             lastError = "Wait for the current response to finish."
@@ -865,23 +869,16 @@ final class ChatStore {
         isGrokking = true
         turnStartedAt = Date()
 
-        if let attachmentBlock = AttachmentPromptBuilder.build(from: fileAttachments) {
-            trimmed = trimmed.isEmpty ? attachmentBlock : "\(attachmentBlock)\n\n\(trimmed)"
-        }
         let promptImages = imageAttachments.map {
             PromptImageContent(mimeType: $0.mimeType, base64: $0.base64)
         }
-        if let imageNote = AttachmentPromptBuilder.imageNote(from: imageAttachments) {
-            trimmed = trimmed.isEmpty ? imageNote : "\(trimmed)\n\n\(imageNote)"
-        }
+        trimmed = consumeComposerAttachments(into: trimmed)
         if let goalCommand = GoalCommand.parse(from: trimmed) {
             SessionGoalStateMutation.apply(goalCommand, to: &goalState)
         }
         if trimmed.lowercased().hasPrefix("/btw") {
             pendingBtw = true
         }
-        fileAttachments.removeAll()
-        imageAttachments.removeAll()
 
         let userMsg = Message(role: .user, content: trimmed)
         messages.append(userMsg)
@@ -1032,6 +1029,22 @@ final class ChatStore {
     func cancelQuestion(_ request: QuestionRequest) {
         process.respondToQuestionCancelled(request.id.base)
         pendingQuestions.removeAll { $0.id == request.id }
+    }
+
+    /// Folds visible file/image attachment notes into `text` and clears the chips so they
+    /// cannot stick to a later send (critical on the mid-turn steer/queue path).
+    @discardableResult
+    private func consumeComposerAttachments(into text: String) -> String {
+        var payload = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let attachmentBlock = AttachmentPromptBuilder.build(from: fileAttachments) {
+            payload = payload.isEmpty ? attachmentBlock : "\(attachmentBlock)\n\n\(payload)"
+        }
+        if let imageNote = AttachmentPromptBuilder.imageNote(from: imageAttachments) {
+            payload = payload.isEmpty ? imageNote : "\(payload)\n\n\(imageNote)"
+        }
+        fileAttachments.removeAll()
+        imageAttachments.removeAll()
+        return payload
     }
 
     func addFileAttachment(path: String) {

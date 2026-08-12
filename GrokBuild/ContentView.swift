@@ -33,8 +33,10 @@ struct ContentView: View {
     @State private var showDoctor = false
     /// Session tabs with a finished-but-unseen reply (cleared on focus). Drives the sidebar badge.
     @State private var unreadSessionIDs: Set<UUID> = []
-    /// Last message count observed per session, used to detect new background replies.
+    /// Last message count observed per session (secondary unread signal).
     @State private var lastSeenMessageCounts: [UUID: Int] = [:]
+    /// Prior `isStreaming` per session — primary unread signal (true → false while unfocused).
+    @State private var lastSeenStreaming: [UUID: Bool] = [:]
     @State private var showPreview = false
     @State private var gitCheckoutRequest: GitCheckoutRequest?
     @State private var gitError: String?
@@ -226,16 +228,23 @@ struct ContentView: View {
             showDoctor = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { _ in
-            // Mark background sessions whose transcript grew (a reply landed) as unread.
+            // Mark background sessions that finished a turn (or grew while idle) as unread.
             for session in liveSessions {
                 let count = session.store.messages.count
-                let previous = lastSeenMessageCounts[session.id] ?? 0
+                let previousCount = lastSeenMessageCounts[session.id] ?? 0
+                let wasStreaming = lastSeenStreaming[session.id] ?? false
+                let isStreaming = session.store.isStreaming
                 if session.id == selectedSessionID {
                     unreadSessionIDs.remove(session.id)
-                } else if count > previous, !session.store.isStreaming {
+                } else if BackgroundSessionUnread.shouldMark(
+                    wasStreaming: wasStreaming,
+                    isStreaming: isStreaming,
+                    messageCountGrew: count > previousCount
+                ) {
                     unreadSessionIDs.insert(session.id)
                 }
                 lastSeenMessageCounts[session.id] = count
+                lastSeenStreaming[session.id] = isStreaming
             }
         }
         .sheet(item: $gitCheckoutRequest) { request in

@@ -88,3 +88,20 @@ enum SessionStatusResolver {
         return .idle
     }
 }
+
+/// When a background tab should get a finished-unread badge after a `.liveSessionMessagesChanged`.
+///
+/// Prefer streaming `true → false`: the assistant placeholder message is created at turn start,
+/// so `messages.count` often does not grow on completion.
+enum BackgroundSessionUnread {
+    static func shouldMark(
+        wasStreaming: Bool,
+        isStreaming: Bool,
+        messageCountGrew: Bool
+    ) -> Bool {
+        if wasStreaming && !isStreaming { return true }
+        if messageCountGrew && !isStreaming { return true }
+        return false
+    }
+}
+

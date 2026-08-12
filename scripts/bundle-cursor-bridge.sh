@@ -21,9 +21,11 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     exit 0
 fi
 
-NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-if [ "${NODE_MAJOR}" -lt 22 ]; then
-    echo "WARNING: Node ${NODE_MAJOR} is too old for @cursor/sdk (need ≥ 22.13); skipping Cursor bridge bundle." >&2
+NODE_VERSION="$(node -p "process.versions.node" 2>/dev/null || echo 0.0.0)"
+NODE_MAJOR="$(printf '%s' "$NODE_VERSION" | awk -F. '{print $1+0}')"
+NODE_MINOR="$(printf '%s' "$NODE_VERSION" | awk -F. '{print $2+0}')"
+if [ "${NODE_MAJOR}" -lt 22 ] || { [ "${NODE_MAJOR}" -eq 22 ] && [ "${NODE_MINOR}" -lt 13 ]; }; then
+    echo "WARNING: Node ${NODE_VERSION} is too old for @cursor/sdk (need ≥ 22.13); skipping Cursor bridge bundle." >&2
     exit 0
 fi
 

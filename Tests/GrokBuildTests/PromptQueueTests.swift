@@ -52,4 +52,27 @@ final class PromptQueueTests: XCTestCase {
         XCTAssertFalse(ok)
         XCTAssertFalse(store.isPendingShareURLCaptureForTests)
     }
+
+    func testMidTurnSendClearsAttachmentsAndQueuesNotes() async {
+        let store = ChatStore(process: GrokProcess())
+        let workspace = Workspace(name: "demo", path: URL(fileURLWithPath: "/tmp/demo-midturn"))
+        store.prepare(workspace: workspace)
+        store.setStreamingForTests(true)
+        UserDefaults.standard.set(false, forKey: GrokSettingsKeys.steerByDefault)
+
+        store.addImageAttachment(
+            data: Data([0x89, 0x50, 0x4E, 0x47]),
+            mimeType: "image/png",
+            displayName: "shot.png"
+        )
+        XCTAssertFalse(store.imageAttachments.isEmpty)
+
+        let ok = await store.send("follow up")
+        XCTAssertTrue(ok)
+        XCTAssertTrue(store.imageAttachments.isEmpty)
+        XCTAssertTrue(store.fileAttachments.isEmpty)
+        XCTAssertEqual(store.promptQueue.count, 1)
+        XCTAssertTrue(store.promptQueue[0].contains("follow up"))
+        XCTAssertTrue(store.promptQueue[0].contains("Attached image: shot.png"))
+    }
 }

@@ -45,6 +45,42 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertFalse(SessionActivityStatus.idle.demandsAttention)
     }
 
+    // MARK: - Background unread detection
+
+    func testBackgroundUnreadMarksOnStreamingEndEvenWithoutMessageGrowth() {
+        XCTAssertTrue(
+            BackgroundSessionUnread.shouldMark(
+                wasStreaming: true,
+                isStreaming: false,
+                messageCountGrew: false
+            )
+        )
+    }
+
+    func testBackgroundUnreadMarksOnMessageGrowthWhenIdle() {
+        XCTAssertTrue(
+            BackgroundSessionUnread.shouldMark(
+                wasStreaming: false,
+                isStreaming: false,
+                messageCountGrew: true
+            )
+        )
+        XCTAssertFalse(
+            BackgroundSessionUnread.shouldMark(
+                wasStreaming: false,
+                isStreaming: true,
+                messageCountGrew: true
+            )
+        )
+        XCTAssertFalse(
+            BackgroundSessionUnread.shouldMark(
+                wasStreaming: false,
+                isStreaming: false,
+                messageCountGrew: false
+            )
+        )
+    }
+
     // MARK: - Steer decision
 
     func testSteerDecisionRespectsDefaultWhenStreaming() {

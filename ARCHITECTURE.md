@@ -563,13 +563,13 @@ grok's **Rhai workflow engine** (`.grok/workflows/`, `/workflow`, `/workflows`) 
 
 ### Prompt queue + Steer (mid-turn)
 
-While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Steer into current turn` when streaming, `Send now`, `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped.
+While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Steer into current turn` when streaming, `Send now`, `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped. Mid-turn steer/queue folds file/image chip notes into the text via `consumeComposerAttachments` and clears the chips so they cannot stick to a later prompt (vision pixels are text-noted only on that path — ACP image blocks apply to non-streaming sends).
 
 **Steer** injects a prompt into the *running* turn without cancelling it (grok never cancels on new input). `SteerDecision.resolve(isStreaming:steerByDefault:explicitSteer:)` (in `GrokCLIService.swift`) is the pure decision; `ChatStore.steerRunningTurn` / `steerQueuedPromptNow` append the user message and call `GrokProcess.steer(_:)` (fire-and-forget `session/prompt`, id untracked). The **Steer by default** app setting (`GrokSettingsKeys.steerByDefault`, Settings → App) makes a mid-turn composer send steer instead of queue.
 
 ### Session status + unread badges
 
-`SessionActivityStatus` (`Services/SessionStatus.swift`): `idle` / `working` / `needsInput` / `finishedUnread` / `error`, resolved by the pure `SessionStatusResolver.resolve(SessionStatusInputs)`. `ChatStore.activityStatus(hasUnreadCompletion:)` feeds `SidebarSession.status` (dot badge in `SessionSidebarRow`). Unread is tracked in `ContentView` (`unreadSessionIDs` / `lastSeenMessageCounts`): a background session whose transcript grows on `.liveSessionMessagesChanged` is marked unread; focusing it (`selectSession`) clears it.
+`SessionActivityStatus` (`Services/SessionStatus.swift`): `idle` / `working` / `needsInput` / `finishedUnread` / `error`, resolved by the pure `SessionStatusResolver.resolve(SessionStatusInputs)`. `ChatStore.activityStatus(hasUnreadCompletion:)` feeds `SidebarSession.status` (dot badge in `SessionSidebarRow`). Unread is tracked in `ContentView` (`unreadSessionIDs` / `lastSeenStreaming` / `lastSeenMessageCounts`) via `BackgroundSessionUnread.shouldMark`: prefer streaming `true → false` on `.liveSessionMessagesChanged` (assistant placeholder is created at turn start, so message count often does not grow on completion); focusing (`selectSession`) clears unread.
 
 ### Turn-completion sound
 
