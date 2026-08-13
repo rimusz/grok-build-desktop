@@ -213,12 +213,15 @@ final class CompetitiveUXTests: XCTestCase {
     }
 
     func testNodeTLSRewritesZscalerNetworkFailure() {
-        let message = CursorBridge.NodeTLS.userFacingRejection("Network request failed")
+        let original = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
+        let message = CursorBridge.NodeTLS.userFacingRejection(original)
+        XCTAssertTrue(message.hasPrefix(original))
         XCTAssertTrue(message.contains("Zscaler"))
         XCTAssertTrue(message.contains("IT-Certs/package-route.pem"))
         XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection("Invalid User API Key"), "Invalid User API Key")
-        let result = CursorBridge.validationResult(exitCode: 1, stderr: "Network request failed")
+        let result = CursorBridge.validationResult(exitCode: 1, stderr: original)
         XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.message.contains("UND_ERR_CONNECT_TIMEOUT"))
         XCTAssertTrue(result.message.contains("Zscaler"))
     }
 

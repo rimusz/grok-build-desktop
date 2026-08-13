@@ -123,13 +123,14 @@ enum CursorBridge {
             environment[extraCACertsKey] = path
         }
 
-        /// Rewrites the generic Node fetch error into an actionable TLS-proxy hint.
+        /// Appends a TLS-proxy hint when Node reports a generic fetch failure.
         static func userFacingRejection(_ stderr: String) -> String {
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.localizedCaseInsensitiveContains("Network request failed") else {
                 return trimmed
             }
-            return "Network request failed (corporate TLS proxy such as Zscaler). Node does not use the macOS keychain — GrokBuild looks for ~/IT-Certs/package-route.pem or NODE_EXTRA_CA_CERTS / GROKBUILD_NODE_EXTRA_CA_CERTS."
+            let hint = "Corporate TLS proxy such as Zscaler: Node does not use the macOS keychain — GrokBuild looks for ~/IT-Certs/package-route.pem or NODE_EXTRA_CA_CERTS / GROKBUILD_NODE_EXTRA_CA_CERTS."
+            return "\(trimmed)\n\(hint)"
         }
     }
 
