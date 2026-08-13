@@ -698,7 +698,44 @@ final class CompetitiveUXTests: XCTestCase {
             DashboardGrouping.group(DashboardGroupingInputs(scheduledCount: 1)),
             .scheduled
         )
-        XCTAssertEqual(DashboardGrouping.group(DashboardGroupingInputs()), .idle)
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs()),
+            .idle
+        )
+    }
+
+    func testDashboardSectionOrderMatchesGroupingPriority() {
+        XCTAssertEqual(
+            SessionDashboardEntry.Group.sectionOrder,
+            [.needsYou, .failed, .working, .needsReview, .scheduled, .idle]
+        )
+        XCTAssertEqual(
+            SessionDashboardEntry.Group.sectionOrder,
+            Array(SessionDashboardEntry.Group.allCases)
+        )
+    }
+
+    func testDashboardGitRefreshSkipsOtherProjectsAndDedupesPaths() {
+        let current = UUID()
+        let other = UUID()
+        let shared = URL(fileURLWithPath: "/tmp/project")
+        let worktree = URL(fileURLWithPath: "/tmp/project-review")
+        let paths = DashboardGitRefresh.uniquePaths(
+            sessions: [
+                (current, shared),
+                (current, shared),
+                (current, worktree),
+                (other, URL(fileURLWithPath: "/tmp/other")),
+            ],
+            currentWorkspaceID: current
+        )
+        XCTAssertEqual(paths.map(\.path), [shared.path, worktree.path])
+        XCTAssertTrue(
+            DashboardGitRefresh.uniquePaths(
+                sessions: [(current, shared)],
+                currentWorkspaceID: nil
+            ).isEmpty
+        )
     }
 
     func testDashboardScopeIsCurrentProjectOnly() {
@@ -833,6 +870,10 @@ final class CompetitiveUXTests: XCTestCase {
         )
         XCTAssertEqual(DashboardTitle.display("  "), DashboardTitle.untitled)
         XCTAssertEqual(DashboardTitle.display("whats up?"), "whats up?")
+        XCTAssertEqual(DashboardTitle.display("<html> table"), "<html> table")
+        XCTAssertEqual(DashboardTitle.display("<3 thanks"), "<3 thanks")
+        XCTAssertFalse(DashboardTitle.isPromptDump("<html>"))
+        XCTAssertTrue(DashboardTitle.isPromptDump("<user_info> OS Version: macos"))
         XCTAssertEqual(DashboardTitle.compactRole("Default (grok build)"), "Default")
         XCTAssertEqual(DashboardTitle.compactRole("researcher"), "researcher")
         let long = String(repeating: "word ", count: 20)

@@ -52,6 +52,28 @@ enum DashboardScope {
     }
 }
 
+/// Git snapshot paths for the open dashboard — current project only, de-duplicated by path.
+enum DashboardGitRefresh {
+    static func uniquePaths(
+        sessions: [(workspaceID: UUID, path: URL)],
+        currentWorkspaceID: UUID?
+    ) -> [URL] {
+        var seen = Set<String>()
+        var result: [URL] = []
+        for session in sessions {
+            guard DashboardScope.isInCurrentProject(
+                sessionWorkspaceID: session.workspaceID,
+                currentWorkspaceID: currentWorkspaceID
+            ) else { continue }
+            let url = session.path.standardizedFileURL
+            if seen.insert(url.path).inserted {
+                result.append(url)
+            }
+        }
+        return result
+    }
+}
+
 /// LRU eviction for live `grok agent stdio` processes.
 ///
 /// Keeps the selected tab, the MRU window, any mid-turn session, and any session that owns
@@ -152,10 +174,10 @@ enum DashboardTitle {
     }
 
     /// Injected Cursor/grok context banners, not a real user prompt. Shared with `SessionTitle.auto`.
+    /// Does not treat ordinary text that merely starts with `<` (`<html>`, `<3`) as a dump.
     static func isPromptDump(_ text: String) -> Bool {
         let lower = text.lowercased()
-        if text.hasPrefix("<") { return true }
-        if lower.hasPrefix("user_info") { return true }
+        if lower.hasPrefix("<user_info") || lower.hasPrefix("user_info") { return true }
         if lower.contains("os version:") && lower.contains("workspace path") { return true }
         return false
     }

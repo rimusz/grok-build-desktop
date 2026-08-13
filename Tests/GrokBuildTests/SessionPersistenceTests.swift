@@ -66,6 +66,14 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(SessionTitle.auto(from: messages), "whats up?")
     }
 
+    func testSessionTitleKeepsAngleBracketPromptsThatAreNotDumps() {
+        let messages = [
+            Message(role: .user, content: "<html> table layout"),
+            Message(role: .assistant, content: "ok"),
+        ]
+        XCTAssertEqual(SessionTitle.auto(from: messages), "<html> table layout")
+    }
+
     func testSessionTitleReturnsNilWhenOnlyPromptDumps() {
         let messages = [
             Message(role: .user, content: "<user_info> OS Version: macos Workspace Path: /tmp"),

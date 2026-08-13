@@ -1251,7 +1251,6 @@ struct ContentView: View {
         }
         let agent = spec.agent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let id = await createLiveSession(for: workspace, title: spec.name, agent: agent)
-        renameSession(id: id, to: spec.name)
         await refreshDashboardGit()
         return id
     }
@@ -1266,14 +1265,13 @@ struct ContentView: View {
     }
 
     private func refreshDashboardGit() async {
-        var uniquePaths: [String: URL] = [:]
-        for session in liveSessions {
-            let url = session.workspace.path.standardizedFileURL
-            uniquePaths[url.path] = url
-        }
+        let paths = DashboardGitRefresh.uniquePaths(
+            sessions: liveSessions.map { ($0.workspace.id, $0.workspace.path) },
+            currentWorkspaceID: currentWorkspace?.id
+        )
         var snapshots: [String: DashboardGitSnapshot] = [:]
-        for (path, url) in uniquePaths {
-            snapshots[path] = await GitService.dashboardSnapshot(at: url)
+        for url in paths {
+            snapshots[url.path] = await GitService.dashboardSnapshot(at: url)
         }
         dashboardGitByPath = snapshots
         sessionListRevision &+= 1

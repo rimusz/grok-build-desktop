@@ -10,11 +10,16 @@ enum SessionsDashboardCopy {
 struct SessionDashboardEntry: Identifiable, Hashable, Sendable {
     enum Group: String, CaseIterable, Sendable {
         case needsYou
-        case needsReview
+        case failed
         case working
+        case needsReview
         case scheduled
         case idle
-        case failed
+
+        /// Same order as grouping priority so Failed is not buried under Idle.
+        static let sectionOrder: [Group] = [
+            .needsYou, .failed, .working, .needsReview, .scheduled, .idle,
+        ]
 
         var title: String {
             switch self {
@@ -80,7 +85,7 @@ struct SessionDashboardPanel: View {
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
-                            ForEach(SessionDashboardEntry.Group.allCases, id: \.self) { group in
+                            ForEach(SessionDashboardEntry.Group.sectionOrder, id: \.self) { group in
                                 let groupEntries = entries.filter { $0.group == group }
                                 if !groupEntries.isEmpty {
                                     section(group, entries: groupEntries)
