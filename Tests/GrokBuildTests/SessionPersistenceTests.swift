@@ -57,6 +57,35 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertNil(SessionTitle.auto(from: [Message(role: .user, content: "   \n\t  ")]))
     }
 
+    func testSessionTitleSkipsPromptDumpAndUsesNextUserMessage() {
+        let messages = [
+            Message(role: .user, content: "<user_info> OS Version: macos Shell: /bin/zsh Workspace Path: /tmp"),
+            Message(role: .assistant, content: "ok"),
+            Message(role: .user, content: "whats up?"),
+        ]
+        XCTAssertEqual(SessionTitle.auto(from: messages), "whats up?")
+    }
+
+    func testSessionTitleKeepsAngleBracketPromptsThatAreNotDumps() {
+        let messages = [
+            Message(role: .user, content: "<html> table layout"),
+            Message(role: .assistant, content: "ok"),
+        ]
+        XCTAssertEqual(SessionTitle.auto(from: messages), "<html> table layout")
+    }
+
+    func testSessionTitleReturnsNilWhenOnlyPromptDumps() {
+        let messages = [
+            Message(role: .user, content: "<user_info> OS Version: macos Workspace Path: /tmp"),
+            Message(role: .user, content: "OS Version: macos\nWorkspace Path: /tmp"),
+        ]
+        XCTAssertNil(SessionTitle.auto(from: messages))
+        XCTAssertEqual(
+            DashboardTitle.display("<user_info> OS Version: macos Workspace Path: /tmp"),
+            DashboardTitle.untitled
+        )
+    }
+
     func testSavedSessionRecordCodablePreservesGrokIDAndTitle() throws {
         let workspaceID = UUID()
         let sessionID = UUID()

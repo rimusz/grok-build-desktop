@@ -2296,7 +2296,7 @@ private struct ComputerUseSettingsPane: View {
     private var permissionsCard: some View {
         computerSettingsCard(title: "3. macOS Permissions", systemImage: permissionStatus.isReady ? "lock.open.fill" : "lock.shield.fill", tint: permissionsTint) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Computer Use cannot be enabled from the chat until required permissions are ready.")
+                Text("Computer Use cannot be enabled until required permissions are ready.")
                     .foregroundStyle(.secondary)
 
                 permissionRow(

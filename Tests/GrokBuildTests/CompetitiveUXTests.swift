@@ -656,4 +656,291 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(decoded.pinnedSessionIDs, [])
     }
 
+    // MARK: - Dashboard grouping
+
+    func testDashboardNeedsYouWinsOverDirtyAndFailed() {
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(
+                isFailed: true,
+                pendingUserCount: 1,
+                dirtyCount: 3
+            )),
+            .needsYou
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(hasUnreadCompletion: true, dirtyCount: 2)),
+            .needsYou
+        )
+    }
+
+    func testDashboardFailedThenWorkingThenReviewThenScheduled() {
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(isFailed: true)),
+            .failed
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(isStreaming: true, dirtyCount: 4, scheduledCount: 1)),
+            .working
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(isStarting: true)),
+            .working
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(isBusy: true)),
+            .working
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(dirtyCount: 2, scheduledCount: 1)),
+            .needsReview
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs(scheduledCount: 1)),
+            .scheduled
+        )
+        XCTAssertEqual(
+            DashboardGrouping.group(DashboardGroupingInputs()),
+            .idle
+        )
+    }
+
+    func testDashboardSectionOrderMatchesGroupingPriority() {
+        XCTAssertEqual(
+            SessionDashboardEntry.Group.sectionOrder,
+            [.needsYou, .failed, .working, .needsReview, .scheduled, .idle]
+        )
+        XCTAssertEqual(
+            SessionDashboardEntry.Group.sectionOrder,
+            Array(SessionDashboardEntry.Group.allCases)
+        )
+    }
+
+    func testDashboardGitRefreshSkipsOtherProjectsAndDedupesPaths() {
+        let current = UUID()
+        let other = UUID()
+        let shared = URL(fileURLWithPath: "/tmp/project")
+        let worktree = URL(fileURLWithPath: "/tmp/project-review")
+        let paths = DashboardGitRefresh.uniquePaths(
+            sessions: [
+                (current, shared),
+                (current, shared),
+                (current, worktree),
+                (other, URL(fileURLWithPath: "/tmp/other")),
+            ],
+            currentWorkspaceID: current
+        )
+        XCTAssertEqual(paths.map(\.path), [shared.path, worktree.path])
+        XCTAssertTrue(
+            DashboardGitRefresh.uniquePaths(
+                sessions: [(current, shared)],
+                currentWorkspaceID: nil
+            ).isEmpty
+        )
+    }
+
+    func testDashboardScopeIsCurrentProjectOnly() {
+        let current = UUID()
+        let other = UUID()
+        XCTAssertTrue(DashboardScope.isInCurrentProject(
+            sessionWorkspaceID: current,
+            currentWorkspaceID: current
+        ))
+        XCTAssertFalse(DashboardScope.isInCurrentProject(
+            sessionWorkspaceID: other,
+            currentWorkspaceID: current
+        ))
+        XCTAssertFalse(DashboardScope.isInCurrentProject(
+            sessionWorkspaceID: current,
+            currentWorkspaceID: nil
+        ))
+    }
+
+    // MARK: - LRU pin for scheduled sessions
+
+    func testConnectionCapKeepsSelectedMRUBusyIdleAndScheduled() {
+        let selected = UUID()
+        let mru = UUID()
+        let scheduled = UUID()
+        let busy = UUID()
+        let idle = UUID()
+        let ready = UUID()
+        let recent = [selected, mru]
+
+        XCTAssertFalse(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: selected,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .ready,
+                hasScheduledTasks: false
+            )
+        )
+        XCTAssertFalse(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: mru,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .ready,
+                hasScheduledTasks: false
+            )
+        )
+        XCTAssertFalse(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: scheduled,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .ready,
+                hasScheduledTasks: true
+            )
+        )
+        XCTAssertFalse(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: busy,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .busy,
+                hasScheduledTasks: false
+            )
+        )
+        XCTAssertFalse(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: idle,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .idle,
+                hasScheduledTasks: false
+            )
+        )
+        XCTAssertTrue(
+            ConnectionCapPolicy.shouldEvict(
+                sessionID: ready,
+                selectedSessionID: selected,
+                recentOrder: recent,
+                maxConnected: 2,
+                connectionState: .ready,
+                hasScheduledTasks: false
+            )
+        )
+    }
+
+    // MARK: - Named parallel session helpers
+
+    func testParallelSessionSlugAndWorktreeDefaults() {
+        XCTAssertEqual(ParallelSessionNaming.slug("Review Bot!"), "review-bot")
+        XCTAssertEqual(ParallelSessionNaming.defaultBranch(fromName: "Review Bot"), "review-bot")
+        XCTAssertEqual(ParallelSessionNaming.defaultBranch(fromName: "   "), "session")
+        XCTAssertFalse(ParallelSessionNaming.isValidName("  "))
+        XCTAssertTrue(ParallelSessionNaming.isValidName("Reviewer"))
+        XCTAssertTrue(ParallelSessionNaming.isValidWorktree(branch: "feat", path: "/tmp/wt"))
+        XCTAssertFalse(ParallelSessionNaming.isValidWorktree(branch: "", path: "/tmp/wt"))
+        XCTAssertTrue(ParallelSessionNaming.isValidAutomation(interval: "1h", prompt: "triage"))
+        XCTAssertFalse(ParallelSessionNaming.isValidAutomation(interval: "1h", prompt: " "))
+
+        let project = URL(fileURLWithPath: "/Users/me/code/app")
+        XCTAssertEqual(
+            ParallelSessionNaming.defaultWorktreePath(projectPath: project, name: "Reviewer"),
+            "/Users/me/code/app-reviewer"
+        )
+    }
+
+    func testParallelSessionAndAutomationCopyExplainPurpose() {
+        XCTAssertTrue(ParallelSessionCopy.summary.contains("two sessions"))
+        XCTAssertTrue(ParallelSessionCopy.summary.contains("one-click"))
+        XCTAssertTrue(ParallelSessionCopy.workspaceCaption.contains("worktree"))
+        XCTAssertEqual(ParallelSessionCopy.windowTitle, "New Parallel Session")
+        XCTAssertTrue(AutomationCopy.summary.contains("/loop"))
+        XCTAssertTrue(AutomationCopy.limitation.contains("Quit"))
+        XCTAssertEqual(AutomationCopy.windowTitle, "New Automation")
+    }
+
+    func testStringNilIfEmpty() {
+        XCTAssertNil("  ".nilIfEmpty)
+        XCTAssertEqual("role".nilIfEmpty, "role")
+    }
+
+    func testDashboardTitleSanitizesPromptDumpsAndCompactsRoles() {
+        XCTAssertEqual(
+            DashboardTitle.display("<user_info> OS Version: macos Shell: /bin/zsh Workspace Path:…"),
+            DashboardTitle.untitled
+        )
+        XCTAssertEqual(DashboardTitle.display("  "), DashboardTitle.untitled)
+        XCTAssertEqual(DashboardTitle.display("whats up?"), "whats up?")
+        XCTAssertEqual(DashboardTitle.display("<html> table"), "<html> table")
+        XCTAssertEqual(DashboardTitle.display("<3 thanks"), "<3 thanks")
+        XCTAssertFalse(DashboardTitle.isPromptDump("<html>"))
+        XCTAssertTrue(DashboardTitle.isPromptDump("<user_info> OS Version: macos"))
+        XCTAssertEqual(DashboardTitle.compactRole("Default (grok build)"), "Default")
+        XCTAssertEqual(DashboardTitle.compactRole("researcher"), "researcher")
+        let long = String(repeating: "word ", count: 20)
+        let displayed = DashboardTitle.display(long)
+        XCTAssertTrue(displayed.hasSuffix("…"))
+        XCTAssertLessThanOrEqual(displayed.count, DashboardTitle.maxCharacters + 1)
+    }
+
+    func testGitServiceReadsCurrentBranchFromHead() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("grokbuild-head-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        try fm.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        try "ref: refs/heads/feature/status-split\n".write(
+            to: root.appendingPathComponent(".git/HEAD"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(GitService.currentBranch(in: root), "feature/status-split")
+
+        try "abc123def456\n".write(
+            to: root.appendingPathComponent(".git/HEAD"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(GitService.currentBranch(in: root), "abc123d")
+    }
+
+    // MARK: - Auto accept (CLI yolo)
+
+    func testAutoAcceptModeLabelsHideYolo() {
+        XCTAssertEqual(AgentMode.yolo.displayName, "Auto accept")
+        XCTAssertTrue(AgentMode.yolo.isAutoAccept)
+        XCTAssertEqual(AgentMode.agent.displayName, "Agent")
+        XCTAssertEqual(AgentMode.plan.displayName, "Plan")
+        XCTAssertFalse(AgentMode.agent.isAutoAccept)
+        XCTAssertEqual(AgentMode(rawValue: "default").displayName, "Agent")
+        XCTAssertEqual(AgentMode.yolo.systemImage, "bolt.fill")
+    }
+
+    func testPermissionAutoApprovePrefersAllowAlways() {
+        let options = [
+            PermissionOption(id: "reject", kind: "reject_once", name: "Reject"),
+            PermissionOption(id: "once", kind: "allow_once", name: "Allow once"),
+            PermissionOption(id: "always", kind: "allow_always", name: "Allow always"),
+        ]
+        XCTAssertEqual(PermissionAutoApprove.preferredOption(in: options)?.id, "always")
+    }
+
+    func testPermissionAutoApproveFallsBackToAllowOnce() {
+        let options = [
+            PermissionOption(id: "reject", kind: "reject_once", name: "Reject"),
+            PermissionOption(id: "once", kind: "allow_once", name: "Allow once"),
+        ]
+        XCTAssertEqual(PermissionAutoApprove.preferredOption(in: options)?.id, "once")
+    }
+
+    func testPermissionAutoApproveIgnoresRejectAlways() {
+        let options = [
+            PermissionOption(id: "reject-always", kind: "reject_always", name: "Reject always"),
+            PermissionOption(id: "once", kind: "allow_once", name: "Allow once"),
+        ]
+        XCTAssertEqual(PermissionAutoApprove.preferredOption(in: options)?.id, "once")
+    }
+
+    func testPermissionAutoApproveEmptyOptions() {
+        XCTAssertNil(PermissionAutoApprove.preferredOption(in: []))
+    }
+
 }

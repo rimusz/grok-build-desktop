@@ -1,5 +1,14 @@
 import SwiftUI
 
+enum SessionsHistoryCopy {
+    static let windowTitle = "Sessions History"
+    static let menuItem = "Sessions History…"
+    static let searchPlaceholder = "Search session history"
+    static let toolbarHelp = "Sessions History"
+    static let emptyTitle = "No session history"
+    static let sidebarOverflowSuffix = "more in Sessions History…"
+}
+
 struct ProjectSessionsGroup: Identifiable {
     let workspace: Workspace
     let sessions: [GrokSessionInfo]
@@ -45,7 +54,7 @@ struct SessionsBrowserPanel: View {
                         .keyboardShortcut(.cancelAction)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Sessions")
+                        Text(SessionsHistoryCopy.windowTitle)
                             .font(.title2.weight(.semibold))
                         Text(headerSubtitle)
                             .font(.caption)
@@ -62,7 +71,7 @@ struct SessionsBrowserPanel: View {
             }
 
             HStack {
-                TextField("Search sessions", text: $query)
+                TextField(SessionsHistoryCopy.searchPlaceholder, text: $query)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit {
                         Task { await loadSessions() }
@@ -115,7 +124,7 @@ struct SessionsBrowserPanel: View {
 
                     if groups.isEmpty && !isLoading {
                         ContentUnavailableView(
-                            "No Sessions",
+                            SessionsHistoryCopy.emptyTitle,
                             systemImage: "clock.arrow.circlepath",
                             description: Text(emptyDescription)
                         )

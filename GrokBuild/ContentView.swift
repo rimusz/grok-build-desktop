@@ -30,6 +30,9 @@ struct ContentView: View {
     @State private var selectedSettingsTab: SettingsTab = .agents
     @State private var showSessions = false
     @State private var showSessionDashboard = false
+    @State private var showParallelSession = false
+    @State private var showNewAutomation = false
+    @State private var dashboardGitByPath: [String: DashboardGitSnapshot] = [:]
     @State private var showDoctor = false
     /// Session tabs with a finished-but-unseen reply (cleared on focus). Drives the sidebar badge.
     @State private var unreadSessionIDs: Set<UUID> = []
@@ -157,21 +160,10 @@ struct ContentView: View {
                         onNewSession: { startNewSessionForCurrentProject() },
                         onAddProject: { showPicker = true },
                         onOpenProjectIn: { openCurrentProject(in: $0) },
-                        onToggleBrowserTools: { toggleBrowserToolsFromChat() },
-                        onSelectBrowserRuntime: { selectBrowserRuntimeFromChat($0) },
-                        onToggleComputerUse: { toggleComputerUseFromChat() },
-                        onOpenBrowserSettings: { openSettings(tab: .browser) },
-                        onOpenComputerUseSettings: { openSettings(tab: .computerUse) },
                         onOpenAgentSettings: { openSettings(tab: .agents) },
-                        onOpenMemorySettings: { openSettings(tab: .memory) },
                         onOpenWorkflowSettings: { openSettings(tab: .workflows) },
                         onForkSession: { Task { await forkCurrentSession() } },
-                        onOpenDashboard: { showSessionDashboard = true },
-                        onSwitchBranch: {
-                            if let workspace = currentWorkspace {
-                                gitCheckoutRequest = GitCheckoutRequest(project: workspace)
-                            }
-                        }
+                        onOpenDashboard: { showSessionDashboard = true }
                     )
                     .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
 
@@ -225,8 +217,52 @@ struct ContentView: View {
             )
         }
         .sheet(isPresented: $showSessionDashboard) {
-            SessionDashboardPanel(entries: dashboardEntries) { sessionID in
-                selectSession(sessionID)
+            SessionDashboardPanel(
+                entries: dashboardEntries,
+                projectName: currentWorkspace?.displayName,
+                projectPath: currentWorkspace?.path.path,
+                onSelect: { sessionID in
+                    selectSession(sessionID)
+                },
+                onOpenPreview: { sessionID in
+                    selectSession(sessionID)
+                    showPreview = true
+                },
+                onNewParallelSession: {
+                    guard currentWorkspace != nil else { return }
+                    showParallelSession = true
+                },
+                onNewAutomation: {
+                    guard currentWorkspace != nil else { return }
+                    showNewAutomation = true
+                }
+            )
+            .task {
+                await refreshDashboardGit()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    await refreshDashboardGit()
+                }
+            }
+            .sheet(isPresented: $showParallelSession) {
+                if let workspace = currentWorkspace {
+                    ParallelSessionSheet(
+                        project: workspace,
+                        isGitRepository: GitService.isRepository(workspace.path)
+                    ) { spec in
+                        Task { await createNamedSession(spec, in: workspace) }
+                    }
+                }
+            }
+            .sheet(isPresented: $showNewAutomation) {
+                if let workspace = currentWorkspace {
+                    AutomationSheet(
+                        project: workspace,
+                        isGitRepository: GitService.isRepository(workspace.path)
+                    ) { spec in
+                        Task { await createAutomation(spec, in: workspace) }
+                    }
+                }
             }
         }
         .sheet(isPresented: $showDoctor) {
@@ -360,39 +396,45 @@ struct ContentView: View {
 
     private var dashboardEntries: [SessionDashboardEntry] {
         _ = sessionListRevision
-        return liveSessions.map { session in
+        let workspaceID = currentWorkspace?.id
+        return liveSessions.compactMap { session in
+            guard DashboardScope.isInCurrentProject(
+                sessionWorkspaceID: session.workspace.id,
+                currentWorkspaceID: workspaceID
+            ) else { return nil }
             let store = session.store
             let pending = store.pendingPermissions.count
                 + store.pendingQuestions.count
                 + (store.pendingExitPlan == nil ? 0 : 1)
-            let group: SessionDashboardEntry.Group
-            switch store.connectionState {
-            case .failed:
-                group = .failed
-            case .busy:
-                group = store.isStreaming || pending > 0 ? (pending > 0 ? .needsInput : .working) : .working
-            case .ready:
-                group = pending > 0 ? .needsInput : .idle
-            case .starting:
-                group = .working
-            case .idle:
-                group = .idle
-            }
-            if pending > 0 { return SessionDashboardEntry(
-                id: session.id,
-                title: sessionTitle(for: session),
-                workspaceName: session.workspace.displayName,
-                group: .needsInput,
-                modelName: store.modelDisplayName(store.currentModel),
-                pendingCount: pending
-            ) }
+            let path = session.workspace.path.standardizedFileURL.path
+            let git = dashboardGitByPath[path]
+            let isFailed: Bool = {
+                if case .failed = store.connectionState { return true }
+                return false
+            }()
+            let group = DashboardGrouping.group(DashboardGroupingInputs(
+                isStreaming: store.isStreaming,
+                isStarting: store.connectionState == .starting,
+                isBusy: store.connectionState == .busy,
+                isFailed: isFailed,
+                pendingUserCount: pending,
+                hasUnreadCompletion: session.id != selectedSessionID
+                    && unreadSessionIDs.contains(session.id),
+                dirtyCount: git?.dirtyCount ?? 0,
+                scheduledCount: store.scheduledTasks.count
+            ))
             return SessionDashboardEntry(
                 id: session.id,
                 title: sessionTitle(for: session),
                 workspaceName: session.workspace.displayName,
+                roleName: store.effectiveAgentDisplayName,
                 group: group,
                 modelName: store.modelDisplayName(store.currentModel),
-                pendingCount: pending
+                pendingCount: pending,
+                scheduledCount: store.scheduledTasks.count,
+                isWorktree: git?.isWorktree ?? GitService.isWorktree(at: session.workspace.path),
+                branch: git?.branch ?? GitService.currentBranch(in: session.workspace.path),
+                dirtyCount: git?.dirtyCount ?? 0
             )
         }
     }
@@ -419,51 +461,6 @@ struct ContentView: View {
         )
         await store.startForked(workspace: source.workspace, fromSessionID: grokID)
         await enforceConnectionCap()
-    }
-
-    private func toggleBrowserToolsFromChat() {
-        var settings = BrowserSettingsStore.load()
-        guard AgentBrowserService.browserToolsConfigurationIssue(settings: settings) == nil else {
-            showSettings = true
-            return
-        }
-
-        settings.enabled.toggle()
-        BrowserSettingsStore.save(settings)
-        BrowserSettingsStore.saveApplied(settings)
-
-        Task {
-            await activeStore.reloadConfiguration()
-        }
-    }
-
-    private func selectBrowserRuntimeFromChat(_ runtimeMode: BrowserRuntimeMode) {
-        var settings = BrowserSettingsStore.load()
-        guard AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: runtimeMode) == nil else {
-            return
-        }
-        guard settings.runtimeMode != runtimeMode else { return }
-
-        settings.runtimeMode = runtimeMode
-        BrowserSettingsStore.save(settings)
-        BrowserSettingsStore.saveApplied(settings)
-
-        guard settings.enabled else { return }
-        Task {
-            await activeStore.reloadConfiguration()
-        }
-    }
-
-    private func toggleComputerUseFromChat() {
-        let settings = ComputerUseSettingsStore.load()
-        Task {
-            let result = await ComputerUseService.applyEnabled(!settings.enabled) {
-                await activeStore.reloadConfiguration()
-            }
-            if case .needsSetup = result {
-                showSettings = true
-            }
-        }
     }
 
     private var previewMessage: Message? {
@@ -494,9 +491,9 @@ struct ContentView: View {
         }
         if let saved = sessionLayout.records.first(where: { $0.id == session.id })?.title,
            !saved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return saved
+            return DashboardTitle.display(saved)
         }
-        return session.title
+        return DashboardTitle.display(session.title)
     }
 
     private func renameSession(id: UUID, to name: String) {
@@ -614,7 +611,11 @@ struct ContentView: View {
                                 && unreadSessionIDs.contains(session.id)
                         ),
                         isPinned: sessionLayout.pinnedSessionIDs.contains(session.id),
-                        isWorktree: GitService.isWorktree(at: session.workspace.path)
+                        isWorktree: GitService.isWorktree(at: session.workspace.path),
+                        roleName: session.store.hasExplicitAgent
+                            || !session.store.effectiveAgentSelection.isEmpty
+                            ? session.store.effectiveAgentDisplayName
+                            : ""
                     )
                 )
             }
@@ -1127,15 +1128,20 @@ struct ContentView: View {
     }
 
     /// Tear down grok processes for sessions beyond the MRU cap so the resident footprint
-    /// stays bounded. The selected/most-recent sessions and any actively-working session are kept.
+    /// stays bounded. The selected/most-recent sessions, mid-turn sessions, and sessions
+    /// that own a `/loop` schedule are kept.
     private func enforceConnectionCap() async {
-        let keep = Set(recentSessionOrder.prefix(maxConnectedSessions))
         for index in liveSessions.indices {
             let session = liveSessions[index]
-            if keep.contains(session.id) || session.id == selectedSessionID { continue }
-            // Skip sessions with no live process, and never interrupt one mid-turn.
-            guard session.store.connectionState != .idle,
-                  session.store.connectionState != .busy else { continue }
+            let evict = ConnectionCapPolicy.shouldEvict(
+                sessionID: session.id,
+                selectedSessionID: selectedSessionID,
+                recentOrder: recentSessionOrder,
+                maxConnected: maxConnectedSessions,
+                connectionState: session.store.connectionState,
+                hasScheduledTasks: !session.store.scheduledTasks.isEmpty
+            )
+            guard evict else { continue }
             // Preserve the grok id so the session can be re-resumed when reopened.
             liveSessions[index].grokSessionID = session.store.grokSessionId ?? session.grokSessionID
             await session.store.shutdown()
@@ -1184,16 +1190,24 @@ struct ContentView: View {
         renameSession(id: newID, to: copyTitle)
     }
 
-    private func createLiveSession(for workspace: Workspace, resumeSession: GrokSessionInfo? = nil) async -> UUID {
+    @discardableResult
+    private func createLiveSession(
+        for workspace: Workspace,
+        resumeSession: GrokSessionInfo? = nil,
+        title: String? = nil,
+        agent: String? = nil
+    ) async -> UUID {
         purgeEmptySessions(in: workspace.id)
         let id = UUID()
         let store = ChatStore()
-        let title = resumeSession.flatMap { session in
-            SessionNameStore.name(for: session.id)
-                ?? (session.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : session.summary)
-        } ?? SessionTitle.defaultTitle
+        let resolvedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? resumeSession.flatMap { session in
+                SessionNameStore.name(for: session.id)
+                    ?? (session.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : session.summary)
+            }
+            ?? SessionTitle.defaultTitle
         liveSessions.append(
-            LiveSession(id: id, store: store, workspace: workspace, title: title, grokSessionID: resumeSession?.id)
+            LiveSession(id: id, store: store, workspace: workspace, title: resolvedTitle, grokSessionID: resumeSession?.id)
         )
         selectedSessionID = id
         selectedWorkspaceID = workspace.id
@@ -1203,19 +1217,64 @@ struct ContentView: View {
         Task { await refreshProjectChangedFiles() }
         sessionListRevision &+= 1
         persistSessionLayout()
+        if let title, ParallelSessionNaming.isValidName(title) {
+            SessionNameStore.setName(title, for: id.uuidString)
+        }
         if let resumeSession {
             store.prepare(workspace: workspace, savedGrokSessionID: resumeSession.id)
-            store.bindTabSession(id, savedModel: nil)
+            store.bindTabSession(id, savedModel: nil, savedAgent: agent)
             await store.start(workspace: workspace, resumeSession: resumeSession)
         } else {
             store.prepare(workspace: workspace)
             store.bindTabSession(
                 id,
-                savedModel: SessionLayoutStore.agentSettings(for: workspace.id).model
+                savedModel: SessionLayoutStore.agentSettings(for: workspace.id).model,
+                savedAgent: agent
             )
         }
         await enforceConnectionCap()
         return id
+    }
+
+    @discardableResult
+    private func createNamedSession(_ spec: ParallelSessionSpec, in project: Workspace) async -> UUID? {
+        let workspace: Workspace
+        if spec.useWorktree {
+            guard let created = await addWorktreeWorkspace(
+                project: project,
+                branch: spec.worktreeBranch,
+                path: spec.worktreePath
+            ) else { return nil }
+            workspace = created
+        } else {
+            workspace = project
+        }
+        let agent = spec.agent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let id = await createLiveSession(for: workspace, title: spec.name, agent: agent)
+        await refreshDashboardGit()
+        return id
+    }
+
+    private func createAutomation(_ spec: AutomationSpec, in project: Workspace) async {
+        guard let id = await createNamedSession(spec.session, in: project),
+              let session = liveSessions.first(where: { $0.id == id }) else { return }
+        _ = await session.store.createScheduledTask(interval: spec.interval, prompt: spec.prompt)
+        sessionListRevision &+= 1
+        await enforceConnectionCap()
+        await refreshDashboardGit()
+    }
+
+    private func refreshDashboardGit() async {
+        let paths = DashboardGitRefresh.uniquePaths(
+            sessions: liveSessions.map { ($0.workspace.id, $0.workspace.path) },
+            currentWorkspaceID: currentWorkspace?.id
+        )
+        var snapshots: [String: DashboardGitSnapshot] = [:]
+        for url in paths {
+            snapshots[url.path] = await GitService.dashboardSnapshot(at: url)
+        }
+        dashboardGitByPath = snapshots
+        sessionListRevision &+= 1
     }
 
     private func switchBranch(project: Workspace, branch: String) async {
@@ -1264,15 +1323,29 @@ struct ContentView: View {
     }
 
     private func createWorktree(project: Workspace, branch: String, path: String) async {
+        guard let workspace = await addWorktreeWorkspace(project: project, branch: branch, path: path) else {
+            return
+        }
+        await createLiveSession(for: workspace)
+        gitCheckoutRequest = nil
+    }
+
+    @discardableResult
+    private func addWorktreeWorkspace(project: Workspace, branch: String, path: String) async -> Workspace? {
         do {
             let pathURL = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
             _ = try await GitService.run(["worktree", "add", "-b", branch, pathURL.path], in: project.path)
+            if let existing = workspaceStore.workspaces.first(where: {
+                $0.path.standardizedFileURL.path == pathURL.standardizedFileURL.path
+            }) {
+                return existing
+            }
             let workspace = Workspace(name: pathURL.lastPathComponent, path: pathURL)
             workspaceStore.add(workspace)
-            await createLiveSession(for: workspace)
-            gitCheckoutRequest = nil
+            return workspace
         } catch {
             gitError = error.localizedDescription
+            return nil
         }
     }
 

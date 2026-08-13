@@ -40,7 +40,7 @@ struct GrokBuildApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
-                Button("Browse Sessions…") {
+                Button(SessionsHistoryCopy.menuItem) {
                     NotificationCenter.default.post(name: .sessionsRequested, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])

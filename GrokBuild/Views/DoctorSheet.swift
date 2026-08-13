@@ -36,18 +36,6 @@ struct DoctorSheet: View {
             Toggle("Probe managed Cursor bridge (127.0.0.1:18787)", isOn: $probeBridges)
                 .font(.caption)
                 .onChange(of: probeBridges) { _, _ in Task { await run() } }
-
-            HStack {
-                Button {
-                    Task { await run() }
-                } label: {
-                    Label(isRunning ? "Checking…" : "Re-run checks", systemImage: "arrow.clockwise")
-                }
-                .disabled(isRunning)
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .padding(22)
         .frame(width: 520)
@@ -55,12 +43,15 @@ struct DoctorSheet: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
+            WindowTrafficLights(onClose: { dismiss() })
+                .keyboardShortcut(.cancelAction)
             Image(systemName: "stethoscope")
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(.blue)
                 .frame(width: 44, height: 44)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.blue.opacity(0.12)))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Doctor")
                     .font(.title3.weight(.semibold))
@@ -69,6 +60,12 @@ struct DoctorSheet: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            Button {
+                Task { await run() }
+            } label: {
+                Label(isRunning ? "Checking…" : "Re-run checks", systemImage: "arrow.clockwise")
+            }
+            .disabled(isRunning)
         }
     }
 

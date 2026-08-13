@@ -21,17 +21,10 @@ struct ChatView: View {
     var onNewSession: () -> Void = {}
     var onAddProject: () -> Void = {}
     var onOpenProjectIn: (ProjectOpenTarget) -> Void = { _ in }
-    var onToggleBrowserTools: () -> Void = {}
-    var onSelectBrowserRuntime: (BrowserRuntimeMode) -> Void = { _ in }
-    var onToggleComputerUse: () -> Void = {}
-    var onOpenBrowserSettings: () -> Void = {}
-    var onOpenComputerUseSettings: () -> Void = {}
     var onOpenAgentSettings: () -> Void = {}
-    var onOpenMemorySettings: () -> Void = {}
     var onOpenWorkflowSettings: () -> Void = {}
     var onForkSession: () -> Void = {}
     var onOpenDashboard: () -> Void = {}
-    var onSwitchBranch: () -> Void = {}
 
     @State private var input: String = ""
     @State private var isFileDropTargeted = false
@@ -46,14 +39,8 @@ struct ChatView: View {
     @State private var pendingReasoningEffortChange: String?
     @State private var isModelSelectorOpen = false
     @FocusState private var inputFocused: Bool
-    @AppStorage(BrowserSettingsKeys.appliedEnabled) private var browserToolsEnabled = BrowserSettings.defaults.enabled
-    @AppStorage(ComputerUseSettingsKeys.appliedEnabled) private var computerUseEnabled = ComputerUseSettings.defaults.enabled
-    @AppStorage(GrokSettingsKeys.memoryEnabled) private var memoryEnabled = GrokPermissionSettings.defaults.memoryEnabled
     @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
-    @State private var showMemoryBrowser = false
-    @State private var showRememberPrompt = false
-    @State private var memoryNoteText = ""
     @State private var cachedCustomSubagentNames: [String] = []
     @State private var showSavedWorkflows = false
     @State private var showDeepResearch = false
@@ -313,12 +300,6 @@ struct ChatView: View {
                 Text("Apply \(store.reasoningEffortDisplayName(effort)) when Grok restarts. Summarize & restart runs /compact first to preserve context.")
             }
         }
-        .sheet(isPresented: $showMemoryBrowser) {
-            MemoryBrowserPanel()
-        }
-        .sheet(isPresented: $showRememberPrompt) {
-            rememberPromptSheet
-        }
         .sheet(isPresented: $showSavedWorkflows) {
             SavedWorkflowsPanel(projectRoot: store.currentWorkspace?.path) { workflow, argsJSON in
                 Task {
@@ -372,17 +353,21 @@ struct ChatView: View {
             .disabled(store.currentWorkspace == nil)
             .help("New session")
 
-            Button(action: onBrowseSessions) {
-                Image(systemName: "clock")
-            }
-            .buttonStyle(.plain)
-            .help("Browse sessions")
-
             Button(action: onOpenDashboard) {
                 Image(systemName: "square.grid.2x2")
             }
             .buttonStyle(.plain)
-            .help("Session dashboard")
+            .disabled(store.currentWorkspace == nil)
+            .accessibilityLabel(SessionsDashboardCopy.toolbarHelp)
+            .help(SessionsDashboardCopy.toolbarHelpDetail)
+
+            Button(action: onBrowseSessions) {
+                Image(systemName: "clock")
+            }
+            .buttonStyle(.plain)
+            .disabled(store.currentWorkspace == nil)
+            .accessibilityLabel(SessionsHistoryCopy.toolbarHelp)
+            .help(SessionsHistoryCopy.toolbarHelp)
 
             Menu {
                 if store.isResumedSessionTab || store.grokSessionId != nil {
@@ -415,6 +400,7 @@ struct ChatView: View {
             .menuStyle(.borderlessButton)
             .disabled(store.currentWorkspace == nil)
             .help("Session actions")
+            .accessibilityLabel("Session actions")
 
             Spacer()
 
@@ -744,36 +730,42 @@ struct ChatView: View {
                 }
 
                 HStack(spacing: 6) {
-                modeSelector
-                modelSelector
+                    agentStatusPill
+                    modeSelector
+                    modelSelector
 
-                ContextUsageIndicator(
-                    label: store.currentModelContextLabel,
-                    fraction: store.contextUsageFraction,
-                    usedTokens: store.usedContextTokens,
-                    limitTokens: store.currentModelContextLimit,
-                    canCompact: store.currentWorkspace != nil && !store.isStreaming,
-                    onCompact: { Task { await store.compactContext() } }
-                )
-                .help("Context usage — click for details and Compact")
+                    ContextUsageIndicator(
+                        label: store.currentModelContextLabel,
+                        fraction: store.contextUsageFraction,
+                        usedTokens: store.usedContextTokens,
+                        limitTokens: store.currentModelContextLimit,
+                        canCompact: store.currentWorkspace != nil && !store.isStreaming,
+                        onCompact: { Task { await store.compactContext() } }
+                    )
+                    .help("Context usage — click for details and Compact")
 
-                Spacer()
+                    Spacer()
 
-                reviewControls
+                    if showWorkflowsPill {
+                        workflowsStatusPill
+                    }
+                    tasksStatusPill
 
-                MicButton(voice: voiceInput, input: $input)
+                    reviewControls
 
-                Button {
-                    chooseFiles()
-                } label: {
-                    Image(systemName: "plus")
+                    MicButton(voice: voiceInput, input: $input)
+
+                    Button {
+                        chooseFiles()
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Attach files")
+
+                    sessionActionButton
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Attach files")
-
-                sessionActionButton
-            }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -791,45 +783,11 @@ struct ChatView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            projectStatusRow
         }
         .padding(12)
         .background(.bar)
         .task(id: store.currentWorkspace?.id) {
             loadFileMentionIndex()
-        }
-    }
-
-    private var projectStatusRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                if let project = store.currentWorkspace {
-                    Label(PrivacyMode.redactLabel(project.displayName, placeholder: "Project", enabled: privacyMode), systemImage: "folder")
-                        .lineLimit(1)
-                    Button(action: onSwitchBranch) {
-                        Label(currentBranchLabel(for: project.path), systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Branches & worktrees")
-                    agentStatusPill
-                    browserStatusPill
-                    computerUseStatusPill
-                    if showWorkflowsPill {
-                        workflowsStatusPill
-                    }
-                    tasksStatusPill
-                    if memoryEnabled {
-                        memoryStatusPill
-                    }
-                } else {
-                    Label("No project selected", systemImage: "folder")
-                }
-            }
-        }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 4)
-        .task(id: store.currentWorkspace?.id) {
             await store.loadDiscoveredAgentsIfNeeded()
             cachedCustomSubagentNames = SubagentRoleStore.load().map(\.name)
         }
@@ -891,7 +849,7 @@ struct ChatView: View {
                 Label("Open Agent Settings", systemImage: "gearshape")
             }
         } label: {
-            Label(title, systemImage: "person.2.badge.gearshape")
+            Label(DashboardTitle.compactRole(title), systemImage: "person.2.badge.gearshape")
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -1211,213 +1169,6 @@ struct ChatView: View {
         return "\(interval): \(shortPrompt)"
     }
 
-    // Only shown while cross-session memory is enabled (see `projectStatusRow`); the pill label
-    // is just "Memory" — an off state isn't surfaced because the pill is hidden when disabled.
-    private var memoryStatusPill: some View {
-        Menu {
-            Button {
-                showMemoryBrowser = true
-            } label: {
-                Label("Browse Memory Files…", systemImage: "folder")
-            }
-
-            Button {
-                memoryNoteText = ""
-                showRememberPrompt = true
-            } label: {
-                Label("Remember…", systemImage: "text.badge.plus")
-            }
-
-            Divider()
-
-            Button {
-                onOpenMemorySettings()
-            } label: {
-                Label("Open Memory Settings", systemImage: "gearshape")
-            }
-        } label: {
-            Label("Memory", systemImage: "brain.head.profile")
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Capsule().fill(Color.pink.opacity(0.14)))
-                .foregroundStyle(Color.pink)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(store.currentWorkspace == nil)
-        .help("Cross-session memory is on. Browse files, save a note, or open Memory settings.")
-    }
-
-    private var rememberPromptSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Remember a Note")
-                .font(.headline)
-            Text("Saved to your global memory so Grok can recall it in future sessions.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextEditor(text: $memoryNoteText)
-                .font(.body)
-                .frame(minWidth: 380, minHeight: 120)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
-            HStack {
-                Spacer()
-                Button("Cancel") { showRememberPrompt = false }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    _ = store.remember(memoryNoteText)
-                    showRememberPrompt = false
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(memoryNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(20)
-        .frame(width: 460)
-    }
-
-    private var browserStatusPill: some View {
-        let settings = BrowserSettingsStore.load()
-        let configurationIssue = AgentBrowserService.browserToolsConfigurationIssue(settings: settings)
-        let browserBaseReady = AgentBrowserService.bridgeScriptURL() != nil
-            && AgentBrowserService.executableURL() != nil
-        let managedRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .managed) == nil
-        let externalRuntimeReady = AgentBrowserService.browserRuntimeConfigurationIssue(settings: settings, mode: .external) == nil
-        let canChooseRuntime = browserBaseReady && (managedRuntimeReady || externalRuntimeReady)
-        let isConfigured = configurationIssue == nil
-        let needsSetup = browserToolsEnabled && !isConfigured
-        let title = needsSetup ? "Browser Setup Needed" : "Browser Tools"
-        let icon = browserToolsEnabled && isConfigured ? "globe.badge.chevron.backward" : "globe"
-        // Enabled → white (primary); disabled → greyed out; needs-setup keeps the orange warning.
-        let tint: Color = needsSetup ? .orange : (browserToolsEnabled ? .primary : .secondary)
-
-        return Menu {
-            if browserToolsEnabled || isConfigured {
-                Button(browserToolsEnabled ? "Turn Browser Tools Off" : "Turn Browser Tools On") {
-                    onToggleBrowserTools()
-                }
-            }
-
-            if canChooseRuntime {
-                Divider()
-
-                Button {
-                    onSelectBrowserRuntime(.managed)
-                } label: {
-                    Label("Managed Browser Runtime", systemImage: settings.runtimeMode == .managed ? "checkmark" : "shippingbox")
-                }
-
-                Button {
-                    onSelectBrowserRuntime(.external)
-                } label: {
-                    Label("Existing Chromium Browser", systemImage: settings.runtimeMode == .external ? "checkmark" : "globe")
-                }
-            }
-
-            if let configurationIssue {
-                Button(configurationIssue) {}
-                    .disabled(true)
-            }
-
-            Divider()
-
-            Button {
-                onOpenBrowserSettings()
-            } label: {
-                Label("Open Browser Settings", systemImage: "gearshape")
-            }
-        } label: {
-            Group {
-                if needsSetup {
-                    Label(title, systemImage: icon)
-                } else {
-                    Image(systemName: icon)
-                        .accessibilityLabel(title)
-                }
-            }
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, needsSetup ? 8 : 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(browserToolsEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
-            .foregroundStyle(tint)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(browserStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
-    }
-
-    private func browserStatusHelp(isConfigured: Bool, issue: String?) -> String {
-        if !isConfigured {
-            return issue ?? "Finish browser setup in Settings before using the quick toggle."
-        }
-        return browserToolsEnabled
-            ? "Disable browser MCP tools and restart the Grok connection."
-            : "Enable browser MCP tools and restart the Grok connection."
-    }
-
-    private var computerUseStatusPill: some View {
-        let settings = ComputerUseSettingsStore.load()
-        let configurationIssue = ComputerUseService.configurationIssue(settings: settings)
-        let isConfigured = configurationIssue == nil
-        let needsSetup = computerUseEnabled && !isConfigured
-        let title = needsSetup ? "Computer Use Setup Needed" : "Computer Use"
-        let icon = computerUseEnabled && isConfigured ? "desktopcomputer.badge.checkmark" : "desktopcomputer"
-        // Enabled → white (primary); disabled → greyed out; needs-setup keeps the orange warning.
-        let tint: Color = needsSetup ? .orange : (computerUseEnabled ? .primary : .secondary)
-
-        return Menu {
-            if computerUseEnabled || isConfigured {
-                Button(computerUseEnabled ? "Turn Computer Use Off" : "Turn Computer Use On") {
-                    onToggleComputerUse()
-                }
-            }
-
-            if let configurationIssue {
-                Button(configurationIssue) {}
-                    .disabled(true)
-            } else if !computerUseEnabled {
-                Button("Requires Accessibility permission") {}
-                    .disabled(true)
-            }
-
-            Divider()
-
-            Button {
-                onOpenComputerUseSettings()
-            } label: {
-                Label("Open Computer Use Settings", systemImage: "gearshape")
-            }
-        } label: {
-            Group {
-                if needsSetup {
-                    Label(title, systemImage: icon)
-                } else {
-                    Image(systemName: icon)
-                        .accessibilityLabel(title)
-                }
-            }
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, needsSetup ? 8 : 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(computerUseEnabled ? tint.opacity(0.14) : Color.secondary.opacity(0.10)))
-            .foregroundStyle(tint)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help(computerUseStatusHelp(isConfigured: isConfigured, issue: configurationIssue))
-    }
-
-    private func computerUseStatusHelp(isConfigured: Bool, issue: String?) -> String {
-        if !isConfigured {
-            return issue ?? "Finish Computer Use setup in Settings before using the quick toggle."
-        }
-        return computerUseEnabled
-            ? "Disable Computer Use MCP tools and restart the Grok connection."
-            : "Enable Computer Use MCP tools if Accessibility permission is ready."
-    }
-
     @ViewBuilder
     private var sessionActionButton: some View {
         if store.isStreaming {
@@ -1476,18 +1227,18 @@ struct ChatView: View {
                     store.setMode(mode)
                 } label: {
                     modeMenuRow(
-                        icon: iconName(for: mode),
-                        title: displayName(for: mode),
+                        icon: mode.systemImage,
+                        title: mode.displayName,
                         isSelected: store.currentMode == mode
                     )
                 }
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: iconName(for: store.currentMode))
+                Image(systemName: store.currentMode.systemImage)
                     .font(.caption.weight(.semibold))
                     .frame(width: 14)
-                Text(displayName(for: store.currentMode))
+                Text(store.currentMode.displayName)
                     .font(.caption.weight(.medium))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
@@ -1499,7 +1250,10 @@ struct ChatView: View {
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
-        .help("Change agent mode")
+        .help("Agent mode. Auto accept approves tool cards, including ones already waiting.")
+        .accessibilityLabel("Agent mode")
+        .accessibilityValue(store.currentMode.displayName)
+        .accessibilityIdentifier("grok-mode-selector")
     }
 
     private func modeMenuRow(icon: String, title: String, isSelected: Bool) -> some View {
@@ -1512,22 +1266,6 @@ struct ChatView: View {
                 Image(systemName: "checkmark")
                     .font(.caption.bold())
             }
-        }
-    }
-
-    private func displayName(for mode: AgentMode) -> String {
-        switch mode.rawValue {
-        case "plan": return "Plan"
-        case "yolo": return "YOLO"
-        default: return "Agent"
-        }
-    }
-
-    private func iconName(for mode: AgentMode) -> String {
-        switch mode.rawValue {
-        case "plan": return "list.bullet.indent"
-        case "yolo": return "bolt.fill"
-        default: return "infinity"
         }
     }
 
@@ -1841,10 +1579,6 @@ struct ChatView: View {
             return
         }
         slashActiveIndex = min(slashActiveIndex, count - 1)
-    }
-
-    private func currentBranchLabel(for projectURL: URL) -> String {
-        GitService.currentBranch(in: projectURL) ?? "No branch"
     }
 }
 

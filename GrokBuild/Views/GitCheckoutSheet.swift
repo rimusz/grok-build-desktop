@@ -90,15 +90,8 @@ struct GitCheckoutSheet: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .padding(.horizontal)
+                    .padding(.bottom, 12)
             }
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button("Close") { dismiss() }
-            }
-            .padding()
         }
         .frame(width: 520, height: 560)
         .task { await reload() }
@@ -116,21 +109,26 @@ struct GitCheckoutSheet: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Git Branches & Worktrees")
-                .font(.title2.weight(.semibold))
-            Text(project.displayName)
-                .font(.headline)
-            Text(project.path.path)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let currentBranch {
-                Text("Current branch: \(currentBranch)")
-                    .font(.caption)
+        HStack(alignment: .top, spacing: 12) {
+            WindowTrafficLights(onClose: { dismiss() })
+                .keyboardShortcut(.cancelAction)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Git Branches & Worktrees")
+                    .font(.title2.weight(.semibold))
+                Text(project.displayName)
+                    .font(.headline)
+                Text(project.path.path)
+                    .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let currentBranch {
+                    Text("Current branch: \(currentBranch)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            Spacer(minLength: 0)
         }
         .padding()
     }

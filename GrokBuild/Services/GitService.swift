@@ -101,7 +101,11 @@ enum GitService {
             return nil
         }
         if head.hasPrefix("ref: ") {
-            return URL(fileURLWithPath: String(head.dropFirst(5))).lastPathComponent
+            let ref = String(head.dropFirst(5))
+            if let heads = ref.range(of: "refs/heads/") {
+                return String(ref[heads.upperBound...])
+            }
+            return URL(fileURLWithPath: ref).lastPathComponent
         }
         return String(head.prefix(7))
     }
@@ -124,6 +128,19 @@ enum GitService {
             return false
         }
         return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func dirtyFileCount(in directory: URL) async -> Int {
+        guard isRepository(directory) else { return 0 }
+        return (try? await changedFiles(in: directory))?.count ?? 0
+    }
+
+    static func dashboardSnapshot(at directory: URL) async -> DashboardGitSnapshot {
+        DashboardGitSnapshot(
+            isWorktree: isWorktree(at: directory),
+            branch: currentBranch(in: directory),
+            dirtyCount: await dirtyFileCount(in: directory)
+        )
     }
 
     static func hasUnpushedCommits(in directory: URL, baseBranch: String? = nil) async -> Bool {
