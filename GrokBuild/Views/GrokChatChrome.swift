@@ -284,6 +284,7 @@ struct WindowTrafficLights: View {
             .buttonStyle(.plain)
             .onHover { isCloseHovered = $0 }
             .help("Close")
+            .accessibilityLabel("Close")
 
             inactiveTrafficLight
             inactiveTrafficLight

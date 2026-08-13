@@ -161,7 +161,7 @@ class StatusBarController: NSObject {
         newSessionItem.target = self
         menu.addItem(newSessionItem)
 
-        let sessionsItem = NSMenuItem(title: "Browse Sessions…", action: #selector(browseSessions), keyEquivalent: "")
+        let sessionsItem = NSMenuItem(title: SessionsHistoryCopy.menuItem, action: #selector(browseSessions), keyEquivalent: "")
         sessionsItem.target = self
         menu.addItem(sessionsItem)
 

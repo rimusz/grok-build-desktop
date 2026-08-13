@@ -12,6 +12,8 @@ struct SidebarSession: Identifiable, Hashable {
     var isPinned: Bool = false
     /// Workspace path is a linked git worktree.
     var isWorktree: Bool = false
+    /// Bound session agent / custom role display name (empty to hide).
+    var roleName: String = ""
 }
 
 struct SidebarView: View {
@@ -99,31 +101,47 @@ struct SidebarView: View {
             List {
                 Section {
                     ForEach(filtered) { ws in
-                        Button {
-                            onSelectWorkspace(ws)
-                        } label: {
-                            let projectSessions = sessions(for: ws.id)
-                            WorkspaceRow(
-                                workspace: ws,
-                                isPinned: pinnedWorkspaceIDs.contains(ws.id),
-                                isSelected: selectedWorkspaceID == ws.id,
-                                isWorktree: GitService.isWorktree(at: ws.path),
-                                hasSessions: !projectSessions.isEmpty,
-                                areSessionsHidden: hiddenSessionWorkspaceIDs.contains(ws.id),
-                                onToggleSessions: {
-                                    toggleSessionVisibility(for: ws.id)
+                        let projectSessions = sessions(for: ws.id)
+                        let isSelected = selectedWorkspaceID == ws.id
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button {
+                                onSelectWorkspace(ws)
+                            } label: {
+                                WorkspaceRow(
+                                    workspace: ws,
+                                    isPinned: pinnedWorkspaceIDs.contains(ws.id),
+                                    isSelected: isSelected,
+                                    isWorktree: GitService.isWorktree(at: ws.path),
+                                    hasSessions: !projectSessions.isEmpty,
+                                    areSessionsHidden: hiddenSessionWorkspaceIDs.contains(ws.id),
+                                    onToggleSessions: {
+                                        toggleSessionVisibility(for: ws.id)
+                                    }
+                                )
+                            }
+                            .buttonStyle(.plain)
+
+                            if isSelected, let branch = GitService.currentBranch(in: ws.path) {
+                                Button {
+                                    onSwitchBranch(ws)
+                                } label: {
+                                    WorkspaceBranchCaption(branch: branch)
                                 }
-                            )
+                                .buttonStyle(.plain)
+                                // Hug the chip — a full-width row here sits on top of the
+                                // session list and steals clicks (opens the git sheet spinner).
+                                .fixedSize(horizontal: true, vertical: true)
+                                .padding(.leading, 34)
+                                .padding(.bottom, 4)
+                            }
                         }
-                        .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
                         .listRowBackground(Color.clear)
                         .contextMenu {
                             projectContextMenu(for: ws)
                         }
 
-                        let projectSessions = sessions(for: ws.id)
-                        if (selectedWorkspaceID == ws.id || !projectSessions.isEmpty),
+                        if (isSelected || !projectSessions.isEmpty),
                            !hiddenSessionWorkspaceIDs.contains(ws.id) {
                             let isExpanded = isSessionsExpanded(for: ws.id)
                             let shownSessions = isExpanded ? projectSessions : collapsedSessions(from: projectSessions)
@@ -166,7 +184,7 @@ struct SidebarView: View {
                                 .listRowBackground(Color.clear)
 
                                 if isExpanded, hidden > 0 {
-                                    Text("\(hidden) more in Browse Sessions…")
+                                    Text("\(hidden) \(SessionsHistoryCopy.sidebarOverflowSuffix)")
                                         .font(.caption2)
                                         .foregroundStyle(.tertiary)
                                         .listRowInsets(EdgeInsets(top: 0, leading: 34, bottom: 6, trailing: 10))
@@ -386,6 +404,13 @@ private struct SessionSidebarRow: View {
                     .font(.callout.weight(isSelected ? .semibold : .regular))
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? .primary : .secondary)
+                if !session.roleName.isEmpty {
+                    Text(session.roleName)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .accessibilityLabel("Role \(session.roleName)")
+                }
                 if session.isWorktree {
                     Text("WT")
                         .font(.system(size: 8, weight: .bold))
@@ -452,39 +477,32 @@ private struct WorkspaceRow: View {
         HStack(spacing: 10) {
             Image(systemName: isPinned ? "pin.fill" : "folder")
                 .foregroundStyle(isPinned ? .orange : .secondary)
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 6) {
-                    Text(PrivacyMode.redactLabel(workspace.displayName, placeholder: "Project", enabled: privacyMode))
-                        .font(isSelected ? .body.weight(.semibold) : .body)
-                        .foregroundStyle(isSelected ? .primary : .secondary)
-                    if isWorktree {
-                        Text("WT")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.secondary.opacity(0.18)))
-                            .accessibilityLabel("Worktree")
-                    }
-                    if hasSessions {
-                        Image(systemName: areSessionsHidden ? "chevron.right" : "chevron.down")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 3)
-                            .contentShape(Rectangle())
-                            .highPriorityGesture(
-                                TapGesture().onEnded {
-                                    onToggleSessions()
-                                }
-                            )
-                            .help(areSessionsHidden ? "Show sessions" : "Hide sessions")
-                    }
+            HStack(spacing: 6) {
+                Text(PrivacyMode.redactLabel(workspace.displayName, placeholder: "Project", enabled: privacyMode))
+                    .font(isSelected ? .body.weight(.semibold) : .body)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                if isWorktree {
+                    Text("WT")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.18)))
+                        .accessibilityLabel("Worktree")
                 }
-                Text(PrivacyMode.redactPath(workspace.path.path, enabled: privacyMode))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(isSelected ? .secondary : .tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if hasSessions {
+                    Image(systemName: areSessionsHidden ? "chevron.right" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 3)
+                        .contentShape(Rectangle())
+                        .highPriorityGesture(
+                            TapGesture().onEnded {
+                                onToggleSessions()
+                            }
+                        )
+                        .help(areSessionsHidden ? "Show sessions" : "Hide sessions")
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -495,5 +513,33 @@ private struct WorkspaceRow: View {
             isSelected ? Color.primary.opacity(0.10) : Color.clear,
             in: RoundedRectangle(cornerRadius: 8)
         )
+        .help(pathHelp)
+        .accessibilityHint(pathHelp)
+    }
+
+    private var pathHelp: String {
+        PrivacyMode.redactPath(workspace.path.path, enabled: privacyMode)
+    }
+}
+
+private struct WorkspaceBranchCaption: View {
+    let branch: String
+    @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.branch")
+                .accessibilityHidden(true)
+            Text(privacyMode ? "Branch" : branch)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        .help("Branches & Worktrees…")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(privacyMode ? "Git branch" : "Git branch \(branch)")
     }
 }

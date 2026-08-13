@@ -428,19 +428,24 @@ enum SessionTitle {
     static let defaultTitle = "New chat"
     static let maxWords = 8
 
+    /// First real user prompt, truncated. Skips injected prompt dumps (`<user_info>`, OS/workspace
+    /// banners) so the sidebar does not list those as session names.
     static func auto(from messages: [Message]) -> String? {
-        guard let raw = messages.first(where: { $0.role == .user })?.content else { return nil }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        for message in messages where message.role == .user {
+            let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if DashboardTitle.isPromptDump(trimmed) { continue }
 
-        let collapsed = trimmed
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        let parts = collapsed.split(separator: " ")
-        guard !parts.isEmpty else { return nil }
+            let collapsed = trimmed
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            let parts = collapsed.split(separator: " ")
+            guard !parts.isEmpty else { continue }
 
-        let preview = parts.prefix(maxWords).joined(separator: " ")
-        return parts.count > maxWords ? preview + "…" : preview
+            let preview = parts.prefix(maxWords).joined(separator: " ")
+            return parts.count > maxWords ? preview + "…" : preview
+        }
+        return nil
     }
 }
 

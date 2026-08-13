@@ -97,10 +97,30 @@ struct AgentMode: RawRepresentable, Sendable, Hashable, Equatable {
     let rawValue: String
     init(rawValue: String) { self.rawValue = rawValue }
 
-    // Grok CLI modes for the bottom selector (Agent / Plan / Yolo)
+    // Grok CLI modes for the composer selector (Agent / Plan / Auto accept).
+    // Auto accept is still the CLI's `yolo` id; the UI never says YOLO.
     static let agent = AgentMode(rawValue: "agent")
     static let plan  = AgentMode(rawValue: "plan")
     static let yolo  = AgentMode(rawValue: "yolo")
+
+    /// CLI `yolo` — auto-approve tool permission cards, including ones already waiting.
+    var isAutoAccept: Bool { self == .yolo }
+
+    var displayName: String {
+        switch rawValue {
+        case "plan": return "Plan"
+        case "yolo": return "Auto accept"
+        default: return "Agent"
+        }
+    }
+
+    var systemImage: String {
+        switch rawValue {
+        case "plan": return "list.bullet.indent"
+        case "yolo": return "bolt.fill"
+        default: return "infinity"
+        }
+    }
 }
 
 struct ToolCall: @unchecked Sendable, Identifiable, Hashable {
@@ -171,6 +191,17 @@ struct PermissionOption: Sendable, Identifiable, Hashable {
     let name: String
 
     var identifier: String { id }
+}
+
+/// Picks the option Auto accept should send for a permission card.
+enum PermissionAutoApprove {
+    static func preferredOption(in options: [PermissionOption]) -> PermissionOption? {
+        options.first { option in
+            let kind = option.kind.lowercased()
+            return kind.contains("allow") && kind.contains("always")
+        } ?? options.first { $0.kind.lowercased().contains("allow") }
+        ?? options.first
+    }
 }
 
 struct PermissionRequest: @unchecked Sendable, Identifiable, Hashable {

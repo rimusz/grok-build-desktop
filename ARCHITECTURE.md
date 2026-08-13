@@ -56,6 +56,8 @@ GrokBuild is the **open-source native SwiftUI shell** for `grok agent stdio`. We
 | Xnative / AskHere | Closed-source native Mac | Compete on openness + Settings depth + Browser/Computer Use. No code reuse. |
 | Grok-UI | Browser ops command center | Take ops surfaces (**Doctor**, live git, usage ledger, privacy). Not a multi-host fleet. |
 | OpenMausBot | Multi-CLI messaging app | Take roster/unread affordances. Stay grok-only (no Claude/Codex drivers). |
+| Codex desktop app | Command center + worktree isolation + review queue | Steal dashboard grouping and git-backed **Needs review**. Do not run Codex / App Server. |
+| Grok Bot (xAI) | Named cloud teammates + approval inbox | Steal named session + role roster. Keep the word Session. No cloud VM, no 24/7-after-quit, no bot-to-bot chat. |
 | xai-org/grok-build | Official CLI/TUI | Source of truth for ACP/events/slash. Never reimplement the agent. |
 
 **Non-goals:** Electron rewrite, Windows port, multi-provider agent fleet, or TUI scraping. A thin **optional** Cursor OpenAI `/v1` sidecar (Node + `@cursor/sdk`, inference-only) *is* in scope; GrokBuild does not become a second full Cursor Agents product UI (see [Custom models](#custom-models) → Cursor bridge).
@@ -137,7 +139,7 @@ grok-deck2/
 | **App menu bar** (top of screen) | `AppDelegate.setupMainMenu()` | App (About, Settings ⌘,, Hide ⌘H, Quit), Edit, Project, Session, Window |
 | **Status item menu** | `StatusBarController` | Actions-first quick actions, settings, updates, auth recovery, quit |
 
-**Status item menu order:** auth header (+ **Run `grok login` in Terminal…** / **Retry Connection** when signed out) → **Open GrokBuild** → **New Session** → **Browse Sessions…** → **Add Project…** → **Settings…** (⌘,) → **Check for Updates…** / **Upgrade Available…** → **View Usage on grok.com…** → **About GrokBuild** → **Quit GrokBuild**. DEBUG builds add **Simulate Updates** after the updates item.
+**Status item menu order:** auth header (+ **Run `grok login` in Terminal…** / **Retry Connection** when signed out) → **Open GrokBuild** → **New Session** → **Sessions History…** → **Add Project…** → **Settings…** (⌘,) → **Check for Updates…** / **Upgrade Available…** → **View Usage on grok.com…** → **About GrokBuild** → **Quit GrokBuild**. DEBUG builds add **Simulate Updates** after the updates item.
 
 Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles.
 
@@ -249,7 +251,7 @@ Consumed by `ChatStore.consumeOutput()`:
 | `.permissionRequest` | Permission dialog in chat |
 | `.exitPlanRequest` | Plan mode approval UI |
 | `.questionRequest` | Ask-user question UI |
-| `.modeChanged` | Agent / Plan / Yolo selector |
+| `.modeChanged` | Agent / Plan / Auto accept selector |
 | `.contextUsage` | Token usage indicator |
 | `.availableCommands` | Slash command autocomplete |
 | `.schedulerActivity` | Update the scheduled-tasks mirror (`ChatStore.scheduledTasks`) |
@@ -257,7 +259,7 @@ Consumed by `ChatStore.consumeOutput()`:
 
 ### Agent modes
 
-`AgentMode`: `.agent`, `.plan`, `.yolo` — synced from process to `ChatStore.currentMode`.
+`AgentMode`: `.agent`, `.plan`, `.yolo` — synced from process to `ChatStore.currentMode`. The composer label for `.yolo` is **Auto accept** (`AgentMode.displayName`); the CLI id stays `yolo`. Switching to Auto accept (including mid-turn) calls `ChatStore.autoApprovePendingPermissions()` so waiting tool cards are approved immediately (`PermissionAutoApprove` prefers `allow_always`, then any `allow_*`). Incoming `.permissionRequest` events auto-approve while that mode is on. Plan cards are not auto-approved.
 
 ### Model switching
 
@@ -279,7 +281,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `connectionState` | Mirrors `GrokProcess.state` |
 | `isStreaming` / `isGrokking` | Turn in progress |
 | `currentModel` / `availableModels` | Model picker (from ACP + custom models) |
-| `currentMode` | agent / plan / yolo |
+| `currentMode` | agent / plan / yolo (UI: Agent / Plan / Auto accept) |
 | `pendingPermissions` | Tool permission prompts |
 | `pendingExitPlan` / `pendingQuestions` | Plan / ask-user flows |
 | `fileAttachments` | Composer chips; hidden chips are excluded from the prompt |
@@ -300,6 +302,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `shutdown()` | Stop process (app update / prepare for shutdown) |
 | `retryConnection()` | Restart after CLI update |
 | `send(_:)` | User message → ACP prompt (attachments become plain paths under `Attached file(s):`, not `@` reads) |
+| `setMode(_:)` | Composer mode pill → `session/set_mode`; Auto accept drains waiting permission cards |
 | `compactContext()` | Sends `/compact` from the context-usage popover (no-op while streaming) |
 
 ### Composer input helpers
@@ -330,7 +333,7 @@ On every (re)start, `ChatStore`:
 
 **Project default model** (`WorkspaceAgentSettings.model`) seeds **new** tabs only (and legacy tabs without a saved per-tab model). It is **not** updated when you change model in chat.
 
-**Session agent** is also **per session tab** (`SavedSessionRecord.agent`). Each tab launches with its own `--agent` (`ChatStore.effectiveAgentSelection`): an explicit per-tab override when set, otherwise the global default `grokbuild.selectedAgent` (Settings → Agents). The chat status bar shows an **agent pill** (`ChatView.agentStatusPill`) whose menu lists the built-in Default option (`GrokAgentProfiles.builtInOptions`) plus agents discovered for the workspace; picking one calls `ChatStore.setSessionAgent` → **restarts that tab's grok** (agents can only change at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`. A tab that has not been overridden follows the global default live (so changing the default and restarting adopts it); overridden tabs keep their choice. Only overridden tabs persist a value (`ChatStore.persistedAgentSelection`).
+**Session agent** is also **per session tab** (`SavedSessionRecord.agent`). Each tab launches with its own `--agent` (`ChatStore.effectiveAgentSelection`): an explicit per-tab override when set, otherwise the global default `grokbuild.selectedAgent` (Settings → Agents). The composer shows an **agent/role pill** (`ChatView.agentStatusPill`, first in the composer row, before mode + model — not the Plan/Agent/Auto accept mode control) whose menu lists the built-in Default option (`GrokAgentProfiles.builtInOptions`) plus agents discovered for the workspace; picking one calls `ChatStore.setSessionAgent` → **restarts that tab's grok** (agents can only change at launch) and posts `.liveSessionAgentChanged` → `persistSessionLayout()`. The label uses `DashboardTitle.compactRole` (e.g. `Default (grok build)` → `Default`). A tab that has not been overridden follows the global default live (so changing the default and restarting adopts it); overridden tabs keep their choice. Only overridden tabs persist a value (`ChatStore.persistedAgentSelection`).
 
 **Reasoning effort** stays **per project** (`WorkspaceAgentSettings.reasoningEffort`):
 
@@ -340,7 +343,7 @@ On every (re)start, `ChatStore`:
 
 ### Session selection persistence
 
-`grokbuild.sessionSelections.v1` — per **grok session id**: saved mode + model backup when resuming by grok id (e.g. Sessions browser).
+`grokbuild.sessionSelections.v1` — per **grok session id**: saved mode + model backup when resuming by grok id (e.g. Sessions History).
 
 ---
 
@@ -371,7 +374,7 @@ ContentView.LiveSession {
 
 **Transcript auto-repair:** When a tab's `SessionMessageStore` transcript is empty (or has no user/assistant rows) but the tab still has a `grokSessionID`, `SessionTranscriptRecovery` reads grok's on-disk `~/.grok/sessions/{encoded-cwd}/{grokSessionID}/chat_history.jsonl` via `GrokSessionTranscriptImporter` and persists imported user/assistant text. `encodeWorkspacePath` matches grok's layout: `%2FUsers%2F…%2Fproject` with **no** trailing `%2F`. Runs during `restorePersistedSessions` / `selectSession` (`ChatStore.restorePersistedMessages(for:grokSessionID:workspace:)`). Skips synthetic `<system-reminder>`-only rows and non-text session-update types. Stale-fallback-only tabs are not treated as restorable transcripts.
 
-**Eviction:** `enforceConnectionCap()` stops processes for sessions beyond MRU cap (keeps selected + busy sessions).
+**Eviction:** `enforceConnectionCap()` stops processes for sessions beyond the MRU cap. It keeps the selected tab, the MRU window of `maxConnectedSessions`, any `.busy` turn, and any session with live `/loop` tasks (`ConnectionCapPolicy` in `DashboardGrouping.swift`) so dashboard automations are not killed when a fifth tab opens.
 
 ### Session persistence flow
 
@@ -383,7 +386,7 @@ selectSession / send / close
 
 `SavedSessionRecord`: `id`, `workspaceID`, `grokSessionID`, `title`, `model`, `lastAccessed`.
 
-Sidebar shows max `SessionLayoutStore.maxSidebarSessions` (10) per project; older sessions in **Browse Sessions**.
+Sidebar shows max `SessionLayoutStore.maxSidebarSessions` (10) per project; older sessions in **Sessions History**.
 
 ### Active store routing
 
@@ -486,7 +489,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
 | Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
 | Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
-| Chat UI | Status pill in `ChatView` (composer chrome). Menu offers on/off toggle, **runtime choice** (managed ↔ existing Chromium), and Open Browser Settings |
+| Chat UI | Settings → **Browser** (`SettingsView` `.browser`). On/off, **runtime choice** (managed ↔ existing Chromium). No in-chat toggle — app-wide, applied on session restart |
 
 **Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
 
@@ -505,7 +508,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Selection → launch | `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
 | **Custom subagents (roles)** | `SettingsView` → `.agents` tab "Custom subagents" section (`SubagentRoleEditor`) → `SubagentRoleStore` writes `[subagents.roles.*]` in `~/.grok/config.toml` + prompt files |
 
-The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the status-bar pill, which restarts that session's grok.
+The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the composer agent/role pill, which restarts that session's grok.
 
 **Custom subagents (roles).** grok owns subagent orchestration (the main agent delegates to subagents that run in parallel, gated by `--no-subagents`). GrokBuild adds a thin CRUD editor for **roles** — `[subagents.roles.<name>]` tables in `~/.grok/config.toml` with `model` (empty = inherit the parent session's model) and a `prompt_file`. `SubagentRole` + `SubagentRoleStore` (`CustomModelSettings.swift`) mirror `CustomModelStore`: minimal targeted TOML edits that preserve every other section and unmanaged role keys (for example `default_capability_mode`), plus the role's instruction written to `~/.grok/prompts/<name>.md`. Relative `prompt_file` values are resolved from the user's home directory to match grok's documented `.grok/prompts/...` examples. Names matching grok's built-in subagents (`general`, `general-purpose`, `explore`, `plan`, `vision`, `verify`, `computer`) are rejected. Roles are a *separate* concept from the read-only discovered agents list (`grok inspect --json` does not report roles), but custom role names are offered under **Run as custom role** in the Settings default-agent picker and the chat agent pill menu; choosing one there runs the whole session as that role rather than spawning a child subagent. grok's `/agents` TUI manager is a pager builtin not exposed over `grok agent stdio`, so editing the config file is how GrokBuild manages them.
 
@@ -586,15 +589,21 @@ Sidebar session context menu (`SidebarView`): rename, pin/unpin session (`Sessio
 
 ### Doctor + onboarding
 
-`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), and Node.js install (Homebrew Terminal command or nodejs.org) when the Node check warns. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**).
+`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), and Node.js install (Homebrew Terminal command or nodejs.org) when the Node check warns. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**). Closes with `WindowTrafficLights` like Sessions History.
 
 ### `/btw` aside
 
 Sending `/btw` sets `pendingBtw`; the next assistant reply is captured in `ChatStore.btwAsideText` and shown via `BtwAsideBanner`.
 
-### Session dashboard
+### Sessions Dashboard
 
-`SessionDashboardPanel.swift` — groups live tabs by needs-input / working / idle / failed. Opened from chat top bar; `ContentView` owns `dashboardEntries`.
+`SessionDashboardPanel.swift` — command-center roster of **this project’s** live tabs as grouped **cards** (Doctor-style icon well, chips for project/role/branch/model, hover stroke). Same per-project scope as **New Session** and **Sessions History**. Closes with `WindowTrafficLights` (red close, Escape), matching History — no **Done** button. Groups: **Needs you** (permissions / questions / unread), **Needs review** (dirty git), **Working**, **Scheduled** (`/loop`), **Idle**, **Failed**. Pure grouping is `DashboardGrouping`; display titles are cleaned by `DashboardTitle` (prompt dumps → “Untitled session”). The same dump detector (`DashboardTitle.isPromptDump`) feeds `SessionTitle.auto` for sidebar rows. Rows also show worktree and dirty count (`GitService.dashboardSnapshot`, refreshed while the sheet is open). Chat top bar order after New Session: **Sessions Dashboard** (grid) then **Sessions History** (clock). `ContentView.dashboardEntries` filters `liveSessions` with `DashboardScope`. Distinct from **Sessions History**, which lists historical grok sessions to resume/delete. Copy: `SessionsDashboardCopy`.
+
+**Named parallel session** (dashboard **New Parallel Session**): `ParallelSessionSheet` collects name + role + local vs worktree, then `ContentView.createNamedSession`. Ordinary **New Session** stays one-click. Keep the word Session — this is not xAI Grok Bot. Sheet chrome matches History/Dashboard (`WindowTrafficLights` + stacked labeled fields, copy in `ParallelSessionCopy`).
+
+**Review queue:** **Needs review** + row **Preview** focuses the tab and opens `PreviewPane` (apply / commit / PR). No discard-worktree or inline comments.
+
+**New Automation:** `AutomationSheet` creates a named session and sends grok `/loop` (`ChatStore.createScheduledTask`). Copy (`AutomationCopy`): recurring `/loop` checks, not a one-off chat; schedules fire only while GrokBuild is open and that session’s grok process is alive. Same traffic-light chrome as Parallel Session.
 
 ### Share session
 
@@ -622,7 +631,7 @@ grok owns memory storage, indexing, search, and first-turn injection ([`13-memor
 | Launch flag | `GrokLaunchOptions.experimentalMemory`; `GrokMemoryFlag.argument(noMemory:experimentalMemory:)` resolves the single flag; `ChatStore.restartProcess` sets `experimentalMemory: memoryEnabled`, `noMemory: !memoryEnabled` |
 | Files | `MemoryStore.swift` — enumerate `~/.grok/memory/` (global `MEMORY.md`, `<slug-hash>/MEMORY.md`, `<slug-hash>/sessions/*.md` newest-first); `readContents`, `deleteSessionFile` (session-only guard), `appendGlobalNote` (+ pure `appendingNote`), `revealInFinder` |
 | Browser UI | `MemoryBrowserPanel.swift` — grouped list + read-only preview; copy path / reveal / delete session log (with confirm) |
-| Chat UI | `ChatView.memoryStatusPill` — **shown only while memory is enabled** (hidden when off; label is just "Memory"): Browse Memory Files…, Remember… (writes global note via `ChatStore.remember`), Open Memory Settings |
+| Chat UI | Settings → **Memory** (`MemorySettingsPane`): Browse Memory Files…, Remember… (writes global note via `ChatStore.remember`). No in-chat memory menu |
 
 **Enable/disable is a launch flag, app-scoped** (not `config.toml`), so the grok TUI is unaffected. `--no-memory` has absolute priority in grok, so the app never emits both flags.
 
@@ -638,6 +647,7 @@ grok owns memory storage, indexing, search, and first-turn injection ([`13-memor
 | MCP name | `grokbuild-computer-use` |
 | Skill | `Resources/Skills/grokbuild-computer-use/` |
 | Cursor bridge | `ComputerUseCursorInstaller` — copies helper, merges `~/.cursor/mcp.json` |
+| Chat UI | Settings → **Computer Use**; no in-chat toggle (app-wide, applied on session restart) |
 
 **Tools:** `computer_snapshot`, `computer_click`, `computer_type`, `computer_screenshot`, etc.
 
@@ -793,7 +803,7 @@ Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make 
 
 ### Main window (`ContentView`)
 
-Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `AppDelegate`) — sized so sidebar, composer, and status pills stay readable. Composer fills the chat column (`composerMaxWidth` = infinity) — no mid-width 780pt cap. Project status row scrolls horizontally; Browser Tools / Computer Use pills are icon-only when configured (full label only for setup-needed).
+Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `AppDelegate`) — sized so sidebar, composer, and status pills stay readable. Composer fills the chat column (`composerMaxWidth` = infinity) — no mid-width 780pt cap. Composer chrome: **session agent/role** (`agentStatusPill`), **mode** (Plan / Agent / Auto accept — Auto accept is CLI `yolo` and drains waiting permission cards), model, context, then **Workflows** / **Tasks** (this session’s live activity). Browser Tools, Computer Use, and Memory are **Settings-only** (app-wide). The session `…` menu is fork / share / goal / create skill. Git branch is a compact chip on the **selected** sidebar project (click opens `GitCheckoutSheet` — not a full-width row, so session clicks below it are not stolen). Project folder path is a tooltip/accessibility hint on the project row (not a second line under the name). Sidebar session titles use `SessionTitle.auto` (skips `<user_info>` / OS-version prompt dumps, then the next real user line) with `DashboardTitle.display` on persisted fallbacks so dumps become “Untitled session”. Custom names are unchanged.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -811,14 +821,14 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 
 | File | Role |
 |------|------|
-| `SidebarView.swift` | Project list, session list, pins, settings entry |
-| `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, feature pills, empty/welcome state (quick-start chips + no-project CTA) |
+| `SidebarView.swift` | Project list, session list, pins, settings entry; git branch caption on the selected project; project path is a tooltip, not a subtitle |
+| `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
-| `GrokChatChrome.swift` | Shared session chrome |
+| `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
 | `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. `RichMessageView` parses mermaid/LaTeX blocks; WKWebView embeds reload only when source changes, report a fixed height after load (avoids lazy-list layout loops), and inline `$…$` spans require math signals (not currency/`$PATH`). |
 | `PreviewPane.swift` | Diff detection from assistant messages; apply/commit |
-| `SessionBrowserView.swift` | Resume historical grok sessions; per-row **delete** + **Clear Empty** bulk cleanup (`GrokCLIService.deleteSession` + `SessionNameStore.removeName`) |
-| `GitCheckoutSheet.swift` | Branch switch / worktree create |
+| `SessionBrowserView.swift` | **Sessions History** — resume/delete archived grok sessions; per-row **delete** + **Clear Empty** bulk cleanup (`GrokCLIService.deleteSession` + `SessionNameStore.removeName`). Copy: `SessionsHistoryCopy`. Distinct from live **Sessions Dashboard**. |
+| `GitCheckoutSheet.swift` | Branch switch / worktree create; `WindowTrafficLights` close |
 | `WorkspacePicker.swift` | Add project folder |
 
 ### AppKit panels (not SwiftUI sheets)
@@ -827,7 +837,7 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 |-------|------|-------|
 | About | `AboutPanel.swift` | `AboutStyle` metrics |
 | Updates | `UpdatePanel.swift` | Same shared style |
-| Sessions browser | `SessionsBrowserPanel.swift` | Optional AppKit host |
+| Sessions History | `SessionsBrowserPanel.swift` | Optional AppKit host; clock toolbar (after **Sessions Dashboard**) / **Sessions History…** menu. Distinct from the live **Sessions Dashboard** (grid). User-facing copy: `SessionsHistoryCopy`. |
 
 Shared metrics: `AboutStyle.swift` (icon size, fonts).
 
@@ -845,7 +855,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.showMainWindowRequested` | Menu bar open | `AppDelegate.openMainWindow` |
 | `.chooseWorkspaceRequested` | Add project | `ContentView` → picker sheet |
 | `.newSessionRequested` | Menu new session | `ContentView.startNewSessionForCurrentProject` |
-| `.sessionsRequested` | Browse sessions | Session browser sheet |
+| `.sessionsRequested` | Sessions History (clock / menu) | `SessionsBrowserPanel` sheet |
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
@@ -879,11 +889,12 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 
 **File:** `Services/GitService.swift`
 
-Used from sidebar status row and `GitCheckoutSheet`:
+Used from the selected sidebar project’s compact branch chip, the project **Branches & Worktrees…** menu, and `GitCheckoutSheet`:
 
 - List branches, checkout, create branch
 - Worktree add/open (`ContentView.createWorktree` / project **New Worktree Session…**)
 - `isWorktree(at:)` — true when `.git` is a file (linked worktree); drives the sidebar **WT** badge
+- `currentBranch(in:)` — reads `.git/HEAD`; keeps slash-separated names (`feature/foo`) for the selected-project caption
 - Shown in `ContentView` via `gitCheckoutRequest` sheet
 
 Not a full git UI — thin wrapper over `git` CLI in workspace path.
@@ -946,9 +957,9 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Background tasks** | `BackgroundTaskStore.swift`, `ChatStore.backgroundActivities`, `AcpEvent.backgroundActivity` |
 | **Rhai workflows** | `WorkflowsConfigStore`, `WorkflowRunStore`, `SavedWorkflowStore`, `ChatView.workflowsStatusPill`, `.workflowsConfigChanged` |
 | **Fork / share / queue** | `GrokLaunchOptions.forkSession`, `ChatStore.startForked`, `shareSession`, `promptQueue`, `btwAsideText` |
-| **Dashboard** | `SessionDashboardPanel.swift`, `ContentView.dashboardEntries` |
+| **Dashboard** | `SessionDashboardPanel.swift`, `DashboardGrouping.swift`, `DashboardScope`, `ConnectionCapPolicy`, `ParallelSessionSheet.swift`, `ContentView.dashboardEntries` / `createNamedSession` |
 | **Compat** | `CompatConfigStore`, `CompatibilitySettingsPane`, `listExternalCompat` |
-| **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatView.memoryStatusPill`, `ChatStore.remember`/`isMemoryEnabled` |
+| **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatStore.remember`/`isMemoryEnabled` |
 | **Computer Use** | `ComputerUseService`, `GrokBuildComputerUseMCP/main.swift`, `.computerUse` |
 | **Voice control / mic entitlements** | `VoiceInputService`, `scripts/GrokBuild.entitlements`, `scripts/codesign-app-bundle.sh` (`device.audio-input` for Hardened Runtime) |
 | **Custom models** | `CustomModelStore`, `CustomModelListOrdering`, `CustomProviderExample`, `~/.grok/config.toml` |
@@ -969,7 +980,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel` |
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
-| **Git branch/worktree** | `GitCheckoutSheet`, `GitService` |
+| **Git branch/worktree** | `GitCheckoutSheet`, `GitService`, `ParallelSessionSheet` (named session + optional worktree) |
 | **Release / notarize** | `scripts/release.sh`, `.github/workflows/release.yml`, `BUILDING.md` |
 
 ---
@@ -982,7 +993,7 @@ make test    # Tests/GrokBuildTests/
 
 | File | Covers |
 |------|--------|
-| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override) |
+| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override), `SessionTitle.auto` skip of prompt dumps |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
@@ -991,10 +1002,10 @@ make test    # Tests/GrokBuildTests/
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
-| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers |
+| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Sessions History / Sessions Dashboard copy |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
-| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, chat rewind/clear, pinned-session layout decode |
+| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.

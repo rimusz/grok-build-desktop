@@ -211,7 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let newSession = NSMenuItem(title: "New Session", action: #selector(newSession), keyEquivalent: "n")
         newSession.target = self
         sessionMenu.addItem(newSession)
-        let browseSessions = NSMenuItem(title: "Browse Sessions…", action: #selector(browseSessions), keyEquivalent: "r")
+        let browseSessions = NSMenuItem(title: SessionsHistoryCopy.menuItem, action: #selector(browseSessions), keyEquivalent: "r")
         browseSessions.keyEquivalentModifierMask = [.command, .shift]
         browseSessions.target = self
         sessionMenu.addItem(browseSessions)

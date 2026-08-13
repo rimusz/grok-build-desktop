@@ -1156,16 +1156,29 @@ final class ChatStore {
 
     func setMode(_ mode: AgentMode) {
         process.setMode(mode)
-        // Optimistically update; will be confirmed by modeChanged event
+        // Optimistically update; will be confirmed by modeChanged event.
+        // Mid-turn switches stay live — Auto accept also drains cards already on screen.
         currentMode = mode
-        isYolo = (mode == .yolo)
+        isYolo = mode.isAutoAccept
         saveCurrentSessionSelection()
+        if mode.isAutoAccept {
+            autoApprovePendingPermissions()
+        }
     }
 
     /// Convenience for the three common modes
     func setAgentMode() { setMode(.agent) }
     func setPlanMode()  { setMode(.plan) }
     func setYoloMode()  { setMode(.yolo) }
+
+    /// Approve every waiting tool-permission card with the Auto-accept option.
+    func autoApprovePendingPermissions() {
+        let pending = pendingPermissions
+        for request in pending {
+            guard let option = PermissionAutoApprove.preferredOption(in: request.options) else { continue }
+            respondToPermission(request, with: option.id)
+        }
+    }
 
     var currentReasoningEffort: String {
         workspaceReasoningEffort
@@ -1293,16 +1306,7 @@ final class ChatStore {
     }
 
     func setYolo(_ enabled: Bool) {
-        isYolo = enabled
-        if enabled {
-            // Auto-approve any current pending
-            for perm in pendingPermissions {
-                if let allow = perm.options.first(where: { $0.kind.contains("allow") }) ?? perm.options.first {
-                    respondToPermission(perm, with: allow.id)
-                }
-            }
-            pendingPermissions.removeAll()
-        }
+        setMode(enabled ? .yolo : .agent)
     }
 
     /// Attempts to restart the grok process (useful after running `grok login`).
@@ -1480,9 +1484,8 @@ final class ChatStore {
             backgroundActivities = backgroundTaskTracker.activities
             scheduledTasks = backgroundTaskTracker.activities.compactMap(\.scheduledTask)
         case .permissionRequest(let req):
-            if isYolo {
-                // Auto-approve in YOLO mode (prefer allow_always or first allow)
-                if let allow = req.options.first(where: { $0.kind.contains("always") || $0.kind.contains("allow") }) ?? req.options.first {
+            if isYolo || currentMode.isAutoAccept {
+                if let allow = PermissionAutoApprove.preferredOption(in: req.options) {
                     respondToPermission(req, with: allow.id)
                 }
                 return
@@ -1493,8 +1496,12 @@ final class ChatStore {
             }
         case .modeChanged(let mode):
             currentMode = mode
+            isYolo = mode.isAutoAccept
             availableModes = process.availableModes // keep in sync
             saveCurrentSessionSelection()
+            if mode.isAutoAccept {
+                autoApprovePendingPermissions()
+            }
         case .contextUsage(let totalTokens):
             usedContextTokens = totalTokens
 
@@ -1772,9 +1779,12 @@ final class ChatStore {
         } else {
             currentMode = availableModes.first ?? .agent
         }
-        isYolo = (currentMode == .yolo)
+        isYolo = currentMode.isAutoAccept
         if currentMode != process.currentMode {
             process.setMode(currentMode)
+        }
+        if currentMode.isAutoAccept {
+            autoApprovePendingPermissions()
         }
     }
 
