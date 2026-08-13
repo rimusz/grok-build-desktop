@@ -155,6 +155,76 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertFalse(CursorBridgeRuntime.mayReattachToLiveEndpoint(hasAPIKey: true, endpointOnline: false))
     }
 
+    func testNodeTLSKeepsExistingExtraCACerts() {
+        let pem = "/tmp/existing-ca.pem"
+        let resolved = CursorBridge.NodeTLS.resolvedExtraCACertsPath(
+            environment: [CursorBridge.NodeTLS.extraCACertsKey: pem],
+            home: "/Users/demo",
+            fileExists: { $0 == pem }
+        )
+        XCTAssertEqual(resolved, pem)
+    }
+
+    func testNodeTLSPrefersGrokBuildOverrideThenWellKnownITCert() {
+        let override = "/custom/corp.pem"
+        let wellKnown = "/Users/demo/IT-Certs/package-route.pem"
+        XCTAssertEqual(
+            CursorBridge.NodeTLS.resolvedExtraCACertsPath(
+                environment: [CursorBridge.NodeTLS.overrideKey: override],
+                home: "/Users/demo",
+                fileExists: { $0 == override || $0 == wellKnown }
+            ),
+            override
+        )
+        XCTAssertEqual(
+            CursorBridge.NodeTLS.resolvedExtraCACertsPath(
+                environment: [:],
+                home: "/Users/demo",
+                fileExists: { $0 == wellKnown }
+            ),
+            wellKnown
+        )
+        XCTAssertNil(
+            CursorBridge.NodeTLS.resolvedExtraCACertsPath(
+                environment: [:],
+                home: "/Users/demo",
+                fileExists: { _ in false }
+            )
+        )
+    }
+
+    func testNodeTLSApplyIsNoOpWithoutPEM() {
+        var env = ["PATH": "/usr/bin"]
+        CursorBridge.NodeTLS.apply(to: &env, home: "/Users/demo", fileExists: { _ in false })
+        XCTAssertNil(env[CursorBridge.NodeTLS.extraCACertsKey])
+        let child = CursorBridgeRuntime.nodeChildEnvironment(
+            base: env,
+            home: "/Users/demo",
+            fileExists: { _ in false }
+        )
+        XCTAssertEqual(child["PATH"], "/usr/bin")
+        XCTAssertNil(child[CursorBridge.NodeTLS.extraCACertsKey])
+        let injected = CursorBridgeRuntime.nodeChildEnvironment(
+            base: [:],
+            home: "/Users/demo",
+            fileExists: { $0 == "/Users/demo/IT-Certs/package-route.pem" }
+        )
+        XCTAssertEqual(injected[CursorBridge.NodeTLS.extraCACertsKey], "/Users/demo/IT-Certs/package-route.pem")
+    }
+
+    func testNodeTLSRewritesZscalerNetworkFailure() {
+        let original = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
+        let message = CursorBridge.NodeTLS.userFacingRejection(original)
+        XCTAssertTrue(message.hasPrefix(original))
+        XCTAssertTrue(message.contains("Zscaler"))
+        XCTAssertTrue(message.contains("IT-Certs/package-route.pem"))
+        XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection("Invalid User API Key"), "Invalid User API Key")
+        let result = CursorBridge.validationResult(exitCode: 1, stderr: original)
+        XCTAssertFalse(result.isValid)
+        XCTAssertTrue(result.message.contains("UND_ERR_CONNECT_TIMEOUT"))
+        XCTAssertTrue(result.message.contains("Zscaler"))
+    }
+
     func testCursorBridgeSecretFileURLIsUnderApplicationSupport() {
         let url = CursorBridgeKeychain.secretFileURL
         XCTAssertTrue(url.path.contains("Application Support/GrokBuild/Secrets"))

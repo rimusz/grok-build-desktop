@@ -59,13 +59,27 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ### Project Workflow
 
-- Persistent project sidebar with pinned projects, pinned sessions, recent sessions, session rename/close, and one-click **Add Project** onboarding.
-- Per-tab **model** selection and per-project **reasoning effort**.
-- Git branch/worktree management from the session status row; **New Worktree Session…** from the project menu, with a **WT** badge on linked worktree projects.
-- `Open in` menu for Finder, Cursor, VS Code, Terminal, iTerm, and Zed.
-- **Custom models (standalone)** — OpenAI-compatible providers and models in **Settings → Models**, written to `~/.grok/config.toml`. Usable on its own (no project/session); models are then available in the grok CLI/TUI and in GrokBuild sessions. Settings lists models **A–Z by provider + model**. Each model can set an **API backend** (Chat Completions / Responses / Anthropic Messages) and an optional **env key** so the secret stays out of the file. **Create custom provider…** includes an NVIDIA DGX Spark example (`http://spark:8001/v1`); LAN/Tailscale hosts need a dummy API key (for example `not-needed`) because Fetch models skips the key only for loopback URLs (`localhost`, `127.0.0.1`, `0.0.0.0`, `host.docker.internal`).
-- **Cursor models via a local bridge** — in **Settings → Models → Add Provider**, install **Cursor**, paste a [Cursor API key](https://cursor.com/dashboard?tab=integrations) (stored locally under Application Support, not in config.toml — models keep a placeholder `api_key`), and save. Save stays disabled without a key; GrokBuild validates the key with Cursor before saving or starting the local OpenAI `/v1` sidecar on port `18787` (bundled Node/`@cursor/sdk`; the sidecar uses that saved key for Cursor, not grok's xAI session token; Cursor IDE need not be open; system Node ≥ 22.13 required — Settings and Doctor suggest Homebrew or nodejs.org if missing). Fetch the catalog, then **Add model** (same as other providers; display names like **Cursor Composer 2.5**). Grok routes inference to the bridge while keeping its own tools. Cursor's subscription/ToS is your responsibility. Unrelated to **Settings → Compatibility → Cursor** (rules/skills) and the Computer Use Cursor MCP.
-- **Doctor** — **Settings → App → Open Doctor…** checks the grok CLI path, version, authentication, `config.toml`, Browser/Computer Use readiness, Node.js (≥ 22.13 for the Cursor bridge), and (optionally) whether a local Cursor bridge is reachable, with one-click paths to install the CLI, run `grok login`, or install Node (Homebrew / nodejs.org).
+- Persistent project sidebar: pinned projects, pinned sessions, recent sessions, rename/close, and **Add Project**.
+- Per-tab **model** and per-project **reasoning effort**.
+- Git branches and worktrees from the session status row; **New Worktree Session…** on the project menu; **WT** badge on linked worktrees.
+- **Open in** Finder, Cursor, VS Code, Terminal, iTerm, or Zed.
+
+**Custom models** live in **Settings → Models** (`~/.grok/config.toml`). You can manage them with no project or session; they then work in the grok CLI/TUI and in GrokBuild.
+
+- Listed **A–Z by provider + model**.
+- Optional **API backend** (Chat Completions / Responses / Anthropic Messages) and **env key** so the secret stays out of the file.
+- **Create custom provider…** includes an NVIDIA DGX Spark example (`http://spark:8001/v1`). Fetch models skips the key only for loopback URLs (`localhost`, `127.0.0.1`, `0.0.0.0`, `host.docker.internal`); LAN/Tailscale hosts need a dummy key such as `not-needed`.
+
+**Cursor models** use a local OpenAI `/v1` sidecar (not Compatibility → Cursor, and not the Computer Use Cursor MCP).
+
+1. **Settings → Models → Add Provider → Cursor**, paste a [Cursor API key](https://cursor.com/dashboard?tab=integrations), save.
+2. The key is stored under Application Support (not Keychain, not config.toml). Models keep `api_key = "local"`.
+3. GrokBuild checks the key, then starts Node/`@cursor/sdk` on `127.0.0.1:18787`. Cursor IDE need not be open. Needs system Node ≥ 22.13 (Doctor can install via Homebrew or nodejs.org).
+4. **Fetch models**, then **Add model** (names like **Cursor Composer 2.5**). Grok keeps its own tools; Cursor subscription/ToS is yours.
+
+On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/IT-Certs/package-route.pem` or `GROKBUILD_NODE_EXTRA_CA_CERTS` is set, GrokBuild passes it as `NODE_EXTRA_CA_CERTS` so Add Provider works from the Dock the same as from Terminal. Other Macs are unchanged.
+
+**Doctor** (**Settings → App → Open Doctor…**) checks the grok CLI, auth, `config.toml`, Browser/Computer Use, Node.js, and (optionally) whether the Cursor bridge is reachable, with shortcuts to install the CLI, run `grok login`, or install Node.
 
 ### Agent Capabilities
 
