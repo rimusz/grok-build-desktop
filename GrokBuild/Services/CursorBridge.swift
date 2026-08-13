@@ -74,7 +74,62 @@ enum CursorBridge {
         case 2:
             return .missing
         default:
-            return .rejected(stderr)
+            return .rejected(NodeTLS.userFacingRejection(stderr))
+        }
+    }
+
+    /// Node's TLS store (not the macOS keychain). Dock/`open` launches omit shell vars such as
+    /// `NODE_EXTRA_CA_CERTS`, so Zscaler SSL inspection fails with "Network request failed"
+    /// while URLSession providers (MiniMax, Cline) still work.
+    enum NodeTLS {
+        static let extraCACertsKey = "NODE_EXTRA_CA_CERTS"
+        static let overrideKey = "GROKBUILD_NODE_EXTRA_CA_CERTS"
+
+        /// Common IT / Zscaler PEM locations. First existing file wins.
+        static func wellKnownPEMPaths(home: String) -> [String] {
+            [
+                "\(home)/IT-Certs/package-route.pem",
+                "\(home)/IT-Certs/ZscalerRootCA.pem",
+                "\(home)/IT-Certs/zscaler.pem",
+                "\(home)/.zscaler/cert.pem",
+            ]
+        }
+
+        static func resolvedExtraCACertsPath(
+            environment: [String: String],
+            home: String,
+            fileExists: (String) -> Bool
+        ) -> String? {
+            func valid(_ raw: String?) -> String? {
+                let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !trimmed.isEmpty, fileExists(trimmed) else { return nil }
+                return trimmed
+            }
+            if let existing = valid(environment[extraCACertsKey]) { return existing }
+            if let override = valid(environment[overrideKey]) { return override }
+            return wellKnownPEMPaths(home: home).first { fileExists($0) }
+        }
+
+        static func apply(
+            to environment: inout [String: String],
+            home: String = NSHomeDirectory(),
+            fileExists: (String) -> Bool = { FileManager.default.isReadableFile(atPath: $0) }
+        ) {
+            guard let path = resolvedExtraCACertsPath(
+                environment: environment,
+                home: home,
+                fileExists: fileExists
+            ) else { return }
+            environment[extraCACertsKey] = path
+        }
+
+        /// Rewrites the generic Node fetch error into an actionable TLS-proxy hint.
+        static func userFacingRejection(_ stderr: String) -> String {
+            let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.localizedCaseInsensitiveContains("Network request failed") else {
+                return trimmed
+            }
+            return "Network request failed (corporate TLS proxy such as Zscaler). Node does not use the macOS keychain — GrokBuild looks for ~/IT-Certs/package-route.pem or NODE_EXTRA_CA_CERTS / GROKBUILD_NODE_EXTRA_CA_CERTS."
         }
     }
 

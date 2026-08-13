@@ -147,6 +147,18 @@ enum CursorBridgeRuntime {
         }
     }
 
+    /// Copies the app environment and injects a corporate CA PEM for Node when present
+    /// (Dock/`open` launches do not inherit `NODE_EXTRA_CA_CERTS` from zsh).
+    static func nodeChildEnvironment(
+        base: [String: String] = ProcessInfo.processInfo.environment,
+        home: String = NSHomeDirectory(),
+        fileExists: (String) -> Bool = { FileManager.default.isReadableFile(atPath: $0) }
+    ) -> [String: String] {
+        var environment = base
+        CursorBridge.NodeTLS.apply(to: &environment, home: home, fileExists: fileExists)
+        return environment
+    }
+
     /// Validates a Cursor API key via the bundled `cursor-validate-key.mjs` (`Cursor.models.list`).
     /// Call before saving the Cursor provider or starting the sidecar.
     static func validateAPIKey(_ apiKey: String) async -> CursorBridge.APIKeyValidation {
@@ -178,7 +190,7 @@ enum CursorBridgeRuntime {
         proc.executableURL = URL(fileURLWithPath: nodePath)
         proc.arguments = [script.path]
         proc.currentDirectoryURL = bridgeDir
-        var environment = ProcessInfo.processInfo.environment
+        var environment = nodeChildEnvironment()
         environment["CURSOR_API_KEY"] = trimmed
         proc.environment = environment
         let err = Pipe()
@@ -295,7 +307,7 @@ enum CursorBridgeRuntime {
         proc.arguments = [script.path]
         proc.currentDirectoryURL = bridgeDir
 
-        var environment = ProcessInfo.processInfo.environment
+        var environment = nodeChildEnvironment()
         environment["CURSOR_API_KEY"] = apiKey
         environment["CURSOR_BRIDGE_HOST"] = "127.0.0.1"
         environment["CURSOR_BRIDGE_PORT"] = "\(managedPort)"

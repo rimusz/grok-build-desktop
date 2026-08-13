@@ -61,11 +61,11 @@ OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomMode
 |-------|------|
 | `ProviderPreset.cursor` | Install provider; config.toml `api_key = "local"`, `base_url = http://127.0.0.1:18787/v1` |
 | `CursorBridgeKeychain` | Real Cursor user key → Application Support `Secrets/cursor-api-key` (0600) |
-| `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start |
+| `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start; `NodeTLS` injects `NODE_EXTRA_CA_CERTS` for Zscaler/IT PEMs when the .app has no shell env |
 | `cursor-bridge-auth.mjs` | `resolveCursorApiKey` — SDK auth uses process env `CURSOR_API_KEY`; ignore grok's xAI session JWT / `local` Bearer unless token is `crsr_…` |
 | Node ≥ 22.13 | Required on the machine (`CursorBridge.NodeRequirement` / Doctor / Settings install banner) |
 
-Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. Pref `GrokBuild.cursorBridge.managedEnabled` is set on Cursor provider install (not a Settings toggle). Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
+Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. If Settings shows `Network request failed` on a Zscaler Mac, confirm `~/IT-Certs/package-route.pem` exists (or set `GROKBUILD_NODE_EXTRA_CA_CERTS`). Pref `GrokBuild.cursorBridge.managedEnabled` is set on Cursor provider install (not a Settings toggle). Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
 
 ## Browser backend
 
