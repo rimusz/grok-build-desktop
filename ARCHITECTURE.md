@@ -64,9 +64,9 @@ GrokBuild is the **open-source native SwiftUI shell** for `grok agent stdio`. We
 
 ### ACP event inventory (what we parse vs gaps)
 
-Parsed today (`GrokProcess.AcpEvent`, mapped in `ChatStore.consumeOutput`): `messageChunk`, `thoughtChunk`, `toolCall` / `toolCallUpdate`, `plan` / `planFileContent`, `exitPlanRequest`, `questionRequest`, `permissionRequest`, `modeChanged`, `contextUsage` (`_meta.totalTokens`), `availableCommands`, `schedulerActivity`, `workflowActivity`, `backgroundActivity`, `error`, `rawLine`.
+Parsed today (`GrokProcess.AcpEvent`, mapped in `ChatStore.consumeOutput`): `messageChunk`, `thoughtChunk`, `toolCall` / `toolCallUpdate`, `plan` / `planFileContent`, `exitPlanRequest`, `questionRequest`, `permissionRequest`, `modeChanged`, `contextUsage` (`_meta.totalTokens` on `session/update` — context-window gauge), `turnUsage` (`session/prompt` result `_meta` input/cache/output/reasoning), `availableCommands`, `schedulerActivity`, `workflowActivity`, `backgroundActivity`, `error`, `rawLine`.
 
-Gaps vs peers (advertising-driven; add only when the CLI emits them): **billed cost / usage breakdown** (input/cache/output/USD) — grok only reports `_meta.totalTokens` today, so the context indicator shows tokens, not cost; **explicit subagent lifecycle** beyond `spawn_subagent` tool activity; **workflow phase/agent-allocation** richer than `workflowActivity`. Steering reuses `session/prompt` (grok never cancels a turn) rather than a dedicated event.
+Gaps vs peers (advertising-driven; add only when the CLI emits them): **billed USD** — grok ACP reports last-turn `inputTokens` / `cachedReadTokens` / `outputTokens` / `reasoningTokens` (shown in the context popover) but not cost; **explicit subagent lifecycle** beyond `spawn_subagent` tool activity; **workflow phase/agent-allocation** richer than `workflowActivity`. Steering reuses `session/prompt` (grok never cancels a turn) rather than a dedicated event.
 
 ---
 
@@ -234,7 +234,7 @@ Built from `GrokLaunchOptions` in `ChatStore.restartProcess`. Working directory 
 ### ACP lifecycle
 
 1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake).
-2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming. When `session/load` fails with `FS_NOT_FOUND` / “Path not found” (stale on-disk grok session), GrokBuild falls back to `session/new`, sets `sessionLoadStartedFreshFallback`, and `ChatStore` adds a system note — local transcript is preserved. During load, the CLI replays prior turn history via `session/update` with `_meta.isReplay: true`; `GrokProcess` skips routing those to `ChatStore` (still applies `contextUsage` / `totalTokens`) so resume does not re-drive live tool/thinking UI.
+2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming. When `session/load` fails with `FS_NOT_FOUND` / “Path not found” (stale on-disk grok session), GrokBuild falls back to `session/new`, sets `sessionLoadStartedFreshFallback`, and `ChatStore` adds a system note — local transcript is preserved. During load, the CLI replays prior turn history via `session/update` with `_meta.isReplay: true`; `GrokProcess` skips routing those to `ChatStore` (still applies `contextUsage` / `totalTokens`, and `turnUsage` when breakdown keys are present) so resume does not re-drive live tool/thinking UI. `session/prompt` result `_meta` is parsed for last-turn input/cache/output/reasoning (`TurnTokenUsageParser`); that `totalTokens` is per-turn and is not written to the context ring.
 3. MCP servers from `MCPServerConfig` passed in `session/new` (browser, computer use when enabled).
 4. `send(_:)` — prompt during `.ready`/`.busy`.
 5. `stop()` — tear down process (LRU cap, settings reload, app shutdown).
@@ -252,7 +252,8 @@ Consumed by `ChatStore.consumeOutput()`:
 | `.exitPlanRequest` | Plan mode approval UI |
 | `.questionRequest` | Ask-user question UI |
 | `.modeChanged` | Agent / Plan / Auto accept selector |
-| `.contextUsage` | Token usage indicator |
+| `.contextUsage` | Context-window ring (`_meta.totalTokens` on updates) |
+| `.turnUsage` | Last-turn input / cache / output / reasoning in the context popover |
 | `.availableCommands` | Slash command autocomplete |
 | `.schedulerActivity` | Update the scheduled-tasks mirror (`ChatStore.scheduledTasks`) |
 | `.error` | Error banner |
@@ -281,6 +282,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 | `connectionState` | Mirrors `GrokProcess.state` |
 | `isStreaming` / `isGrokking` | Turn in progress |
 | `currentModel` / `availableModels` | Model picker (from ACP + custom models) |
+| `usedContextTokens` / `lastTurnUsage` | Context-window gauge vs last-turn input/cache/output/reasoning |
 | `currentMode` | agent / plan / yolo (UI: Agent / Plan / Auto accept) |
 | `pendingPermissions` | Tool permission prompts |
 | `pendingExitPlan` / `pendingQuestions` | Plan / ask-user flows |
@@ -310,7 +312,7 @@ One `ChatStore` per live session tab. Owns a `GrokProcess`.
 - **`@` file mentions** — typing `@` shows a fuzzy file picker (`FileMentionMatch` / `FileMentionFilter` / `FileMentionIndex` in `Services/FileMention.swift`; popover `FileMentionListView`). The index enumerates workspace files (cap 2000, skips `.git`/`node_modules`/`.build`/etc.) off the main thread on workspace change; selecting inserts `@<relative-path> `.
 - **Image paste / drop** — pasted or dropped images (png/jpeg/gif/webp) attach as **vision** content, not path chips. Detection + MIME mapping in `Services/ImageAttachment.swift` (`ImageAttachmentSupport`); `GrokProcess.send(_:images:)` appends ACP `image` blocks (`PromptImageContent`). Non-image files still attach as plain paths. Chips: `ImageChipBar`.
 - **Inline media** — assistant/`/imagine` output with image/video paths or markdown image URLs renders inline via `InlineMediaParser` (`Services/InlineMedia.swift`) → `MarkdownBlock.media` → `InlineMediaView` (NSImage / AsyncImage / AVKit `VideoPlayer`, link fallback).
-- **Context popover** — `ContextUsageIndicator` (in `ChatView.swift`) is a button opening a popover with token used/limit (`ContextUsageFormatter`) and a **Compact** button (`ChatStore.compactContext`). Billed USD isn't in ACP, so tokens only.
+- **Context popover** — `ContextUsageIndicator` (in `ChatView.swift`) is a button opening a popover with context used/limit (`ContextUsageFormatter`), a **Last turn** breakdown when grok emits `inputTokens` / `cachedReadTokens` / `outputTokens` / `reasoningTokens` (`TurnTokenUsage` / `ChatStore.lastTurnUsage`), and a **Compact** button (`ChatStore.compactContext`). Prompt caching is automatic in the xAI API; the app only displays `cachedReadTokens`. Billed USD isn't in ACP.
 - **Workflow run cards** — `WorkflowRunsCard` (`ComposerViews.swift`) shows live `workflowRuns` with phase/progress, agent-budget bar (`WorkflowRun.budgetFraction`), and Pause/Resume/Stop wired to existing `ChatStore.pause/resume/stopWorkflowRun` (`/workflow pause|resume|stop`).
 
 ### `restartProcess` — what gets injected
@@ -968,7 +970,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **@ file mentions** | `Services/FileMention.swift`, `FileMentionListView`, `ChatView` (`mentionMatch`, `loadFileMentionIndex`) |
 | **Image vision attachments** | `Services/ImageAttachment.swift`, `ChatStore.addImageAttachment`, `GrokProcess.send(_:images:)`, `ImageChipBar` |
 | **Inline media preview** | `Services/InlineMedia.swift`, `MarkdownBlock.media`, `InlineMediaView` (`RichMessageView.swift`) |
-| **Context usage popover** | `ContextUsageFormatter.swift`, `ContextUsageIndicator` + `ChatStore.compactContext` |
+| **Context usage popover** | `ContextUsageFormatter.swift`, `TurnTokenUsage.swift`, `ContextUsageIndicator` + `ChatStore.lastTurnUsage` / `compactContext` |
 | **Workflow run cards** | `WorkflowRunsCard` (`ComposerViews.swift`), `WorkflowRun.budgetFraction/isActive`, `ChatStore.pause/resume/stopWorkflowRun` |
 | **Doctor** | `DoctorReport.swift`, `DoctorSheet.swift`, `.openDoctorRequested` |
 | **Settings tab** | `SettingsView` — search pane struct by tab |
@@ -1005,7 +1007,7 @@ make test    # Tests/GrokBuildTests/
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Sessions History / Sessions Dashboard copy |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
-| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove` |
+| `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.

@@ -532,6 +532,118 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertNil(ContextUsageFormatter.percent(used: nil, limit: 200))
     }
 
+    func testCachePercentAndCachedLine() {
+        XCTAssertEqual(ContextUsageFormatter.cachePercent(cached: 7639, input: 11954), 64)
+        XCTAssertEqual(ContextUsageFormatter.cachePercent(cached: 0, input: 100), 0)
+        XCTAssertNil(ContextUsageFormatter.cachePercent(cached: 10, input: 0))
+        XCTAssertNil(ContextUsageFormatter.cachePercent(cached: nil, input: 100))
+        XCTAssertEqual(
+            ContextUsageFormatter.cachedLine(cached: 7639, input: 11954),
+            "7,639 cached (64%)"
+        )
+        XCTAssertEqual(ContextUsageFormatter.cachedLine(cached: 0, input: 100), "0 cached (0%)")
+        XCTAssertNil(ContextUsageFormatter.cachedLine(cached: nil, input: 100))
+        XCTAssertEqual(ContextUsageFormatter.tokenCount(nil), "—")
+        XCTAssertEqual(ContextUsageFormatter.tokenCount(12000), "12,000")
+    }
+
+    func testTurnUsageParseFromFlatMeta() {
+        let result: [String: Any] = [
+            "stopReason": "end_turn",
+            "_meta": [
+                "sessionId": "sess-1",
+                "modelId": "grok-composer-2.5-fast",
+                "inputTokens": 11954,
+                "outputTokens": 36,
+                "cachedReadTokens": 7639,
+                "reasoningTokens": 0,
+                "totalTokens": 11990
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(from: result)
+        XCTAssertEqual(usage?.inputTokens, 11954)
+        XCTAssertEqual(usage?.outputTokens, 36)
+        XCTAssertEqual(usage?.cachedReadTokens, 7639)
+        XCTAssertEqual(usage?.reasoningTokens, 0)
+        XCTAssertEqual(usage?.totalTokens, 11990)
+        XCTAssertTrue(usage?.hasBreakdown == true)
+    }
+
+    func testTurnUsageParseFromNestedMetaUsage() {
+        let result: [String: Any] = [
+            "_meta": [
+                "usage": [
+                    "inputTokens": 1500,
+                    "outputTokens": 200,
+                    "cachedReadTokens": 1000,
+                    "reasoningTokens": 75
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(from: result)
+        XCTAssertEqual(usage?.inputTokens, 1500)
+        XCTAssertEqual(usage?.cachedReadTokens, 1000)
+        XCTAssertEqual(usage?.reasoningTokens, 75)
+    }
+
+    func testTurnUsageParsePrefersTopLevelUsage() {
+        let result: [String: Any] = [
+            "usage": [
+                "inputTokens": 10,
+                "outputTokens": 2,
+                "cachedReadTokens": 4
+            ] as [String: Any],
+            "_meta": [
+                "inputTokens": 999,
+                "cachedReadTokens": 1
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(from: result)
+        XCTAssertEqual(usage?.inputTokens, 10)
+        XCTAssertEqual(usage?.cachedReadTokens, 4)
+    }
+
+    func testTurnUsageIgnoresTotalTokensOnly() {
+        let update: [String: Any] = [
+            "_meta": ["totalTokens": 42_000] as [String: Any]
+        ]
+        XCTAssertNil(TurnTokenUsageParser.parse(from: update))
+        XCTAssertNil(TurnTokenUsageParser.parse(fromSessionUpdate: [
+            "update": update
+        ]))
+    }
+
+    func testTurnUsageZeroCacheIsAMissNotMissing() {
+        let result: [String: Any] = [
+            "_meta": [
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "cachedReadTokens": 0,
+                "reasoningTokens": 0
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(from: result)
+        XCTAssertEqual(usage?.cachedReadTokens, 0)
+        XCTAssertTrue(usage?.hasBreakdown == true)
+        XCTAssertEqual(ContextUsageFormatter.cachedLine(cached: usage?.cachedReadTokens, input: usage?.inputTokens), "0 cached (0%)")
+    }
+
+    func testTurnUsageParseNSNumberAndSessionUpdate() {
+        let params: [String: Any] = [
+            "update": [
+                "_meta": [
+                    "inputTokens": NSNumber(value: 80),
+                    "cachedReadTokens": NSNumber(value: 50),
+                    "outputTokens": NSNumber(value: 12)
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(fromSessionUpdate: params)
+        XCTAssertEqual(usage?.inputTokens, 80)
+        XCTAssertEqual(usage?.cachedReadTokens, 50)
+        XCTAssertEqual(usage?.outputTokens, 12)
+    }
+
     // MARK: - Workflow run cards
 
     func testWorkflowRunBudgetFraction() {

@@ -227,6 +227,8 @@ enum AcpEvent: @unchecked Sendable {
     case permissionRequest(PermissionRequest)
     case modeChanged(mode: AgentMode)
     case contextUsage(totalTokens: Int)
+    /// Last-turn input / cache / output / reasoning from `session/prompt` `_meta`.
+    case turnUsage(TurnTokenUsage)
     case availableCommands([SlashCommand])
     /// A grok `scheduler_*` tool-call `session/update`, forwarded raw for the scheduled-tasks panel.
     case schedulerActivity(payload: [String: Any])
@@ -954,6 +956,9 @@ final class GrokProcess: @unchecked Sendable {
                 if let total = totalTokens(from: params) {
                     acpEventContinuation?.yield(.contextUsage(totalTokens: total))
                 }
+                if let usage = TurnTokenUsageParser.parse(fromSessionUpdate: params) {
+                    acpEventContinuation?.yield(.turnUsage(usage))
+                }
                 if !GrokSessionReplay.isReplaySessionUpdate(params: params, update: update),
                    let u = update {
                     routeUpdate(u)
@@ -1030,8 +1035,12 @@ final class GrokProcess: @unchecked Sendable {
                     }
                     pending.continuation.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: info))
                 } else {
+                    emitTurnUsage(from: j["result"])
                     pending.continuation.resume(returning: j["result"])
                 }
+            } else {
+                // Steer (and other unmatched) `session/prompt` replies still carry usage.
+                emitTurnUsage(from: j["result"])
             }
             return
         }
@@ -1042,6 +1051,12 @@ final class GrokProcess: @unchecked Sendable {
         if let id = json["id"] as? NSNumber { return id.intValue }
         if let id = json["id"] as? String, let parsed = Int(id) { return parsed }
         return nil
+    }
+
+    private func emitTurnUsage(from result: Any?) {
+        guard let dict = result as? [String: Any],
+              let usage = TurnTokenUsageParser.parse(from: dict) else { return }
+        acpEventContinuation?.yield(.turnUsage(usage))
     }
 
     private func totalTokens(from params: [String: Any]) -> Int? {

@@ -24,6 +24,11 @@ UpdateChecker.checkAppRelease()   // notarized GitHub releases only
 UpdateChecker.checkGrokCLI()      // grok update --check --json
 ```
 
+## Token usage (ACP)
+
+- Context-window ring: `session/update` `_meta.totalTokens` → `AcpEvent.contextUsage` → `ChatStore.usedContextTokens`.
+- Last-turn breakdown: `session/prompt` result `_meta` (`inputTokens`, `cachedReadTokens`, `outputTokens`, `reasoningTokens`) → `TurnTokenUsageParser` → `AcpEvent.turnUsage` → `ChatStore.lastTurnUsage`. Unmatched steer replies are parsed the same way. Do not treat prompt-result `totalTokens` as the context gauge. USD is not on this surface.
+
 ## Auth & status bar
 
 - `GrokProcess.needsAuthentication` drives login banner and menu header.
