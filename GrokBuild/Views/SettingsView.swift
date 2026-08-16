@@ -2863,7 +2863,7 @@ private struct CustomModelsSettingsPane: View {
     // Managed Cursor bridge sidecar state.
     @State private var managedBridgeStatus = CursorBridgeRuntime.status
     @State private var cursorAPIKeyDraft = ""
-    @State private var hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+    @State private var hasStoredCursorAPIKey = CursorBridgeAPIKey.hasAPIKey()
     @State private var isValidatingCursorKey = false
     @State private var cursorNodeProbe = CursorBridge.NodeRequirement.snapshot(binaryPath: nil, versionDisplay: "")
 
@@ -2998,7 +2998,7 @@ private struct CustomModelsSettingsPane: View {
         }
         .task {
             reload()
-            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            hasStoredCursorAPIKey = CursorBridgeAPIKey.hasAPIKey()
             cursorNodeProbe = CursorBridgeRuntime.probeNode()
             managedBridgeStatus = await CursorBridgeRuntime.reconcile()
         }
@@ -3386,7 +3386,7 @@ private struct CustomModelsSettingsPane: View {
         if isCursorProviderDraft {
             let draft = cursorAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
             if !draft.isEmpty { return false }
-            return !(hasStoredCursorAPIKey && CursorBridgeKeychain.hasAPIKey())
+            return !(hasStoredCursorAPIKey && CursorBridgeAPIKey.hasAPIKey())
         }
         return !providerDraft.isLocalEndpoint
             && providerDraft.apiKey.trimmingCharacters(in: .whitespaces).isEmpty
@@ -3536,7 +3536,7 @@ private struct CustomModelsSettingsPane: View {
             .onAppear {
                 if isCursorProviderDraft {
                     managedBridgeStatus = CursorBridgeRuntime.status
-                    hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+                    hasStoredCursorAPIKey = CursorBridgeAPIKey.hasAPIKey()
                     cursorNodeProbe = CursorBridgeRuntime.probeNode()
                 }
             }
@@ -4181,7 +4181,7 @@ private struct CustomModelsSettingsPane: View {
         revealProviderKey = false
         if preset.isManagedCursorBridge {
             cursorAPIKeyDraft = ""
-            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            hasStoredCursorAPIKey = CursorBridgeAPIKey.hasAPIKey()
             managedBridgeStatus = CursorBridgeRuntime.status
         }
         showingProviderEditor = true
@@ -4211,7 +4211,7 @@ private struct CustomModelsSettingsPane: View {
         revealProviderKey = false
         if provider.isManagedCursorBridge {
             cursorAPIKeyDraft = ""
-            hasStoredCursorAPIKey = CursorBridgeKeychain.hasAPIKey()
+            hasStoredCursorAPIKey = CursorBridgeAPIKey.hasAPIKey()
             managedBridgeStatus = CursorBridgeRuntime.status
         }
         showingProviderEditor = true
@@ -4269,7 +4269,7 @@ private struct CustomModelsSettingsPane: View {
         let candidate: String?
         if !trimmed.isEmpty {
             candidate = trimmed
-        } else if let existing = CursorBridgeKeychain.load(), !existing.isEmpty {
+        } else if let existing = CursorBridgeAPIKey.load(), !existing.isEmpty {
             candidate = existing
         } else {
             hasStoredCursorAPIKey = false
@@ -4291,7 +4291,7 @@ private struct CustomModelsSettingsPane: View {
 
         if !trimmed.isEmpty {
             do {
-                try CursorBridgeKeychain.save(trimmed)
+                try CursorBridgeAPIKey.save(trimmed)
                 cursorAPIKeyDraft = ""
             } catch {
                 errorMessage = "Failed to save Cursor API key: \(error.localizedDescription)"
@@ -4547,7 +4547,7 @@ private struct CustomModelsSettingsPane: View {
 
     private func clearCursorAPIKey() {
         do {
-            try CursorBridgeKeychain.delete()
+            try CursorBridgeAPIKey.delete()
             hasStoredCursorAPIKey = false
             cursorAPIKeyDraft = ""
             statusMessage = "Cursor API key removed."
