@@ -258,7 +258,7 @@ enum CursorBridgeRuntime {
             return status
         }
 
-        guard let apiKey = CursorBridgeKeychain.load(), !apiKey.isEmpty else {
+        guard let apiKey = CursorBridgeAPIKey.load(), !apiKey.isEmpty else {
             await stopForMissingAPIKey()
             return status
         }
@@ -376,7 +376,7 @@ enum CursorBridgeRuntime {
     /// Without a saved API key, tears down any orphan listener so “Running” cannot outlive the key.
     @discardableResult
     static func reconcile() async -> Status {
-        guard CursorBridgeKeychain.hasAPIKey() else {
+        guard CursorBridgeAPIKey.hasAPIKey() else {
             await stopForMissingAPIKey()
             return status
         }
@@ -518,9 +518,9 @@ enum CursorBridgeRuntime {
         } else if case .running = snapshot.status {
             // Defer failure: if the port is still live (orphan) *and* a key remains, keep "running".
             Task {
-                if CursorBridgeKeychain.hasAPIKey(), await endpointIsOnline() {
+                if CursorBridgeAPIKey.hasAPIKey(), await endpointIsOnline() {
                     setStatus(.running)
-                } else if !CursorBridgeKeychain.hasAPIKey() {
+                } else if !CursorBridgeAPIKey.hasAPIKey() {
                     await stopForMissingAPIKey()
                 } else {
                     setStatus(.failed("Bridge process exited unexpectedly."))

@@ -1,11 +1,11 @@
 import Foundation
 
-/// Storage for the Cursor API key used by the managed local bridge.
+/// File storage for the Cursor API key used by the managed local bridge.
 ///
 /// The key lives in a 0600 file under Application Support. It is injected into the
 /// sidecar process environment only — never written to `~/.grok/config.toml`
-/// (imported models keep `api_key = "local"`). There is no Keychain storage or migration.
-enum CursorBridgeKeychain {
+/// (imported models keep `api_key = "local"`).
+enum CursorBridgeAPIKey {
     enum StorageError: LocalizedError {
         case fileWriteFailed
 

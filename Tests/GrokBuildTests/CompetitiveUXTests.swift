@@ -226,32 +226,32 @@ final class CompetitiveUXTests: XCTestCase {
     }
 
     func testCursorBridgeSecretFileURLIsUnderApplicationSupport() {
-        let url = CursorBridgeKeychain.secretFileURL
+        let url = CursorBridgeAPIKey.secretFileURL
         XCTAssertTrue(url.path.contains("Application Support/GrokBuild/Secrets"))
         XCTAssertEqual(url.lastPathComponent, "cursor-api-key")
-        XCTAssertEqual(CursorBridgeKeychain.secretsDirectoryURL().lastPathComponent, "Secrets")
+        XCTAssertEqual(CursorBridgeAPIKey.secretsDirectoryURL().lastPathComponent, "Secrets")
     }
 
-    func testCursorBridgeKeyFileRoundTripWithoutKeychain() throws {
+    func testCursorBridgeAPIKeyFileRoundTrip() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("GrokBuildTests-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("cursor-api-key", isDirectory: false)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 
-        XCTAssertNil(CursorBridgeKeychain.load(fileURL: url))
-        XCTAssertFalse(CursorBridgeKeychain.hasAPIKey(fileURL: url))
+        XCTAssertNil(CursorBridgeAPIKey.load(fileURL: url))
+        XCTAssertFalse(CursorBridgeAPIKey.hasAPIKey(fileURL: url))
 
-        try CursorBridgeKeychain.save("  crsr_test_key  ", fileURL: url)
-        XCTAssertEqual(CursorBridgeKeychain.load(fileURL: url), "crsr_test_key")
-        XCTAssertTrue(CursorBridgeKeychain.hasAPIKey(fileURL: url))
+        try CursorBridgeAPIKey.save("  crsr_test_key  ", fileURL: url)
+        XCTAssertEqual(CursorBridgeAPIKey.load(fileURL: url), "crsr_test_key")
+        XCTAssertTrue(CursorBridgeAPIKey.hasAPIKey(fileURL: url))
         let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
         XCTAssertEqual(perms?.uint16Value, 0o600)
 
-        try CursorBridgeKeychain.save("   ", fileURL: url)
-        XCTAssertNil(CursorBridgeKeychain.load(fileURL: url))
+        try CursorBridgeAPIKey.save("   ", fileURL: url)
+        XCTAssertNil(CursorBridgeAPIKey.load(fileURL: url))
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
 
-        try CursorBridgeKeychain.delete(fileURL: url)
+        try CursorBridgeAPIKey.delete(fileURL: url)
     }
 
     func testBridgeModelsURLPreservesV1() {
