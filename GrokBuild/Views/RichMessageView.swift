@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import WebKit
 import AVKit
 
@@ -206,14 +207,18 @@ enum GrokMarkdownStyle {
 
     static func attributed(_ chunk: String) -> AttributedString {
         var result = AttributedString()
-        let parts = chunk.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+        let parts = lines(in: chunk)
         for (index, part) in parts.enumerated() {
-            result.append(attributedLine(String(part)))
+            result.append(attributedLine(part))
             if index < parts.count - 1 {
                 result.append(AttributedString("\n"))
             }
         }
         return result
+    }
+
+    static func lines(in chunk: String) -> [String] {
+        chunk.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
     }
 
     static func attributedLine(_ line: String) -> AttributedString {
@@ -268,20 +273,49 @@ enum GrokMarkdownStyle {
         return nil
     }
 
+    /// Pull ``code`` out before Foundation markdown. Otherwise `<BUZZ_DOMAIN>` is
+    /// treated as HTML and the first backtick never closes, painting the rest of
+    /// the line cyan and clipping follow-on paragraphs in `Text`.
     static func inline(_ text: String) -> AttributedString {
-        var attr = (try? AttributedString(
-            markdown: text,
+        var result = AttributedString()
+        var remaining = text[...]
+        while !remaining.isEmpty {
+            guard let tick = remaining.firstIndex(of: "`") else {
+                result.append(markdownPlain(String(remaining)))
+                break
+            }
+            if tick > remaining.startIndex {
+                result.append(markdownPlain(String(remaining[remaining.startIndex..<tick])))
+            }
+            let after = remaining.index(after: tick)
+            if after < remaining.endIndex, let close = remaining[after...].firstIndex(of: "`") {
+                result.append(codeSpan(String(remaining[after..<close])))
+                remaining = remaining[remaining.index(after: close)...]
+            } else {
+                result.append(markdownPlain(String(remaining[tick...])))
+                break
+            }
+        }
+        return result
+    }
+
+    private static func codeSpan(_ code: String) -> AttributedString {
+        var attr = AttributedString(code)
+        attr.inlinePresentationIntent = .code
+        attr.foregroundColor = codeColor
+        attr.font = .body.monospaced()
+        return attr
+    }
+
+    private static func markdownPlain(_ text: String) -> AttributedString {
+        guard !text.isEmpty else { return AttributedString() }
+        let escaped = text.replacingOccurrences(of: "<", with: "&lt;")
+        return (try? AttributedString(
+            markdown: escaped,
             options: AttributedString.MarkdownParsingOptions(
                 interpretedSyntax: .inlineOnlyPreservingWhitespace
             )
         )) ?? AttributedString(text)
-        for run in attr.runs {
-            if run.inlinePresentationIntent?.contains(.code) == true {
-                attr[run.range].foregroundColor = codeColor
-                attr[run.range].font = .body.monospaced()
-            }
-        }
-        return attr
     }
 
     static func headingFont(level: Int) -> Font {
@@ -301,10 +335,16 @@ struct RichMessageView: View {
             ForEach(MarkdownBlockParser.parse(text)) { block in
                 switch block {
                 case .text(let chunk):
-                    Text(GrokMarkdownStyle.attributed(chunk))
-                        .textSelection(.enabled)
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(GrokMarkdownStyle.lines(in: chunk).enumerated()), id: \.offset) { _, line in
+                            if line.isEmpty {
+                                Color.clear.frame(height: 8)
+                            } else {
+                                WrappingAttributedText(attributed: GrokMarkdownStyle.attributedLine(line))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .mermaid(let source):
                     SizedMermaidWebView(source: source)
                 case .latex(let expr, let display):
@@ -319,6 +359,103 @@ struct RichMessageView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Height of wrapped attributed chat text for a given width.
+enum AttributedTextSizing {
+    static func height(_ attributed: AttributedString, width: CGFloat) -> CGFloat {
+        guard width > 1 else { return 0 }
+        let ns = nsAttributed(attributed)
+        let bounds = ns.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return ceil(bounds.height) + 8
+    }
+
+    static func nsAttributed(_ attributed: AttributedString) -> NSAttributedString {
+        let ns = NSMutableAttributedString(attributed)
+        let body = NSFont.preferredFont(forTextStyle: .body)
+        let full = NSRange(location: 0, length: ns.length)
+        ns.enumerateAttribute(.font, in: full) { value, range, _ in
+            if value == nil {
+                ns.addAttribute(.font, value: body, range: range)
+            }
+        }
+        ns.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            if value == nil {
+                ns.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+            }
+        }
+        return ns
+    }
+}
+
+private struct ChatColumnWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var chatColumnWidth: CGFloat {
+        get { self[ChatColumnWidthKey.self] }
+        set { self[ChatColumnWidthKey.self] = newValue }
+    }
+}
+
+/// SwiftUI `Text(AttributedString)` in a vertical `ScrollView` is often proposed
+/// infinite width, so height is newline-count and wrapped lines clip. Propose the
+/// chat column width instead.
+private struct WrappingAttributedText: View {
+    let attributed: AttributedString
+    @Environment(\.chatColumnWidth) private var columnWidth
+
+    var body: some View {
+        if columnWidth > 1 {
+            WrappingAttributedTextView(attributed: attributed, width: columnWidth)
+                .frame(width: columnWidth, alignment: .leading)
+        } else {
+            Text(attributed)
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct WrappingAttributedTextView: NSViewRepresentable {
+    let attributed: AttributedString
+    let width: CGFloat
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView(usingTextLayoutManager: false)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.isRichText = true
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = false
+        view.focusRingType = .none
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        view.textStorage?.setAttributedString(AttributedTextSizing.nsAttributed(attributed))
+        view.textContainer?.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        updateNSView(nsView, context: context)
+        guard let layoutManager = nsView.layoutManager, let container = nsView.textContainer else {
+            return CGSize(width: width, height: 18)
+        }
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container)
+        return CGSize(width: width, height: max(ceil(used.height) + 4, 18))
     }
 }
 

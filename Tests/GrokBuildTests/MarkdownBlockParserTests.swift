@@ -121,6 +121,25 @@ final class MarkdownBlockParserTests: XCTestCase {
         }
     }
 
+    func testLongListLineWithManyInlineCodeSpansKeepsTail() {
+        let line = "- **Bootstrap:** `setup-mini.sh`, `setup-macbook.sh`, `setup-poly.sh`, `setup-spark.sh`, plus focused helpers (`setup-buzz.sh`, `setup-boost.sh`, `setup-agnt-spark.sh`, `setup-macbook-agnt.sh`)"
+        let rendered = String(GrokMarkdownStyle.attributedLine(line).characters)
+        XCTAssertTrue(rendered.contains("setup-macbook-agnt.sh"), rendered)
+        XCTAssertTrue(rendered.contains("setup-boost.sh"), rendered)
+        XCTAssertFalse(rendered.contains("`"), rendered)
+    }
+
+    func testContractParagraphKeepsTail() {
+        let line = "The contract is `AGENTS.md`. The topology map is `docs/architecture/stack-map.md`. Day-to-day “which agent do I ask?” is `USAGE.md`. Runbooks and skill cards under `docs/` (copied into Cursor/Claude/Grok/Codex skill dirs) tell agents how to upgrade, wire Buzz, switch Spark models, and keep trading gated."
+        let rendered = String(GrokMarkdownStyle.attributedLine(line).characters)
+        XCTAssertTrue(rendered.contains("wire Buzz"), rendered)
+        XCTAssertTrue(rendered.contains("keep trading gated"), rendered)
+    }
+
+    func testLinesPreserveBlankParagraphBreaks() {
+        XCTAssertEqual(GrokMarkdownStyle.lines(in: "a\n\nb"), ["a", "", "b"])
+    }
+
     func testHeadingLineDropsHashesAndKeepsTitle() {
         let heading = GrokMarkdownStyle.heading(from: "## Purpose")
         XCTAssertEqual(heading?.level, 2)
@@ -146,6 +165,56 @@ final class MarkdownBlockParserTests: XCTestCase {
             run.inlinePresentationIntent?.contains(.code) == true
         }
         XCTAssertTrue(hasCode)
+    }
+
+    func testInlineCodePreservesAngleBracketPlaceholder() {
+        let line = "must use `wss://<BUZZ_DOMAIN>`, not raw `ws://ai-stack:3000`."
+        let attr = GrokMarkdownStyle.inline(line)
+        let rendered = String(attr.characters)
+        XCTAssertTrue(rendered.contains("<BUZZ_DOMAIN>"), rendered)
+        XCTAssertTrue(rendered.contains("ws://ai-stack:3000"), rendered)
+        XCTAssertTrue(rendered.contains("must use"), rendered)
+        XCTAssertTrue(rendered.contains("not raw"), rendered)
+
+        var codePieces: [String] = []
+        var plainPieces: [String] = []
+        for run in attr.runs {
+            let piece = String(attr[run.range].characters)
+            if run.inlinePresentationIntent?.contains(.code) == true {
+                codePieces.append(piece)
+            } else {
+                plainPieces.append(piece)
+            }
+        }
+        XCTAssertEqual(codePieces, ["wss://<BUZZ_DOMAIN>", "ws://ai-stack:3000"])
+        XCTAssertTrue(plainPieces.joined().contains("not raw"), plainPieces.joined())
+    }
+
+    func testAttributedKeepsTailAfterAngleBracketsAndHeadings() {
+        let markdown = """
+        Buzz is the consumer chat front door. The desktop app must use `wss://<BUZZ_DOMAIN>`, not raw `ws://ai-stack:3000`.
+
+        ## What lives in the repo
+
+        Runbooks and skill cards under `docs/` (copied into Cursor/Claude/Grok/Codex skill dirs) tell agents how to upgrade, wire Buzz, switch Spark models, and keep trading gated.
+
+        **In one line:** AGNT takes the request and everyone else has one job.
+        """
+        let rendered = String(GrokMarkdownStyle.attributed(markdown).characters)
+        XCTAssertTrue(rendered.contains("<BUZZ_DOMAIN>"), rendered)
+        XCTAssertTrue(rendered.contains("wire Buzz"), rendered)
+        XCTAssertTrue(rendered.contains("In one line"), rendered)
+        XCTAssertTrue(rendered.contains("everyone else has one job"), rendered)
+        XCTAssertFalse(rendered.contains("##"), rendered)
+    }
+
+    func testWrappedAttributedHeightExceedsSingleLine() {
+        let line = String(repeating: "upgrade, wire Buzz, switch Spark models, and keep trading gated. ", count: 8)
+        let attributed = GrokMarkdownStyle.attributed(line)
+        let wrapped = AttributedTextSizing.height(attributed, width: 240)
+        let wide = AttributedTextSizing.height(attributed, width: 4000)
+        XCTAssertGreaterThan(wrapped, wide)
+        XCTAssertGreaterThan(wrapped, 40)
     }
 
     private func assertInlineLatex(in blocks: [MarkdownBlock], expected: String) {

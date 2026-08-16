@@ -473,6 +473,23 @@ final class SessionPersistenceTests: XCTestCase {
         SessionMessageStore.remove(for: sessionID)
     }
 
+    func testSessionMessageStoreKeepsLongerAssistantOnShorterSave() {
+        let sessionID = UUID()
+        let full = [
+            Message(role: .user, content: "explain"),
+            Message(role: .assistant, content: "tell agents how to upgrade, wire Buzz, and keep trading gated.")
+        ]
+        let truncated = [
+            Message(role: .user, content: "explain"),
+            Message(role: .assistant, content: "tell agents how to upgrade, wire")
+        ]
+        SessionMessageStore.save(full, for: sessionID)
+        SessionMessageStore.save(truncated, for: sessionID)
+        let loaded = SessionMessageStore.messages(for: sessionID)
+        XCTAssertEqual(loaded.last?.content.contains("keep trading gated"), true)
+        SessionMessageStore.remove(for: sessionID)
+    }
+
     // MARK: - Stale grok session load
 
     func testStaleSessionLoadDetectsFSNotFound() {
