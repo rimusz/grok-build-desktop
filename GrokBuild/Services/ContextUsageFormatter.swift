@@ -27,7 +27,8 @@ enum ContextUsageFormatter {
         value.map(decimal) ?? "—"
     }
 
-    /// e.g. "7,639 cached (64%)", or "0 cached" on a miss. Nil when grok omitted the field.
+    /// e.g. "7,639 cached (64%)", or "0 cached (0%)" on a miss when input is known.
+    /// Without input, "0 cached" (no percent). Nil when grok omitted the field.
     static func cachedLine(cached: Int?, input: Int?) -> String? {
         guard let cached else { return nil }
         if let percent = cachePercent(cached: cached, input: input) {
