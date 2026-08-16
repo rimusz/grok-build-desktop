@@ -23,10 +23,30 @@ enum SessionMessageStore {
         UserDefaults.standard.set(map, forKey: key)
     }
 
-    /// Never drop a longer on-disk transcript when memory is temporarily empty or partial.
+    /// Never drop a longer on-disk transcript when memory is temporarily empty,
+    /// partial, or shorter (last assistant chunks not yet persisted).
     private static func mergeTranscripts(existing: [Message], incoming: [Message]) -> [Message] {
         guard !existing.isEmpty else { return incoming }
         guard !incoming.isEmpty else { return existing }
+
+        let existingChars = existing.conversationCharacterCount
+        let incomingChars = incoming.conversationCharacterCount
+        if incomingChars > existingChars {
+            return incoming
+        }
+        if existingChars > incomingChars {
+            var merged = existing
+            var seen = Set(existing.map(\.id))
+            for message in incoming where !seen.contains(message.id) {
+                if message.role == .user || message.role == .assistant {
+                    continue
+                }
+                merged.append(message)
+                seen.insert(message.id)
+            }
+            return merged
+        }
+
         if incoming.count >= existing.count { return incoming }
 
         var byID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })

@@ -130,8 +130,11 @@ struct ChatView: View {
             }
 
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
+                GeometryReader { geo in
+                    ScrollView {
+                    // VStack, not LazyVStack: attributed assistant bubbles report
+                    // the wrong height when lazily measured, which clips the tail.
+                    VStack(alignment: .leading, spacing: 14) {
                         if store.messages.isEmpty {
                             if store.currentWorkspace == nil {
                                 noProjectState
@@ -211,6 +214,8 @@ struct ChatView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
+                    .frame(width: geo.size.width, alignment: .leading)
+                    .environment(\.chatColumnWidth, max(geo.size.width - 32, 0))
                 }
                 .background(Color(nsColor: .textBackgroundColor))
                 .onChange(of: store.messages.count) { _, _ in
@@ -226,6 +231,7 @@ struct ChatView: View {
                         guard !Task.isCancelled else { return }
                         scrollToBottom(proxy: proxy)
                     }
+                }
                 }
             }
 

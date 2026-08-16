@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import WebKit
 import AVKit
 
@@ -7,6 +8,8 @@ enum MarkdownBlock: Identifiable, Hashable {
     case mermaid(String)
     case latex(String, display: Bool)
     case media(InlineMediaRef)
+    case code(language: String, source: String)
+    case table(headers: [String], rows: [[String]])
 
     var id: String {
         switch self {
@@ -14,6 +17,8 @@ enum MarkdownBlock: Identifiable, Hashable {
         case .mermaid(let s): return "m-\(s.hashValue)"
         case .latex(let s, let d): return "l-\(d)-\(s.hashValue)"
         case .media(let ref): return "media-\(ref.isVideo)-\(ref.source.hashValue)"
+        case .code(let language, let source): return "c-\(language)-\(source.hashValue)"
+        case .table(let headers, let rows): return "tbl-\(headers.hashValue)-\(rows.hashValue)"
         }
     }
 }
@@ -31,8 +36,13 @@ enum MarkdownBlockParser {
                 }
                 blocks.append(match.block)
                 remaining = String(remaining[match.range.upperBound...])
+                if remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    break
+                }
             } else {
-                blocks.append(.text(remaining))
+                if !remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    blocks.append(.text(remaining))
+                }
                 break
             }
         }
@@ -56,14 +66,8 @@ enum MarkdownBlockParser {
     private static func firstSpecialBlock(in text: String) -> Match? {
         var best: Match?
 
-        if let m = matchFenced(in: text, language: "mermaid") {
+        if let m = matchFenced(in: text) {
             best = m
-        }
-
-        for lang in ["latex", "tex", "math"] {
-            if let m = matchFenced(in: text, language: lang) {
-                if best == nil || m.range.lowerBound < best!.range.lowerBound { best = m }
-            }
         }
 
         if let m = matchDisplayMath(in: text) {
@@ -71,6 +75,10 @@ enum MarkdownBlockParser {
         }
 
         if let m = matchInlineMath(in: text) {
+            if best == nil || m.range.lowerBound < best!.range.lowerBound { best = m }
+        }
+
+        if let m = matchTable(in: text) {
             if best == nil || m.range.lowerBound < best!.range.lowerBound { best = m }
         }
 
@@ -82,19 +90,88 @@ enum MarkdownBlockParser {
         return best
     }
 
-    private static func matchFenced(in text: String, language: String) -> Match? {
-        let pattern = "```\(language)\\s*([\\s\\S]*?)```"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+    private static func matchFenced(in text: String) -> Match? {
+        let pattern = "```([^\\n`]*)\\r?\\n([\\s\\S]*?)```"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let ns = text as NSString
         guard let result = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)),
-              result.numberOfRanges > 1,
+              result.numberOfRanges > 2,
               let fullRange = Range(result.range, in: text),
-              let contentRange = Range(result.range(at: 1), in: text) else { return nil }
+              let languageRange = Range(result.range(at: 1), in: text),
+              let contentRange = Range(result.range(at: 2), in: text) else { return nil }
+        let language = String(text[languageRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         let content = String(text[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let block: MarkdownBlock = language.lowercased() == "mermaid"
-            ? .mermaid(content)
-            : .latex(content, display: true)
+        let block: MarkdownBlock
+        switch language.lowercased() {
+        case "mermaid":
+            block = .mermaid(content)
+        case "latex", "tex", "math":
+            block = .latex(content, display: true)
+        default:
+            block = .code(language: language, source: content)
+        }
         return Match(range: fullRange, block: block)
+    }
+
+    private static func matchTable(in text: String) -> Match? {
+        let lines = lineSlices(in: text)
+        guard lines.count >= 2 else { return nil }
+        for index in 0..<(lines.count - 1) {
+            guard isTableRow(lines[index].text), isTableSeparator(lines[index + 1].text) else { continue }
+            let headers = tableCells(in: lines[index].text)
+            guard headers.count >= 2 else { continue }
+            var rows: [[String]] = []
+            var last = index + 1
+            var rowIndex = index + 2
+            while rowIndex < lines.count, isTableRow(lines[rowIndex].text) {
+                var cells = tableCells(in: lines[rowIndex].text)
+                if cells.count < headers.count {
+                    cells.append(contentsOf: Array(repeating: "", count: headers.count - cells.count))
+                }
+                rows.append(Array(cells.prefix(headers.count)))
+                last = rowIndex
+                rowIndex += 1
+            }
+            let range = lines[index].range.lowerBound..<lines[last].range.upperBound
+            return Match(range: range, block: .table(headers: headers, rows: rows))
+        }
+        return nil
+    }
+
+    private struct LineSlice {
+        let range: Range<String.Index>
+        let text: String
+    }
+
+    private static func lineSlices(in text: String) -> [LineSlice] {
+        var result: [LineSlice] = []
+        text.enumerateSubstrings(in: text.startIndex..., options: .byLines) { _, range, _, _ in
+            result.append(LineSlice(range: range, text: String(text[range])))
+        }
+        return result
+    }
+
+    static func isTableRow(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("|") && trimmed.filter { $0 == "|" }.count >= 2
+    }
+
+    static func isTableSeparator(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("-") else { return false }
+        let stripped = trimmed.replacingOccurrences(of: "|", with: "")
+            .replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty
+    }
+
+    static func tableCells(in line: String) -> [String] {
+        var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("|") { trimmed.removeFirst() }
+        if trimmed.hasSuffix("|") { trimmed.removeLast() }
+        return trimmed.split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
     private static func matchDisplayMath(in text: String) -> Match? {
@@ -122,6 +199,134 @@ enum MarkdownBlockParser {
     }
 }
 
+/// Line-oriented markdown so session answers match grok CLI: blue headings, cyan
+/// ``code``, lists, and preserved ASCII diagrams (not HTML paragraph wrapping).
+enum GrokMarkdownStyle {
+    static let headingColor = Color(red: 88 / 255, green: 166 / 255, blue: 255 / 255)
+    static let codeColor = Color(red: 125 / 255, green: 207 / 255, blue: 255 / 255)
+
+    static func attributed(_ chunk: String) -> AttributedString {
+        var result = AttributedString()
+        let parts = lines(in: chunk)
+        for (index, part) in parts.enumerated() {
+            result.append(attributedLine(part))
+            if index < parts.count - 1 {
+                result.append(AttributedString("\n"))
+            }
+        }
+        return result
+    }
+
+    static func lines(in chunk: String) -> [String] {
+        chunk.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+    }
+
+    static func attributedLine(_ line: String) -> AttributedString {
+        if let heading = heading(from: line) {
+            var styled = inline(heading.text)
+            styled.foregroundColor = headingColor
+            styled.font = headingFont(level: heading.level)
+            for run in styled.runs {
+                if run.inlinePresentationIntent?.contains(.code) == true {
+                    styled[run.range].foregroundColor = codeColor
+                    styled[run.range].font = headingFont(level: heading.level).monospaced()
+                }
+            }
+            return styled
+        }
+        if let item = listItem(from: line) {
+            var prefix = AttributedString(item.prefix)
+            prefix.append(inline(item.text))
+            return prefix
+        }
+        return inline(line)
+    }
+
+    static func heading(from line: String) -> (level: Int, text: String)? {
+        guard let regex = try? NSRegularExpression(pattern: #"^(#{1,6})\s+(.+)$"#) else { return nil }
+        let ns = line as NSString
+        guard let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges > 2,
+              let hashes = Range(match.range(at: 1), in: line),
+              let body = Range(match.range(at: 2), in: line) else { return nil }
+        return (String(line[hashes]).count, String(line[body]))
+    }
+
+    static func listItem(from line: String) -> (prefix: String, text: String)? {
+        guard let unordered = try? NSRegularExpression(pattern: #"^(\s*)([-*+])\s+(.+)$"#) else { return nil }
+        let ns = line as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        if let match = unordered.firstMatch(in: line, range: full),
+           match.numberOfRanges > 3,
+           let indent = Range(match.range(at: 1), in: line),
+           let body = Range(match.range(at: 3), in: line) {
+            return (String(line[indent]) + "• ", String(line[body]))
+        }
+        guard let ordered = try? NSRegularExpression(pattern: #"^(\s*)(\d+\.)\s+(.+)$"#) else { return nil }
+        if let match = ordered.firstMatch(in: line, range: full),
+           match.numberOfRanges > 3,
+           let indent = Range(match.range(at: 1), in: line),
+           let number = Range(match.range(at: 2), in: line),
+           let body = Range(match.range(at: 3), in: line) {
+            return (String(line[indent]) + String(line[number]) + " ", String(line[body]))
+        }
+        return nil
+    }
+
+    /// Pull ``code`` out before Foundation markdown. Otherwise `<BUZZ_DOMAIN>` is
+    /// treated as HTML and the first backtick never closes, painting the rest of
+    /// the line cyan and clipping follow-on paragraphs in `Text`.
+    static func inline(_ text: String) -> AttributedString {
+        var result = AttributedString()
+        var remaining = text[...]
+        while !remaining.isEmpty {
+            guard let tick = remaining.firstIndex(of: "`") else {
+                result.append(markdownPlain(String(remaining)))
+                break
+            }
+            if tick > remaining.startIndex {
+                result.append(markdownPlain(String(remaining[remaining.startIndex..<tick])))
+            }
+            let after = remaining.index(after: tick)
+            if after < remaining.endIndex, let close = remaining[after...].firstIndex(of: "`") {
+                result.append(codeSpan(String(remaining[after..<close])))
+                remaining = remaining[remaining.index(after: close)...]
+            } else {
+                result.append(markdownPlain(String(remaining[tick...])))
+                break
+            }
+        }
+        return result
+    }
+
+    private static func codeSpan(_ code: String) -> AttributedString {
+        var attr = AttributedString(code)
+        attr.inlinePresentationIntent = .code
+        attr.foregroundColor = codeColor
+        attr.font = .body.monospaced()
+        return attr
+    }
+
+    private static func markdownPlain(_ text: String) -> AttributedString {
+        guard !text.isEmpty else { return AttributedString() }
+        let escaped = text.replacingOccurrences(of: "<", with: "&lt;")
+        return (try? AttributedString(
+            markdown: escaped,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        )) ?? AttributedString(text)
+    }
+
+    static func headingFont(level: Int) -> Font {
+        switch level {
+        case 1: return .title2.weight(.semibold)
+        case 2: return .title3.weight(.semibold)
+        default: return .headline
+        }
+    }
+}
+
 struct RichMessageView: View {
     let text: String
 
@@ -130,32 +335,186 @@ struct RichMessageView: View {
             ForEach(MarkdownBlockParser.parse(text)) { block in
                 switch block {
                 case .text(let chunk):
-                    Text(renderedMarkdown(chunk))
-                        .textSelection(.enabled)
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(GrokMarkdownStyle.lines(in: chunk).enumerated()), id: \.offset) { _, line in
+                            if line.isEmpty {
+                                Color.clear.frame(height: 8)
+                            } else {
+                                WrappingAttributedText(attributed: GrokMarkdownStyle.attributedLine(line))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 case .mermaid(let source):
                     SizedMermaidWebView(source: source)
                 case .latex(let expr, let display):
                     SizedLaTeXWebView(latex: expr, displayMode: display)
                 case .media(let ref):
                     InlineMediaView(ref: ref)
+                case .code(_, let source):
+                    MarkdownCodeBlockView(source: source)
+                case .table(let headers, let rows):
+                    MarkdownTableView(headers: headers, rows: rows)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 
-    private func renderedMarkdown(_ chunk: String) -> AttributedString {
-        if let attr = try? AttributedString(
-            markdown: chunk,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        ) {
-            return attr
+/// Height of wrapped attributed chat text for a given width.
+enum AttributedTextSizing {
+    static func height(_ attributed: AttributedString, width: CGFloat) -> CGFloat {
+        guard width > 1 else { return 0 }
+        let ns = nsAttributed(attributed)
+        let bounds = ns.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return ceil(bounds.height) + 8
+    }
+
+    static func nsAttributed(_ attributed: AttributedString) -> NSAttributedString {
+        let ns = NSMutableAttributedString(attributed)
+        let body = NSFont.preferredFont(forTextStyle: .body)
+        let full = NSRange(location: 0, length: ns.length)
+        ns.enumerateAttribute(.font, in: full) { value, range, _ in
+            if value == nil {
+                ns.addAttribute(.font, value: body, range: range)
+            }
         }
-        return AttributedString(chunk)
+        ns.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            if value == nil {
+                ns.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+            }
+        }
+        return ns
+    }
+}
+
+private struct ChatColumnWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var chatColumnWidth: CGFloat {
+        get { self[ChatColumnWidthKey.self] }
+        set { self[ChatColumnWidthKey.self] = newValue }
+    }
+}
+
+/// SwiftUI `Text(AttributedString)` in a vertical `ScrollView` is often proposed
+/// infinite width, so height is newline-count and wrapped lines clip. Propose the
+/// chat column width instead.
+private struct WrappingAttributedText: View {
+    let attributed: AttributedString
+    @Environment(\.chatColumnWidth) private var columnWidth
+
+    var body: some View {
+        if columnWidth > 1 {
+            WrappingAttributedTextView(attributed: attributed, width: columnWidth)
+                .frame(width: columnWidth, alignment: .leading)
+        } else {
+            Text(attributed)
+                .font(.body)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct WrappingAttributedTextView: NSViewRepresentable {
+    let attributed: AttributedString
+    let width: CGFloat
+
+    func makeNSView(context: Context) -> NSTextView {
+        let view = NSTextView(usingTextLayoutManager: false)
+        view.isEditable = false
+        view.isSelectable = true
+        view.drawsBackground = false
+        view.isRichText = true
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = false
+        view.textContainerInset = .zero
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = false
+        view.focusRingType = .none
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return view
+    }
+
+    func updateNSView(_ view: NSTextView, context: Context) {
+        view.textStorage?.setAttributedString(AttributedTextSizing.nsAttributed(attributed))
+        view.textContainer?.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        updateNSView(nsView, context: context)
+        guard let layoutManager = nsView.layoutManager, let container = nsView.textContainer else {
+            return CGSize(width: width, height: 18)
+        }
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container)
+        return CGSize(width: width, height: max(ceil(used.height) + 4, 18))
+    }
+}
+
+private struct MarkdownCodeBlockView: View {
+    let source: String
+
+    var body: some View {
+        Text(source)
+            .font(.system(.body, design: .monospaced))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct MarkdownTableView: View {
+    let headers: [String]
+    let rows: [[String]]
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            GridRow {
+                ForEach(Array(headers.enumerated()), id: \.offset) { column, header in
+                    tableCell(header, header: true, column: column, row: 0)
+                }
+            }
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                GridRow {
+                    ForEach(Array(row.enumerated()), id: \.offset) { column, value in
+                        tableCell(value, header: false, column: column, row: rowIndex + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func tableCell(_ text: String, header: Bool, column: Int, row: Int) -> some View {
+        Text(GrokMarkdownStyle.inline(text))
+            .font(header ? .callout.weight(.semibold) : .body)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) {
+                if column == 0 {
+                    Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1)
+                }
+            }
+            .overlay(alignment: .top) {
+                if row == 0 {
+                    Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1)
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1)
+            }
     }
 }
 

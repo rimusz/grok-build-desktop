@@ -24,3 +24,14 @@ struct Message: Identifiable, Codable, Sendable, Hashable {
         self.timestamp = timestamp
     }
 }
+
+extension Array where Element == Message {
+    /// Combined length of user + assistant text. Used to prefer a longer grok
+    /// jsonl transcript over a locally persisted copy that missed the last chunks.
+    var conversationCharacterCount: Int {
+        reduce(0) { partial, message in
+            guard message.role == .user || message.role == .assistant else { return partial }
+            return partial + message.content.count
+        }
+    }
+}

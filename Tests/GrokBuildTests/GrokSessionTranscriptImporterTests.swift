@@ -154,6 +154,54 @@ final class GrokSessionTranscriptImporterTests: XCTestCase {
         XCTAssertTrue(SessionMessageStore.messages(for: sessionID).isEmpty)
     }
 
+    func testRecoverIfNeededReplacesShorterLocalTranscript() throws {
+        let sessionID = UUID()
+        defer { SessionMessageStore.remove(for: sessionID) }
+
+        let grokHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grokbuild-test-\(UUID().uuidString)", isDirectory: true)
+        GrokSessionTranscriptImporter.grokHomeDirectory = grokHome
+        defer { try? FileManager.default.removeItem(at: grokHome) }
+
+        let workspace = URL(fileURLWithPath: "/tmp/truncated-recovery")
+        let grokID = "019eef73-trunc-tail"
+        let historyURL = GrokSessionTranscriptImporter.chatHistoryURL(
+            workspacePath: workspace,
+            grokSessionID: grokID
+        )!
+        try FileManager.default.createDirectory(
+            at: historyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try """
+        {"type":"user","content":[{"type":"text","text":"explain"}]}
+        {"type":"assistant","content":"tell agents how to upgrade, wire Buzz, switch Spark models, and keep trading gated.\\n\\n**In one line:** AGNT takes the request."}
+        """.write(to: historyURL, atomically: true, encoding: .utf8)
+
+        let truncated = [
+            Message(role: .user, content: "explain"),
+            Message(role: .assistant, content: "tell agents how to upgrade, wire")
+        ]
+        XCTAssertTrue(
+            SessionTranscriptRecovery.shouldReplace(current: truncated, with: [
+                Message(role: .user, content: "explain"),
+                Message(role: .assistant, content: "tell agents how to upgrade, wire Buzz")
+            ])
+        )
+
+        let recovered = SessionTranscriptRecovery.recoverIfNeeded(
+            sessionID: sessionID,
+            grokSessionID: grokID,
+            workspacePath: workspace,
+            currentMessages: truncated
+        )
+        XCTAssertEqual(recovered?.last?.content.contains("In one line"), true)
+        XCTAssertEqual(
+            SessionMessageStore.messages(for: sessionID).last?.content.contains("In one line"),
+            true
+        )
+    }
+
     func testStaleFallbackNoteIsNotRestorableTranscript() {
         let sessionID = UUID()
         defer { SessionMessageStore.remove(for: sessionID) }
