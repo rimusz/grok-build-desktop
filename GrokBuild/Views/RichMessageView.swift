@@ -35,8 +35,13 @@ enum MarkdownBlockParser {
                 }
                 blocks.append(match.block)
                 remaining = String(remaining[match.range.upperBound...])
+                if remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    break
+                }
             } else {
-                blocks.append(.text(remaining))
+                if !remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    blocks.append(.text(remaining))
+                }
                 break
             }
         }
@@ -85,7 +90,7 @@ enum MarkdownBlockParser {
     }
 
     private static func matchFenced(in text: String) -> Match? {
-        let pattern = "```([^\\n`]*)\\n([\\s\\S]*?)```"
+        let pattern = "```([^\\n`]*)\\r?\\n([\\s\\S]*?)```"
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let ns = text as NSString
         guard let result = regex.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)),
@@ -139,40 +144,33 @@ enum MarkdownBlockParser {
 
     private static func lineSlices(in text: String) -> [LineSlice] {
         var result: [LineSlice] = []
-        var start = text.startIndex
-        while start < text.endIndex {
-            if let newline = text[start...].firstIndex(of: "\n") {
-                result.append(LineSlice(range: start..<newline, text: String(text[start..<newline])))
-                start = text.index(after: newline)
-            } else {
-                result.append(LineSlice(range: start..<text.endIndex, text: String(text[start...])))
-                break
-            }
+        text.enumerateSubstrings(in: text.startIndex..., options: .byLines) { _, range, _, _ in
+            result.append(LineSlice(range: range, text: String(text[range])))
         }
         return result
     }
 
     static func isTableRow(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.hasPrefix("|") && trimmed.filter { $0 == "|" }.count >= 2
     }
 
     static func isTableSeparator(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.contains("-") else { return false }
         let stripped = trimmed.replacingOccurrences(of: "|", with: "")
             .replacingOccurrences(of: ":", with: "")
             .replacingOccurrences(of: "-", with: "")
-            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return stripped.isEmpty
     }
 
     static func tableCells(in line: String) -> [String] {
-        var trimmed = line.trimmingCharacters(in: .whitespaces)
+        var trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("|") { trimmed.removeFirst() }
         if trimmed.hasSuffix("|") { trimmed.removeLast() }
         return trimmed.split(separator: "|", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
     private static func matchDisplayMath(in text: String) -> Match? {
@@ -344,30 +342,36 @@ private struct MarkdownTableView: View {
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
             GridRow {
-                ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
-                    tableCell(header, header: true)
+                ForEach(Array(headers.enumerated()), id: \.offset) { column, header in
+                    tableCell(header, header: true, column: column, row: 0)
                 }
             }
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
                 GridRow {
-                    ForEach(Array(row.enumerated()), id: \.offset) { _, value in
-                        tableCell(value, header: false)
+                    ForEach(Array(row.enumerated()), id: \.offset) { column, value in
+                        tableCell(value, header: false, column: column, row: rowIndex + 1)
                     }
                 }
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(Color.primary.opacity(0.28), lineWidth: 1)
-        )
     }
 
-    private func tableCell(_ text: String, header: Bool) -> some View {
+    private func tableCell(_ text: String, header: Bool, column: Int, row: Int) -> some View {
         Text(GrokMarkdownStyle.inline(text))
             .font(header ? .callout.weight(.semibold) : .body)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .leading) {
+                if column == 0 {
+                    Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1)
+                }
+            }
+            .overlay(alignment: .top) {
+                if row == 0 {
+                    Rectangle().fill(Color.primary.opacity(0.22)).frame(height: 1)
+                }
+            }
             .overlay(alignment: .trailing) {
                 Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1)
             }

@@ -79,6 +79,27 @@ final class MarkdownBlockParserTests: XCTestCase {
         }
     }
 
+    func testCRLFTableAndFenceStillParse() {
+        let table = "| Host | Role |\r\n|------|------|\r\n| Mini | backend |\r\n"
+        let tableBlocks = MarkdownBlockParser.parse(table)
+        XCTAssertEqual(tableBlocks.count, 1)
+        if case .table(let headers, let rows) = tableBlocks[0] {
+            XCTAssertEqual(headers, ["Host", "Role"])
+            XCTAssertEqual(rows, [["Mini", "backend"]])
+        } else {
+            XCTFail("Expected CRLF table")
+        }
+
+        let fence = "```\r\nMacBook —Tailscale—> Mini\r\n```"
+        let fenceBlocks = MarkdownBlockParser.parse(fence)
+        XCTAssertEqual(fenceBlocks.count, 1)
+        if case .code(_, let source) = fenceBlocks[0] {
+            XCTAssertTrue(source.contains("Tailscale"))
+        } else {
+            XCTFail("Expected CRLF fence")
+        }
+    }
+
     func testFencedCodeIsNotMermaid() {
         let blocks = MarkdownBlockParser.parse("before\n```\nMacBook —Tailscale—> Mini\n```\nafter")
         XCTAssertEqual(blocks.count, 3)
