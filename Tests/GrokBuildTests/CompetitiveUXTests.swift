@@ -644,6 +644,103 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(usage?.outputTokens, 12)
     }
 
+    func testTurnUsageParseLiveGrokPromptResultJSON() throws {
+        let raw: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": [
+                "stopReason": "end_turn",
+                "_meta": [
+                    "sessionId": "sess",
+                    "totalTokens": 18150,
+                    "modelId": "grok-4.6",
+                    "inputTokens": 18107,
+                    "outputTokens": 42,
+                    "cachedReadTokens": 2944,
+                    "reasoningTokens": 37,
+                    "usage": [
+                        "inputTokens": 18107,
+                        "outputTokens": 42,
+                        "totalTokens": 18149,
+                        "cachedReadTokens": 2944,
+                        "reasoningTokens": 37
+                    ] as [String: Any]
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: raw)
+        let obj = try JSONSerialization.jsonObject(with: data)
+        let usage = TurnTokenUsageParser.parse(fromAny: obj)
+        XCTAssertEqual(usage?.inputTokens, 18107)
+        XCTAssertEqual(usage?.cachedReadTokens, 2944)
+        XCTAssertEqual(usage?.outputTokens, 42)
+        XCTAssertEqual(usage?.reasoningTokens, 37)
+        XCTAssertEqual(
+            ContextUsageFormatter.cachedLine(cached: usage?.cachedReadTokens, input: usage?.inputTokens),
+            "2,944 cached (16%)"
+        )
+    }
+
+    func testTurnUsageParseXaiTurnCompletedNotification() {
+        let params: [String: Any] = [
+            "sessionId": "sess",
+            "update": [
+                "sessionUpdate": "turn_completed",
+                "usage": [
+                    "inputTokens": 18107,
+                    "outputTokens": 42,
+                    "cachedReadTokens": 2944,
+                    "reasoningTokens": 37
+                ] as [String: Any]
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(fromSessionUpdate: params)
+        XCTAssertEqual(usage?.inputTokens, 18107)
+        XCTAssertEqual(usage?.cachedReadTokens, 2944)
+    }
+
+    func testTurnUsageSnakeCaseUncachedPlusCacheIsFullPrompt() {
+        let update: [String: Any] = [
+            "sessionUpdate": "response_completed",
+            "usage": [
+                "input_tokens": 15163,
+                "output_tokens": 42,
+                "cache_read_input_tokens": 2944,
+                "reasoning_tokens": 37
+            ] as [String: Any]
+        ]
+        let usage = TurnTokenUsageParser.parse(from: update)
+        XCTAssertEqual(usage?.inputTokens, 18107)
+        XCTAssertEqual(usage?.cachedReadTokens, 2944)
+        XCTAssertEqual(usage?.outputTokens, 42)
+        XCTAssertEqual(
+            ContextUsageFormatter.cachePercent(cached: usage?.cachedReadTokens, input: usage?.inputTokens),
+            16
+        )
+    }
+
+    func testTurnUsageParseCacheReadInputTokensAndOpenAIDetails() {
+        let cacheRead = TurnTokenUsageParser.parse(from: [
+            "usage": [
+                "inputTokens": 200,
+                "outputTokens": 10,
+                "cacheReadInputTokens": 80
+            ] as [String: Any]
+        ])
+        XCTAssertEqual(cacheRead?.cachedReadTokens, 80)
+
+        let openai = TurnTokenUsageParser.parse(from: [
+            "usage": [
+                "prompt_tokens": 120,
+                "completion_tokens": 9,
+                "prompt_tokens_details": ["cached_tokens": 40] as [String: Any]
+            ] as [String: Any]
+        ])
+        XCTAssertEqual(openai?.inputTokens, 120)
+        XCTAssertEqual(openai?.cachedReadTokens, 40)
+        XCTAssertEqual(openai?.outputTokens, 9)
+    }
+
     // MARK: - Workflow run cards
 
     func testWorkflowRunBudgetFraction() {
