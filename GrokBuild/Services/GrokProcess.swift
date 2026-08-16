@@ -227,6 +227,8 @@ enum AcpEvent: @unchecked Sendable {
     case permissionRequest(PermissionRequest)
     case modeChanged(mode: AgentMode)
     case contextUsage(totalTokens: Int)
+    /// Last-turn input / cache / output / reasoning from `session/prompt` `_meta`.
+    case turnUsage(TurnTokenUsage)
     case availableCommands([SlashCommand])
     /// A grok `scheduler_*` tool-call `session/update`, forwarded raw for the scheduled-tasks panel.
     case schedulerActivity(payload: [String: Any])
@@ -940,24 +942,33 @@ final class GrokProcess: @unchecked Sendable {
 
     private func handleJsonLine(_ line: String) {
         guard let data = line.data(using: .utf8),
-              let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let obj = try? JSONSerialization.jsonObject(with: data),
+              let j = TurnTokenUsageParser.dictionary(obj) else {
             acpEventContinuation?.yield(.rawLine(line))
             return
         }
 
         if let method = j["method"] as? String {
-            let params = j["params"] as? [String: Any] ?? [:]
+            let params = TurnTokenUsageParser.dictionary(j["params"]) ?? [:]
             let rid = j["id"]
 
             if method == "session/update" {
-                let update = params["update"] as? [String: Any]
+                let update = TurnTokenUsageParser.dictionary(params["update"])
                 if let total = totalTokens(from: params) {
                     acpEventContinuation?.yield(.contextUsage(totalTokens: total))
                 }
+                emitTurnUsage(from: params)
                 if !GrokSessionReplay.isReplaySessionUpdate(params: params, update: update),
                    let u = update {
                     routeUpdate(u)
                 }
+                return
+            }
+
+            // grok emits last-turn PromptUsage here (cachedReadTokens), not only on
+            // the session/prompt JSON-RPC result.
+            if method == "_x.ai/session_notification" || method == "x.ai/session_notification" {
+                emitTurnUsage(from: params)
                 return
             }
 
@@ -1030,8 +1041,12 @@ final class GrokProcess: @unchecked Sendable {
                     }
                     pending.continuation.resume(throwing: NSError(domain: "ACP", code: -1, userInfo: info))
                 } else {
+                    emitTurnUsage(from: j)
                     pending.continuation.resume(returning: j["result"])
                 }
+            } else {
+                // Steer (and other unmatched) `session/prompt` replies still carry usage.
+                emitTurnUsage(from: j)
             }
             return
         }
@@ -1044,17 +1059,22 @@ final class GrokProcess: @unchecked Sendable {
         return nil
     }
 
+    private func emitTurnUsage(from value: Any?) {
+        guard let usage = TurnTokenUsageParser.parse(fromAny: value)
+                ?? TurnTokenUsageParser.parse(fromSessionUpdateAny: value) else { return }
+        acpEventContinuation?.yield(.turnUsage(usage))
+    }
+
     private func totalTokens(from params: [String: Any]) -> Int? {
-        if let meta = params["_meta"] as? [String: Any],
-           let total = meta["totalTokens"] as? Int {
-            return total
+        func total(in object: Any?) -> Int? {
+            guard let meta = TurnTokenUsageParser.dictionary(
+                TurnTokenUsageParser.dictionary(object)?["_meta"] ?? object
+            ) else { return nil }
+            if let n = meta["totalTokens"] as? Int { return n }
+            if let n = meta["totalTokens"] as? NSNumber { return n.intValue }
+            return nil
         }
-        if let update = params["update"] as? [String: Any],
-           let meta = update["_meta"] as? [String: Any],
-           let total = meta["totalTokens"] as? Int {
-            return total
-        }
-        return nil
+        return total(in: params) ?? total(in: params["_meta"]) ?? total(in: params["update"])
     }
 
     private func routeUpdate(_ u: [String: Any]) {

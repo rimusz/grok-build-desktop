@@ -111,6 +111,8 @@ final class ChatStore {
     ]
     private var customModelsByID: [String: CustomModel] = [:]
     private(set) var usedContextTokens: Int?
+    /// Last completed turn's input / cache / output / reasoning (ACP `_meta`, not context size).
+    private(set) var lastTurnUsage: TurnTokenUsage?
 
     // Persist mode/model choices per Grok session id.
     private let sessionSelectionsKey = "grokbuild.sessionSelections.v1"
@@ -439,6 +441,7 @@ final class ChatStore {
         streamingMessageID = nil
         connectionWatchdogTask?.cancel()
         usedContextTokens = nil
+        lastTurnUsage = nil
         connectionState = .starting
         lastError = nil
         postStatusUpdate("starting")
@@ -1504,6 +1507,8 @@ final class ChatStore {
             }
         case .contextUsage(let totalTokens):
             usedContextTokens = totalTokens
+        case .turnUsage(let usage):
+            lastTurnUsage = usage
 
         case .rawLine(let line):
             appendAssistantText(line)

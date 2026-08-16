@@ -104,7 +104,7 @@ async function handleChatCompletions(request, response) {
     });
 
     try {
-      const text = await runAgent({ apiKey, model, prompt, onDelta: (delta) => {
+      const { text, usage } = await runAgent({ apiKey, model, prompt, onDelta: (delta) => {
         writeSseChunk(response, {
           id: completionId,
           object: "chat.completion.chunk",
@@ -119,6 +119,16 @@ async function handleChatCompletions(request, response) {
         created,
         model,
         choices: [{ index: 0, delta: {}, finish_reason: "stop" }]
+      });
+      // grok's OpenAI provider is streaming; without a usage chunk ACP never
+      // sees last-turn input / cache / output.
+      writeSseChunk(response, {
+        id: completionId,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [],
+        usage
       });
       response.write("data: [DONE]\n\n");
       if (!text) {
@@ -143,7 +153,7 @@ async function handleChatCompletions(request, response) {
     return;
   }
 
-  const text = await runAgent({ apiKey, model, prompt });
+  const { text, usage } = await runAgent({ apiKey, model, prompt });
   writeJson(response, {
     id: completionId,
     object: "chat.completion",
@@ -156,11 +166,7 @@ async function handleChatCompletions(request, response) {
         finish_reason: "stop"
       }
     ],
-    usage: {
-      prompt_tokens: approximateTokens(prompt),
-      completion_tokens: approximateTokens(text),
-      total_tokens: approximateTokens(prompt) + approximateTokens(text)
-    }
+    usage
   });
 }
 
@@ -197,7 +203,8 @@ async function runAgent({ apiKey, model, prompt, onDelta }) {
     if (result?.status === "error") {
       throw new HttpError("Cursor SDK run failed", 502, "cursor_sdk_error");
     }
-    return stripFinalMarker(text);
+    const cleaned = stripFinalMarker(text);
+    return { text: cleaned, usage: openaiUsageFromSdk(result, prompt, cleaned) };
   } finally {
     try {
       await agent[Symbol.asyncDispose]?.();
@@ -401,6 +408,43 @@ function stripFinalMarker(text) {
   return String(text || "")
     .replace(/<\s*[|｜]\s*final\s*[|｜]\s*>/g, "")
     .trim();
+}
+
+function openaiUsageFromSdk(result, prompt, text) {
+  const src = result && typeof result === "object" ? result : {};
+  const raw = src.usage || src.tokenUsage || src.tokens || {};
+  const details = raw.prompt_tokens_details || raw.promptTokensDetails || {};
+  const cached =
+    firstNumber(
+      raw.cachedReadTokens,
+      raw.cacheReadInputTokens,
+      raw.cache_read_input_tokens,
+      raw.cached_tokens,
+      details.cached_tokens,
+      details.cachedTokens
+    ) ?? 0;
+  const promptTokens =
+    firstNumber(raw.prompt_tokens, raw.inputTokens, raw.input_tokens) ??
+    approximateTokens(prompt);
+  const completionTokens =
+    firstNumber(raw.completion_tokens, raw.outputTokens, raw.output_tokens) ??
+    approximateTokens(text);
+  const usage = {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: promptTokens + completionTokens
+  };
+  if (cached > 0) {
+    usage.prompt_tokens_details = { cached_tokens: cached };
+  }
+  return usage;
+}
+
+function firstNumber(...values) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.round(value));
+  }
+  return null;
 }
 
 function approximateTokens(text) {

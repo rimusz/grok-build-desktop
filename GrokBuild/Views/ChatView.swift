@@ -739,6 +739,7 @@ struct ChatView: View {
                         fraction: store.contextUsageFraction,
                         usedTokens: store.usedContextTokens,
                         limitTokens: store.currentModelContextLimit,
+                        lastTurnUsage: store.lastTurnUsage,
                         canCompact: store.currentWorkspace != nil && !store.isStreaming,
                         onCompact: { Task { await store.compactContext() } }
                     )
@@ -1630,6 +1631,7 @@ private struct ContextUsageIndicator: View {
     let fraction: Double
     var usedTokens: Int? = nil
     var limitTokens: Int? = nil
+    var lastTurnUsage: TurnTokenUsage? = nil
     var canCompact: Bool = false
     var onCompact: () -> Void = {}
 
@@ -1693,6 +1695,11 @@ private struct ContextUsageIndicator: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let usage = lastTurnUsage, usage.hasBreakdown {
+                Divider()
+                lastTurnBreakdown(usage)
+            }
+
             Text("Billed cost (USD) isn't reported over the grok agent connection, so only token usage is shown.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -1713,6 +1720,51 @@ private struct ContextUsageIndicator: View {
         }
         .padding(14)
         .frame(width: 300)
+    }
+
+    @ViewBuilder
+    private func lastTurnBreakdown(_ usage: TurnTokenUsage) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Last turn")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("grok-context-usage-last-turn")
+
+            usageRow("Input", usage.inputTokens)
+            if let cachedLine = ContextUsageFormatter.cachedLine(
+                cached: usage.cachedReadTokens,
+                input: usage.inputTokens
+            ) {
+                HStack {
+                    Text("Cached")
+                    Spacer()
+                    Text(cachedLine)
+                        .monospacedDigit()
+                        .foregroundStyle(usage.cachedReadTokens ?? 0 > 0 ? Color.primary : Color.secondary)
+                }
+                .font(.callout)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Cached")
+                .accessibilityValue(cachedLine)
+                .accessibilityIdentifier("grok-context-usage-cached")
+            }
+            usageRow("Output", usage.outputTokens)
+            if usage.reasoningTokens != nil {
+                usageRow("Reasoning", usage.reasoningTokens)
+            }
+        }
+    }
+
+    private func usageRow(_ title: String, _ value: Int?) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(ContextUsageFormatter.tokenCount(value))
+                .monospacedDigit()
+        }
+        .font(.callout)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityValue(ContextUsageFormatter.tokenCount(value))
     }
 }
 

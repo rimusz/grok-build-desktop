@@ -24,6 +24,11 @@ UpdateChecker.checkAppRelease()   // notarized GitHub releases only
 UpdateChecker.checkGrokCLI()      // grok update --check --json
 ```
 
+## Token usage (ACP)
+
+- Context-window ring: `session/update` `_meta.totalTokens` → `AcpEvent.contextUsage` → `ChatStore.usedContextTokens`.
+- Last-turn breakdown: grok’s live wire is `session/prompt` result `_meta` **and** `_x.ai/session_notification` (`turn_completed` / `response_completed` `usage`). Keys: `inputTokens` / `cachedReadTokens` (PromptUsage, full prompt including cache). Snake-case `input_tokens` + `cache_read_input_tokens` is uncached + hits — the parser adds them so the popover percent is cached/full. `TurnTokenUsageParser` → `AcpEvent.turnUsage` → `ChatStore.lastTurnUsage`. Do not treat prompt-result `totalTokens` as the context gauge. USD is not on this surface. Cursor-bridged models only show cache when the OpenAI `/v1` stream includes `usage` (bridge emits a final usage chunk).
+
 ## Auth & status bar
 
 - `GrokProcess.needsAuthentication` drives login banner and menu header.
