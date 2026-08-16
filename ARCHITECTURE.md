@@ -827,7 +827,7 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 | `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
-| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. `RichMessageView` parses mermaid/LaTeX blocks; WKWebView embeds reload only when source changes, report a fixed height after load (avoids lazy-list layout loops), and inline `$…$` spans require math signals (not currency/`$PATH`). |
+| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. Assistant text is line-oriented like grok CLI (`GrokMarkdownStyle`: blue headings, cyan inline code, lists) plus GFM tables and fenced code; mermaid/LaTeX still use WKWebView (reload only when source changes, fixed height after load). Inline `$…$` spans require math signals (not currency/`$PATH`). |
 | `PreviewPane.swift` | Diff detection from assistant messages; apply/commit |
 | `SessionBrowserView.swift` | **Sessions History** — resume/delete archived grok sessions; per-row **delete** + **Clear Empty** bulk cleanup (`GrokCLIService.deleteSession` + `SessionNameStore.removeName`). Copy: `SessionsHistoryCopy`. Distinct from live **Sessions Dashboard**. |
 | `GitCheckoutSheet.swift` | Branch switch / worktree create; `WindowTrafficLights` close |
@@ -970,6 +970,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **@ file mentions** | `Services/FileMention.swift`, `FileMentionListView`, `ChatView` (`mentionMatch`, `loadFileMentionIndex`) |
 | **Image vision attachments** | `Services/ImageAttachment.swift`, `ChatStore.addImageAttachment`, `GrokProcess.send(_:images:)`, `ImageChipBar` |
 | **Inline media preview** | `Services/InlineMedia.swift`, `MarkdownBlock.media`, `InlineMediaView` (`RichMessageView.swift`) |
+| **Assistant markdown (CLI-style)** | `GrokMarkdownStyle`, `MarkdownBlockParser` tables/fences, `MarkdownTableView` / `MarkdownCodeBlockView` (`RichMessageView.swift`) |
 | **Context usage popover** | `ContextUsageFormatter.swift`, `TurnTokenUsage.swift`, `ContextUsageIndicator` + `ChatStore.lastTurnUsage` / `compactContext` |
 | **Workflow run cards** | `WorkflowRunsCard` (`ComposerViews.swift`), `WorkflowRun.budgetFraction/isActive`, `ChatStore.pause/resume/stopWorkflowRun` |
 | **Doctor** | `DoctorReport.swift`, `DoctorSheet.swift`, `.openDoctorRequested` |
@@ -1006,7 +1007,7 @@ make test    # Tests/GrokBuildTests/
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Sessions History / Sessions Dashboard copy |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
-| `MarkdownBlockParserTests.swift` | Inline-math heuristic and mermaid/LaTeX block parsing in `RichMessageView` |
+| `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables, fenced code, grok-CLI heading/list styling in `RichMessageView` |
 | `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 

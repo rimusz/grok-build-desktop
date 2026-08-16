@@ -46,6 +46,87 @@ final class MarkdownBlockParserTests: XCTestCase {
         XCTAssertTrue(MarkdownBlockParser.looksLikeInlineMath("x=y"))
     }
 
+    func testGFMTableIsATableBlock() {
+        let markdown = """
+        Intro
+
+        | Host | Role |
+        |------|------|
+        | Mac Mini (`ai-stack`) | Always-on |
+        | MacBook | Operator |
+
+        Outro
+        """
+        let blocks = MarkdownBlockParser.parse(markdown)
+        XCTAssertEqual(blocks.count, 3)
+        if case .text(let intro) = blocks[0] {
+            XCTAssertTrue(intro.contains("Intro"))
+        } else {
+            XCTFail("Expected intro text")
+        }
+        if case .table(let headers, let rows) = blocks[1] {
+            XCTAssertEqual(headers, ["Host", "Role"])
+            XCTAssertEqual(rows.count, 2)
+            XCTAssertEqual(rows[0][0], "Mac Mini (`ai-stack`)")
+            XCTAssertEqual(rows[1][1], "Operator")
+        } else {
+            XCTFail("Expected table block")
+        }
+        if case .text(let outro) = blocks[2] {
+            XCTAssertTrue(outro.contains("Outro"))
+        } else {
+            XCTFail("Expected outro text")
+        }
+    }
+
+    func testFencedCodeIsNotMermaid() {
+        let blocks = MarkdownBlockParser.parse("before\n```\nMacBook —Tailscale—> Mini\n```\nafter")
+        XCTAssertEqual(blocks.count, 3)
+        if case .code(let language, let source) = blocks[1] {
+            XCTAssertEqual(language, "")
+            XCTAssertTrue(source.contains("Tailscale"))
+        } else {
+            XCTFail("Expected code block")
+        }
+    }
+
+    func testMermaidFenceStillSpecial() {
+        let blocks = MarkdownBlockParser.parse("```mermaid\ngraph TD\nA-->B\n```")
+        XCTAssertEqual(blocks.count, 1)
+        if case .mermaid(let source) = blocks[0] {
+            XCTAssertTrue(source.contains("graph TD"))
+        } else {
+            XCTFail("Expected mermaid block")
+        }
+    }
+
+    func testHeadingLineDropsHashesAndKeepsTitle() {
+        let heading = GrokMarkdownStyle.heading(from: "## Purpose")
+        XCTAssertEqual(heading?.level, 2)
+        XCTAssertEqual(heading?.text, "Purpose")
+        let rendered = GrokMarkdownStyle.attributed("## Purpose\nbody")
+        XCTAssertFalse(String(rendered.characters).contains("##"))
+        XCTAssertTrue(String(rendered.characters).contains("Purpose"))
+        XCTAssertTrue(String(rendered.characters).contains("body"))
+    }
+
+    func testListItemUsesBulletAndPreservesASCIINewlines() {
+        let item = GrokMarkdownStyle.listItem(from: "- Research → AGNT")
+        XCTAssertEqual(item?.prefix, "• ")
+        XCTAssertEqual(item?.text, "Research → AGNT")
+        let diagram = "MacBook —Tailscale—> Mini\n  |\n  +-> Spark"
+        let rendered = String(GrokMarkdownStyle.attributed(diagram).characters)
+        XCTAssertEqual(rendered, diagram)
+    }
+
+    func testInlineCodeRunIsPresent() {
+        let attr = GrokMarkdownStyle.inline("host `ai-stack` port")
+        let hasCode = attr.runs.contains { run in
+            run.inlinePresentationIntent?.contains(.code) == true
+        }
+        XCTAssertTrue(hasCode)
+    }
+
     private func assertInlineLatex(in blocks: [MarkdownBlock], expected: String) {
         let latexBlocks = blocks.compactMap { block -> (String, Bool)? in
             if case .latex(let expr, let display) = block { return (expr, display) }
