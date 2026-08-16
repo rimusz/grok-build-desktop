@@ -1056,14 +1056,44 @@ final class ChatStore {
     }
 
     private func reconcileTranscriptAfterTurn(assistantID: UUID) async {
+        guard let workspacePath = currentWorkspace?.path else { return }
+        let grokID = grokSessionId ?? savedGrokSessionID
         for delayNanoseconds: UInt64 in [250_000_000, 750_000_000, 1_500_000_000] {
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !isStreaming else { return }
-            if reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID) {
+            let imported = await Task.detached(priority: .utility) {
+                SessionTranscriptRecovery.importMessages(
+                    grokSessionID: grokID,
+                    workspacePath: workspacePath
+                )
+            }.value
+            guard !isStreaming else { return }
+            if applyImportedAssistantTail(imported, assistantID: assistantID) {
                 acceptLateAssistantChunksUntil = nil
                 return
             }
         }
+    }
+
+    @discardableResult
+    private func applyImportedAssistantTail(_ imported: [Message]?, assistantID: UUID) -> Bool {
+        guard let imported,
+              let importedLast = imported.last(where: {
+                  $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              }),
+              let idx = messages.firstIndex(where: { $0.id == assistantID }),
+              let extended = SessionTranscriptRecovery.extendedAssistantContent(
+                  current: messages[idx].content,
+                  imported: importedLast.content
+              ) else {
+            return false
+        }
+        messages[idx].replaceContent(extended)
+        if let tabSessionID {
+            SessionMessageStore.save(messages, for: tabSessionID)
+        }
+        notifyMessagesChanged()
+        return true
     }
 
     private func captureAsideAndShare(from assistantText: String) {

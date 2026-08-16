@@ -38,9 +38,10 @@ enum SessionTranscriptRecovery {
         return imported.isEmpty ? nil : imported
     }
 
-    /// Empty tabs take the jsonl transcript. Non-empty tabs only extend the last assistant
-    /// when grok's last assistant is a longer continuation (do not replace a complete bubble
-    /// just because jsonl also has bootstrap `user_info` rows).
+    /// Empty tabs take the jsonl transcript. A user prompt with no assistant appends
+    /// imported assistants (crash / early persist). Otherwise only extend the last
+    /// assistant when grok's last assistant is a longer continuation — do not replace
+    /// a complete bubble just because jsonl also has bootstrap `user_info` rows.
     static func mergeLongerTranscript(current: [Message], imported: [Message]) -> [Message]? {
         guard let importedLast = imported.last(where: {
             $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -51,7 +52,11 @@ enum SessionTranscriptRecovery {
         }
 
         guard let currentIdx = current.lastIndex(where: { $0.role == .assistant }) else {
-            return nil
+            let importedAssistants = imported.filter {
+                $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            guard !importedAssistants.isEmpty else { return nil }
+            return current + importedAssistants
         }
         guard let extended = extendedAssistantContent(
             current: current[currentIdx].content,

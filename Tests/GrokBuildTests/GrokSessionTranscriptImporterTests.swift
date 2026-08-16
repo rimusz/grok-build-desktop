@@ -260,6 +260,23 @@ final class GrokSessionTranscriptImporterTests: XCTestCase {
         XCTAssertNil(SessionTranscriptRecovery.mergeLongerTranscript(current: current, imported: imported))
     }
 
+    func testMergeLongerTranscriptAppendsAssistantWhenLocalTabHasOnlyUser() {
+        let current = [
+            Message(role: .user, content: "Give me a high-level overview")
+        ]
+        let imported = [
+            Message(role: .user, content: String(repeating: "user_info bootstrap ", count: 40)),
+            Message(role: .user, content: "Give me a high-level overview"),
+            Message(role: .assistant, content: "**CodexGateway** is a menu-bar macOS app.")
+        ]
+        let merged = SessionTranscriptRecovery.mergeLongerTranscript(current: current, imported: imported)
+        XCTAssertEqual(merged?.count, 2)
+        XCTAssertEqual(merged?.first?.role, .user)
+        XCTAssertEqual(merged?.first?.content, "Give me a high-level overview")
+        XCTAssertEqual(merged?.last?.role, .assistant)
+        XCTAssertEqual(merged?.last?.content, "**CodexGateway** is a menu-bar macOS app.")
+    }
+
     func testRecoverIfNeededExtendsConcatenatedAssistantWithoutImportingUserInfo() throws {
         let sessionID = UUID()
         defer { SessionMessageStore.remove(for: sessionID) }
