@@ -2,13 +2,30 @@ import Foundation
 
 /// Repairs empty or **truncated** GrokBuild tabs from grok CLI `chat_history.jsonl`.
 enum SessionTranscriptRecovery {
-    /// Returns imported messages when recovery ran; `nil` when not needed or not possible.
+    /// Minimum shared prefix/suffix used to splice a truncated bubble onto grok's last assistant.
+    static let minimumAssistantOverlap = 24
+
+    /// Returns imported or tail-extended messages when recovery ran; `nil` when not needed.
     static func recoverIfNeeded(
         sessionID: UUID,
         grokSessionID: String?,
         workspacePath: URL,
         currentMessages: [Message]
     ) -> [Message]? {
+        guard let imported = importMessages(
+            grokSessionID: grokSessionID,
+            workspacePath: workspacePath
+        ) else { return nil }
+
+        guard let merged = mergeLongerTranscript(current: currentMessages, imported: imported) else {
+            return nil
+        }
+
+        SessionMessageStore.save(merged, for: sessionID)
+        return merged
+    }
+
+    static func importMessages(grokSessionID: String?, workspacePath: URL) -> [Message]? {
         guard let grokSessionID,
               let historyURL = GrokSessionTranscriptImporter.chatHistoryURL(
                   workspacePath: workspacePath,
@@ -17,19 +34,110 @@ enum SessionTranscriptRecovery {
               GrokSessionTranscriptImporter.hasRecoverableTranscript(at: historyURL) else {
             return nil
         }
-
         let imported = GrokSessionTranscriptImporter.importMessages(from: historyURL)
-        guard shouldReplace(current: currentMessages, with: imported) else { return nil }
-
-        SessionMessageStore.save(imported, for: sessionID)
-        return imported
+        return imported.isEmpty ? nil : imported
     }
 
-    /// Prefer grok's jsonl when it has more user/assistant text than the local tab
-    /// (empty tabs, or a turn that was persisted before the last chunks arrived).
+    /// Empty tabs take the jsonl transcript. Non-empty tabs only extend the last assistant
+    /// when grok's last assistant is a longer continuation (do not replace a complete bubble
+    /// just because jsonl also has bootstrap `user_info` rows).
+    static func mergeLongerTranscript(current: [Message], imported: [Message]) -> [Message]? {
+        guard let importedLast = imported.last(where: {
+            $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else { return nil }
+
+        if SessionMessageStore.needsTranscriptRecovery(current) {
+            return imported
+        }
+
+        guard let currentIdx = current.lastIndex(where: { $0.role == .assistant }) else {
+            return nil
+        }
+        guard let extended = extendedAssistantContent(
+            current: current[currentIdx].content,
+            imported: importedLast.content
+        ) else { return nil }
+
+        var updated = current
+        updated[currentIdx].replaceContent(extended)
+        return updated
+    }
+
+    /// Weave CLI working lines from `updates.jsonl` onto assistant messages that lack them.
+    static func attachActivityIfNeeded(
+        messages: [Message],
+        grokSessionID: String?,
+        workspacePath: URL
+    ) -> [Message] {
+        guard let grokSessionID,
+              let updatesURL = GrokActivityLog.updatesURL(
+                  workspacePath: workspacePath,
+                  grokSessionID: grokSessionID
+              ),
+              FileManager.default.fileExists(atPath: updatesURL.path) else {
+            return messages
+        }
+        let turns = GrokActivityLog.turns(from: updatesURL)
+        guard !turns.isEmpty else { return messages }
+
+        var updated = messages
+        let assistantIndexes = updated.indices.filter { updated[$0].role == .assistant }
+        let activityTurns = turns.filter { $0.parts.contains(where: \.isActivity) }
+        guard !activityTurns.isEmpty else { return messages }
+
+        if assistantIndexes.count == 1, let idx = assistantIndexes.first, activityTurns.count == 1 {
+            updated[idx].parts = GrokActivityLog.align(activityTurns[0].parts, toContent: updated[idx].content)
+            return updated
+        }
+
+        var turnIndex = 0
+        for idx in assistantIndexes {
+            guard turnIndex < activityTurns.count else { break }
+            updated[idx].parts = GrokActivityLog.align(
+                activityTurns[turnIndex].parts,
+                toContent: updated[idx].content
+            )
+            turnIndex += 1
+        }
+        return updated
+    }
+
+    /// Prefer grok's jsonl when it has more user/assistant text than the local tab.
+    /// Used for empty-tab decisions; live tails use `extendedAssistantContent`.
     static func shouldReplace(current: [Message], with imported: [Message]) -> Bool {
         let importedChars = imported.conversationCharacterCount
         guard importedChars > 0 else { return false }
         return importedChars > current.conversationCharacterCount
+    }
+
+    /// Extends a streamed assistant bubble from grok's last jsonl assistant.
+    ///
+    /// Handles a straight prefix (ACP stopped early) and the common case where two
+    /// jsonl assistant rows were concatenated into one bubble (`preamble + truncated`).
+    static func extendedAssistantContent(current: String, imported: String) -> String? {
+        if imported == current { return nil }
+        if current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nil
+        }
+        if imported.hasPrefix(current), imported.count > current.count {
+            return imported
+        }
+        guard let overlap = longestImportedPrefixAsSuffix(of: current, imported: imported),
+              imported.count > overlap else {
+            return nil
+        }
+        return String(current.dropLast(overlap)) + imported
+    }
+
+    static func longestImportedPrefixAsSuffix(of current: String, imported: String) -> Int? {
+        let maxLen = min(current.count, imported.count)
+        let minLen = min(minimumAssistantOverlap, maxLen)
+        guard minLen > 0 else { return nil }
+        for len in stride(from: maxLen, through: minLen, by: -1) {
+            if current.hasSuffix(imported.prefix(len)) {
+                return len
+            }
+        }
+        return nil
     }
 }

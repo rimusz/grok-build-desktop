@@ -200,6 +200,124 @@ final class GrokSessionTranscriptImporterTests: XCTestCase {
             SessionMessageStore.messages(for: sessionID).last?.content.contains("In one line"),
             true
         )
+        XCTAssertEqual(recovered?.last?.id, truncated.last?.id)
+    }
+
+    func testExtendedAssistantContentCompletesPrefix() {
+        let current = "tell agents how to upgrade, wire"
+        let imported = "tell agents how to upgrade, wire Buzz, switch Spark models."
+        XCTAssertEqual(
+            SessionTranscriptRecovery.extendedAssistantContent(current: current, imported: imported),
+            imported
+        )
+        XCTAssertNil(
+            SessionTranscriptRecovery.extendedAssistantContent(current: imported, imported: imported)
+        )
+        XCTAssertNil(
+            SessionTranscriptRecovery.extendedAssistantContent(current: "", imported: imported)
+        )
+    }
+
+    func testExtendedAssistantContentSplicesPreamblePlusTruncatedTail() {
+        let preamble = "I'll start with the project's architecture docs and repo layout so the overview matches how the pieces actually fit together."
+        let imported = """
+        **CodexGateway** is a menu-bar macOS app.
+        The five services everything else hangs off:
+        - **`GatewayServer`** — routes; loopback only
+        - **`Translator`** — Responses ↔ Chat Completions
+        - **`ModelCatalog`** — installed models + provider routing
+        - **`CodexConfig`** — marked block in `~/.codex/config.toml` (never silently injected; Settings **Update Gateway Config** is the opt-in)
+        - **`CodexAppServer`** — restart Codex after catalog changes
+
+        ## Config split
+        Platform: macOS 26+. Repo: `rimusz/codex-gateway`
+        """
+        let cut = imported.range(of: "- **`CodexAppServer`")!
+        let truncated = String(imported[..<cut.lowerBound]) + "- **`"
+        let current = preamble + truncated
+
+        let extended = SessionTranscriptRecovery.extendedAssistantContent(
+            current: current,
+            imported: imported
+        )
+        XCTAssertEqual(extended, preamble + imported)
+        XCTAssertTrue(extended?.contains("CodexAppServer") == true)
+        XCTAssertTrue(extended?.contains("Config split") == true)
+    }
+
+    func testMergeLongerTranscriptDoesNotReplaceCompleteAssistantForExtraUserInfo() {
+        let complete = "**CodexGateway** is a menu-bar macOS app.\n- **`CodexAppServer`** — restart Codex"
+        let current = [
+            Message(role: .user, content: "Give me a high-level overview"),
+            Message(role: .assistant, content: complete)
+        ]
+        let imported = [
+            Message(role: .user, content: String(repeating: "user_info bootstrap ", count: 80)),
+            Message(role: .user, content: "Give me a high-level overview"),
+            Message(role: .assistant, content: complete)
+        ]
+        XCTAssertTrue(SessionTranscriptRecovery.shouldReplace(current: current, with: imported))
+        XCTAssertNil(SessionTranscriptRecovery.mergeLongerTranscript(current: current, imported: imported))
+    }
+
+    func testRecoverIfNeededExtendsConcatenatedAssistantWithoutImportingUserInfo() throws {
+        let sessionID = UUID()
+        defer { SessionMessageStore.remove(for: sessionID) }
+
+        let grokHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grokbuild-test-\(UUID().uuidString)", isDirectory: true)
+        GrokSessionTranscriptImporter.grokHomeDirectory = grokHome
+        defer { try? FileManager.default.removeItem(at: grokHome) }
+
+        let workspace = URL(fileURLWithPath: "/tmp/codex-bar-recovery")
+        let grokID = "01a00bbf-aacb-7040-aa3f-2dee5e8b5ae9"
+        let historyURL = GrokSessionTranscriptImporter.chatHistoryURL(
+            workspacePath: workspace,
+            grokSessionID: grokID
+        )!
+        try FileManager.default.createDirectory(
+            at: historyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let preamble = "I'll start with the architecture docs."
+        let overview = """
+        The five services:
+        - **`GatewayServer`**
+        - **`CodexAppServer`** — restart Codex after catalog changes
+
+        Platform: macOS 26+.
+        """
+        func jsonString(_ value: String) throws -> String {
+            let data = try JSONEncoder().encode(value)
+            return String(data: data, encoding: .utf8) ?? "\"\""
+        }
+        try """
+        {"type":"user","content":[{"type":"text","text":"<user_info>OS Version: macos</user_info>"}]}
+        {"type":"user","content":[{"type":"text","text":"<user_query>Give me a high-level overview</user_query>"}]}
+        {"type":"assistant","content":\(try jsonString(preamble))}
+        {"type":"assistant","content":\(try jsonString(overview))}
+        """.write(to: historyURL, atomically: true, encoding: .utf8)
+
+        let cut = overview.range(of: "- **`CodexAppServer`")!
+        let truncatedOverview = String(overview[..<cut.lowerBound]) + "- **`"
+        let current = [
+            Message(role: .user, content: "Give me a high-level overview"),
+            Message(role: .assistant, content: preamble + truncatedOverview)
+        ]
+        let recovered = SessionTranscriptRecovery.recoverIfNeeded(
+            sessionID: sessionID,
+            grokSessionID: grokID,
+            workspacePath: workspace,
+            currentMessages: current
+        )
+
+        XCTAssertEqual(recovered?.count, 2)
+        XCTAssertEqual(recovered?.first?.role, .user)
+        XCTAssertEqual(recovered?.first?.content, "Give me a high-level overview")
+        XCTAssertEqual(recovered?.last?.content.contains("CodexAppServer"), true)
+        XCTAssertEqual(recovered?.last?.content.contains("Platform: macOS 26+"), true)
+        XCTAssertEqual(recovered?.last?.content.hasPrefix(preamble), true)
+        XCTAssertEqual(recovered?.last?.id, current.last?.id)
     }
 
     func testStaleFallbackNoteIsNotRestorableTranscript() {

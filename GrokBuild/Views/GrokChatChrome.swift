@@ -157,6 +157,30 @@ struct ThinkingBlock: View {
     }
 }
 
+struct GrokActivityLineView: View {
+    let line: GrokActivityLine
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("|")
+                .foregroundStyle(.quaternary)
+            Text(line.isLead ? "✦" : ">")
+                .foregroundStyle(.secondary)
+            Text(line.summary)
+                .foregroundStyle(.secondary)
+            if line.hookCount > 0 {
+                Text("[hooks: \(line.hookCount)]")
+                    .foregroundStyle(Color(red: 0.82, green: 0.62, blue: 0.42))
+            }
+        }
+        .font(.system(.caption, design: .monospaced))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line.displayText)
+    }
+}
+
 struct ToolCallRow: View {
     let title: String
     let kind: String

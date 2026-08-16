@@ -173,7 +173,7 @@ struct ChatView: View {
                             }
                         }
 
-                        if !store.liveToolCalls.isEmpty {
+                        if !store.liveToolCalls.isEmpty, store.messages.last?.hasActivityParts != true {
                             ToolActivityGroup(
                                 tools: store.liveToolCalls,
                                 isExpanded: toolActivityExpanded

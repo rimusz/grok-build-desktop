@@ -24,19 +24,20 @@ struct MessageBubble: View {
                     .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
             }
         case .assistant:
-            VStack(alignment: .leading, spacing: 0) {
-                if !message.content.isEmpty {
-                    if isStreaming {
-                        Text(message.content)
-                            .textSelection(.enabled)
-                            .font(.body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
-                    } else {
-                        RichMessageView(text: message.content)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
+            VStack(alignment: .leading, spacing: 8) {
+                if message.hasActivityParts {
+                    ForEach(Array(message.parts.enumerated()), id: \.offset) { _, part in
+                        switch part {
+                        case .text(let text):
+                            assistantText(text)
+                        case .activity(let line):
+                            GrokActivityLineView(line: line)
+                        }
                     }
+                    .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
+                } else if !message.content.isEmpty {
+                    assistantText(message.content)
+                        .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
                 }
             }
         case .system:
@@ -46,6 +47,21 @@ struct MessageBubble: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 4)
                 .modifier(MessageRewindMenu(onRewind: onRewind, disabled: rewindDisabled))
+        }
+    }
+
+    @ViewBuilder
+    private func assistantText(_ text: String) -> some View {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            EmptyView()
+        } else if isStreaming {
+            Text(text)
+                .textSelection(.enabled)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            RichMessageView(text: text)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

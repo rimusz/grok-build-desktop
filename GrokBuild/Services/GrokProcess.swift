@@ -236,6 +236,7 @@ enum AcpEvent: @unchecked Sendable {
     case workflowActivity(payload: [String: Any])
     /// Background shells, monitors, subagents, and scheduler tools (richer Tasks pill).
     case backgroundActivity(payload: [String: Any])
+    case hookExecution(eventName: String, toolName: String?, runCount: Int)
     case rawLine(String)
     case error(String)
 }
@@ -952,7 +953,9 @@ final class GrokProcess: @unchecked Sendable {
             let params = TurnTokenUsageParser.dictionary(j["params"]) ?? [:]
             let rid = j["id"]
 
-            if method == "session/update" {
+            if method == "session/update"
+                || method == "_x.ai/session/update"
+                || method == "x.ai/session/update" {
                 let update = TurnTokenUsageParser.dictionary(params["update"])
                 if let total = totalTokens(from: params) {
                     acpEventContinuation?.yield(.contextUsage(totalTokens: total))
@@ -1125,6 +1128,15 @@ final class GrokProcess: @unchecked Sendable {
             if let m = u["currentModeId"] as? String {
                 currentMode = AgentMode(rawValue: m)
                 acpEventContinuation?.yield(.modeChanged(mode: currentMode))
+            }
+        case "hook_execution":
+            let eventName = (u["event_name"] as? String) ?? (u["eventName"] as? String) ?? ""
+            let toolName = (u["tool_name"] as? String) ?? (u["toolName"] as? String)
+            let runCount = (u["runs"] as? [[String: Any]])?.count ?? 0
+            if !eventName.isEmpty {
+                acpEventContinuation?.yield(
+                    .hookExecution(eventName: eventName, toolName: toolName, runCount: runCount)
+                )
             }
         default:
             if WorkflowToolParsing.isWorkflowSessionUpdate(k) {

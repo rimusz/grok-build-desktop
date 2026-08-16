@@ -177,6 +177,9 @@ final class ChatStore {
     // (removed Agent personas - see AGENTS.md + sub-agents in Grok Build CLI)
 
     private(set) var streamingMessageID: UUID?
+    /// ACP sometimes delivers the last `agent_message_chunk`s after `session/prompt` returns.
+    private var acceptLateAssistantChunksUntil: Date?
+    private var activityBuilder = GrokActivityBuilder()
     private var connectionWatchdogTask: Task<Void, Never>?
 
     init(process: GrokProcess? = nil) {
@@ -356,7 +359,66 @@ final class ChatStore {
             workspacePath: workspace.path,
             currentMessages: saved
         )
-        restorePersistedMessages(recovered ?? saved)
+        let withActivity = SessionTranscriptRecovery.attachActivityIfNeeded(
+            messages: recovered ?? saved,
+            grokSessionID: grokSessionID,
+            workspacePath: workspace.path
+        )
+        restorePersistedMessages(withActivity)
+    }
+
+    /// Pull a longer last-assistant tail from grok jsonl into this tab (live turn or tab switch).
+    @discardableResult
+    func reconcileTranscriptFromGrokIfNeeded(assistantID: UUID? = nil) -> Bool {
+        guard let workspace = currentWorkspace else { return false }
+        let grokID = grokSessionId ?? savedGrokSessionID
+        guard let imported = SessionTranscriptRecovery.importMessages(
+            grokSessionID: grokID,
+            workspacePath: workspace.path
+        ) else { return false }
+
+        if let assistantID, let idx = messages.firstIndex(where: { $0.id == assistantID }) {
+            guard let importedLast = imported.last(where: {
+                $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }),
+                  let extended = SessionTranscriptRecovery.extendedAssistantContent(
+                      current: messages[idx].content,
+                      imported: importedLast.content
+                  ) else {
+                return false
+            }
+            messages[idx].replaceContent(extended)
+            if let tabSessionID {
+                SessionMessageStore.save(messages, for: tabSessionID)
+            }
+            notifyMessagesChanged()
+            return true
+        }
+
+        guard let tabSessionID,
+              let recovered = SessionTranscriptRecovery.recoverIfNeeded(
+                  sessionID: tabSessionID,
+                  grokSessionID: grokID,
+                  workspacePath: workspace.path,
+                  currentMessages: messages
+              ) else {
+            return false
+        }
+        messages = recovered
+        notifyMessagesChanged()
+        return true
+    }
+
+    func attachActivityFromGrokIfNeeded() {
+        guard let workspace = currentWorkspace else { return }
+        let updated = SessionTranscriptRecovery.attachActivityIfNeeded(
+            messages: messages,
+            grokSessionID: grokSessionId ?? savedGrokSessionID,
+            workspacePath: workspace.path
+        )
+        guard updated != messages else { return }
+        messages = updated
+        notifyMessagesChanged()
     }
 
     /// Merge disk transcript into memory without dropping messages already loaded.
@@ -915,6 +977,8 @@ final class ChatStore {
         let assistant = Message(role: .assistant, content: "")
         messages.append(assistant)
         streamingMessageID = assistant.id
+        acceptLateAssistantChunksUntil = nil
+        activityBuilder = GrokActivityBuilder()
         isStreaming = true
         lastError = nil
         authRequiredMessage = nil
@@ -951,15 +1015,24 @@ final class ChatStore {
         isGrokking = false
         turnStartedAt = nil
         streamingMessageID = nil
+        acceptLateAssistantChunksUntil = Date().addingTimeInterval(2)
         if let start = thinkingStartedAt, !thinkingText.isEmpty {
             thinkingDuration = Date().timeIntervalSince(start)
         }
         if ok {
+            activityBuilder.finish()
+            syncActivityPartsToStreamingMessage()
             connectionState = .ready
             postStatusUpdate("ready")
             notifyMessagesChanged()
+            if reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID) {
+                acceptLateAssistantChunksUntil = nil
+            }
             TurnCompletionSound.playIfNeeded()
             drainPromptQueueIfNeeded()
+            Task { [weak self] in
+                await self?.reconcileTranscriptAfterTurn(assistantID: assistantID)
+            }
             return
         }
 
@@ -979,6 +1052,17 @@ final class ChatStore {
         let next = promptQueue.removeFirst()
         Task { [weak self] in
             _ = await self?.deliverPrompt(next, waitForCompletion: false)
+        }
+    }
+
+    private func reconcileTranscriptAfterTurn(assistantID: UUID) async {
+        for delayNanoseconds: UInt64 in [250_000_000, 750_000_000, 1_500_000_000] {
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard !isStreaming else { return }
+            if reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID) {
+                acceptLateAssistantChunksUntil = nil
+                return
+            }
         }
     }
 
@@ -1428,6 +1512,7 @@ final class ChatStore {
             thinkingText += text
         case .toolCall(let tc):
             isGrokking = false
+            recordActivityTool(tc)
             if !liveToolCalls.contains(where: { $0.id == tc.id }) {
                 liveToolCalls.append(liveToolCall(from: tc))
             }
@@ -1443,6 +1528,7 @@ final class ChatStore {
                 ))
             }
         case .toolCallUpdate(let tc):
+            recordActivityTool(tc)
             if let idx = liveToolCalls.firstIndex(where: { $0.id == tc.id }) {
                 liveToolCalls[idx] = mergedToolCall(existing: liveToolCalls[idx], update: tc)
             } else {
@@ -1509,6 +1595,9 @@ final class ChatStore {
             usedContextTokens = totalTokens
         case .turnUsage(let usage):
             lastTurnUsage = usage
+        case .hookExecution(let eventName, _, let runCount):
+            activityBuilder.addHook(eventName: eventName, runCount: runCount)
+            syncActivityPartsToStreamingMessage()
 
         case .rawLine(let line):
             appendAssistantText(line)
@@ -1568,15 +1657,51 @@ final class ChatStore {
     }
 
     private func appendAssistantText(_ text: String) {
-        guard let id = streamingMessageID,
-              let idx = messages.firstIndex(where: { $0.id == id }) else { return }
+        let idx: Int?
+        let isLateChunk: Bool
+        if let id = streamingMessageID {
+            idx = messages.firstIndex(where: { $0.id == id })
+            isLateChunk = false
+        } else if let until = acceptLateAssistantChunksUntil, Date() < until {
+            idx = messages.lastIndex(where: { $0.role == .assistant })
+            isLateChunk = true
+        } else {
+            return
+        }
+        guard let idx else { return }
 
         let clean = text.replacingOccurrences(of: "<<USER>> ", with: "")
         if clean.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(">") &&
            !clean.contains("diff") { return }
 
         if !clean.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !messages[idx].content.isEmpty {
-            messages[idx].content += clean
+            if isLateChunk, messages[idx].content.hasSuffix(clean) { return }
+            activityBuilder.addMessage(clean)
+            messages[idx].content = activityBuilder.textContent
+            messages[idx].parts = activityBuilder.parts
+            if isLateChunk {
+                notifyMessagesChanged()
+            }
+        }
+    }
+
+    private func recordActivityTool(_ toolCall: ToolCall) {
+        let title = displayTitle(for: toolCall)
+        activityBuilder.addTool(id: toolCall.id, title: title)
+        syncActivityPartsToStreamingMessage()
+    }
+
+    private func syncActivityPartsToStreamingMessage() {
+        let idx: Int?
+        if let id = streamingMessageID {
+            idx = messages.firstIndex(where: { $0.id == id })
+        } else {
+            idx = messages.lastIndex(where: { $0.role == .assistant })
+        }
+        guard let idx else { return }
+        messages[idx].parts = activityBuilder.parts
+        if !activityBuilder.textContent.isEmpty {
+            messages[idx].content = activityBuilder.textContent
         }
     }
 
