@@ -47,7 +47,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ### Sessions
 
-- Streaming agent sessions for `grok agent stdio` with Markdown (headings, tables, fenced code, and grok CLI–style colors), thinking blocks, live tool cards, permission prompts, plan/question cards, and diff review.
+- Streaming agent sessions for `grok agent stdio` with Markdown (headings, tables, fenced code, and grok CLI–style colors), thinking blocks, CLI-style working lines (`Read 1 skill, Listed 1 dir  [hooks: 5]`), live tool cards, permission prompts, plan/question cards, and diff review.
 - Multi-tab sessions with lazy restore, resumable grok sessions, **Sessions History** (clock — resume/delete archived grok sessions), and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
 - **Session status badges** on the sidebar — working, needs-input, finished-unread, or error — cleared when you focus the session, so parallel tabs show which one needs you.
 - **Session context menu** — pin a session to the top of its project group, mark unread/read, duplicate, clear the transcript, or close. Right-click a message to **Rewind to Here** (chat-only truncate; does not restore files).

@@ -1072,6 +1072,10 @@ struct ContentView: View {
             )
         } else {
             session.store.mergePersistedMessages(SessionMessageStore.messages(for: id))
+            session.store.reconcileTranscriptFromGrokIfNeeded()
+            if !session.store.isStreaming {
+                session.store.attachActivityFromGrokIfNeeded()
+            }
         }
         purgeEmptySessions(in: session.workspace.id, keeping: id)
         let savedRecord = sessionLayout.records.first(where: { $0.id == id })

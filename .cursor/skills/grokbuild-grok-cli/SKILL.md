@@ -24,6 +24,12 @@ UpdateChecker.checkAppRelease()   // notarized GitHub releases only
 UpdateChecker.checkGrokCLI()      // grok update --check --json
 ```
 
+## CLI working lines (ACP)
+
+- grok's pager batches tools into lines like `Read 1 skill, Listed 1 dir  [hooks: 5]`. GrokBuild mirrors that via `GrokActivityBuilder` → `Message.parts`.
+- Wire: `session/update` **and** `_x.ai/session/update` → `hook_execution` → `AcpEvent.hookExecution`. Do not drop the `_x.ai/` method; that is where many hook events arrive.
+- Restore: `GrokActivityLog` reads `updates.jsonl` next to `chat_history.jsonl` when a tab has no activity parts yet.
+
 ## Token usage (ACP)
 
 - Context-window ring: `session/update` `_meta.totalTokens` → `AcpEvent.contextUsage` → `ChatStore.usedContextTokens`.
