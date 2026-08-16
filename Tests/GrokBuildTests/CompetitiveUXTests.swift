@@ -232,6 +232,28 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(CursorBridgeKeychain.secretsDirectoryURL().lastPathComponent, "Secrets")
     }
 
+    func testCursorBridgeKeyFileRoundTripWithoutKeychain() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GrokBuildTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("cursor-api-key", isDirectory: false)
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        XCTAssertNil(CursorBridgeKeychain.load(fileURL: url))
+        XCTAssertFalse(CursorBridgeKeychain.hasAPIKey(fileURL: url))
+
+        try CursorBridgeKeychain.save("  crsr_test_key  ", fileURL: url)
+        XCTAssertEqual(CursorBridgeKeychain.load(fileURL: url), "crsr_test_key")
+        XCTAssertTrue(CursorBridgeKeychain.hasAPIKey(fileURL: url))
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.uint16Value, 0o600)
+
+        try CursorBridgeKeychain.save("   ", fileURL: url)
+        XCTAssertNil(CursorBridgeKeychain.load(fileURL: url))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        try CursorBridgeKeychain.delete(fileURL: url)
+    }
+
     func testBridgeModelsURLPreservesV1() {
         XCTAssertEqual(
             CursorBridge.modelsURL(for: "http://127.0.0.1:18787/v1")?.absoluteString,

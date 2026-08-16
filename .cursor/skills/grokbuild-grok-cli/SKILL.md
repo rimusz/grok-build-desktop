@@ -66,7 +66,7 @@ OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomMode
 | Piece | Role |
 |-------|------|
 | `ProviderPreset.cursor` | Install provider; config.toml `api_key = "local"`, `base_url = http://127.0.0.1:18787/v1` |
-| `CursorBridgeKeychain` | Real Cursor user key → Application Support `Secrets/cursor-api-key` (0600) |
+| `CursorBridgeKeychain` | Real Cursor user key → Application Support `Secrets/cursor-api-key` (0600) only — no Keychain |
 | `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start; `NodeTLS` injects `NODE_EXTRA_CA_CERTS` for Zscaler/IT PEMs when the .app has no shell env |
 | `cursor-bridge-auth.mjs` | `resolveCursorApiKey` — SDK auth uses process env `CURSOR_API_KEY`; ignore grok's xAI session JWT / `local` Bearer unless token is `crsr_…` |
 | Node ≥ 22.13 | Required on the machine (`CursorBridge.NodeRequirement` / Doctor / Settings install banner) |
