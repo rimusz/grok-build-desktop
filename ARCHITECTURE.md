@@ -208,7 +208,7 @@ User must run `grok login` for authenticated sessions. Auth failures surface in 
 
 ## GrokProcess & ACP
 
-**File:** `Services/GrokProcess.swift`
+**Files:** `Services/GrokProcess.swift`, `Services/AcpTerminalHost.swift`
 
 `GrokProcess` is the long-running **ACP client**. One instance per `ChatStore`.
 
@@ -233,7 +233,7 @@ Built from `GrokLaunchOptions` in `ChatStore.restartProcess`. Working directory 
 
 ### ACP lifecycle
 
-1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake).
+1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake). `clientCapabilities.terminal` is `true`; `AcpTerminalHost` implements `terminal/create` / `output` / `wait_for_exit` / `kill` / `release`. Unknown host methods return JSON-RPC `-32601` (never an empty `{}` result — grok fails to deserialize that).
 2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming. When `session/load` fails with `FS_NOT_FOUND` / “Path not found” (stale on-disk grok session), GrokBuild falls back to `session/new`, sets `sessionLoadStartedFreshFallback`, and `ChatStore` adds a system note — local transcript is preserved. During load, the CLI replays prior turn history via `session/update` with `_meta.isReplay: true`; `GrokProcess` skips routing those to `ChatStore` (still applies `contextUsage` / `totalTokens`, and `turnUsage` when breakdown keys are present) so resume does not re-drive live tool/thinking UI. Last-turn input/cache/output/reasoning is parsed from `session/prompt` result `_meta` **and** `_x.ai/session_notification` (`TurnTokenUsageParser`); that `totalTokens` is per-turn and is not written to the context ring.
 3. MCP servers from `MCPServerConfig` passed in `session/new` (browser, computer use when enabled).
 4. `send(_:)` — prompt during `.ready`/`.busy`.
@@ -943,6 +943,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Session goal banner** | `GoalBanner` in `ComposerViews.swift`, `ChatStore.goalState` + `/goal` helpers, `GoalCommand` in `ComposerModels.swift` |
 | **Empty/welcome state, quick starts** | `ChatView.swift` (`welcomeState`, `noProjectState`, `QuickStartChip`), `QuickStartPrompt` in `ComposerModels.swift` |
 | **ACP events / tool cards** | `GrokProcess` (`AcpEvent`), `RichMessageView` |
+| **ACP agent shell / terminal** | `AcpTerminalHost`, `GrokProcess.handleTerminal` |
 | **Permissions UI** | `ChatStore.pendingPermissions`, `MessageBubble` |
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
 | **Per-tab model** | `SavedSessionRecord.model`, `ChatStore.bindTabSession`, `.liveSessionModelChanged` |
@@ -1003,6 +1004,7 @@ make test    # Tests/GrokBuildTests/
 |------|--------|
 | `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete |
+| `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping, hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore, `Message.parts` decode |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |

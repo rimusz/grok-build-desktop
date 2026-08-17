@@ -1,6 +1,6 @@
 ---
 description: grok CLI integration — process lifecycle, commands, updates, auth, custom models / Cursor bridge
-globs: GrokBuild/Services/{GrokProcess,GrokCLIService,ChatStore,UpdateChecker,CustomModelSettings,CursorBridge,CursorBridgeRuntime,CursorBridgeAPIKey,DoctorReport}.swift,GrokBuild/Resources/CursorBridge/**
+globs: GrokBuild/Services/{GrokProcess,AcpTerminalHost,GrokCLIService,ChatStore,UpdateChecker,CustomModelSettings,CursorBridge,CursorBridgeRuntime,CursorBridgeAPIKey,DoctorReport}.swift,GrokBuild/Resources/CursorBridge/**
 alwaysApply: false
 ---
 
@@ -8,7 +8,7 @@ alwaysApply: false
 
 ## Services
 
-- `GrokProcess` — spawns `grok agent … stdio`, parses ACP (including last-turn `TurnTokenUsage` from `session/prompt` `_meta` and `_x.ai/session_notification`, plus `hook_execution` on `session/update` and `_x.ai/session/update`), posts `.grokStatusChanged`.
+- `GrokProcess` — spawns `grok agent … stdio`, parses ACP (including last-turn `TurnTokenUsage` from `session/prompt` `_meta` and `_x.ai/session_notification`, plus `hook_execution` on `session/update` and `_x.ai/session/update`), hosts `terminal/*` via `AcpTerminalHost`, posts `.grokStatusChanged`.
 - `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
 - `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings, `lastTurnUsage`.
 - `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
