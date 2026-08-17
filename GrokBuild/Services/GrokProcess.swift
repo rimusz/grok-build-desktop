@@ -303,6 +303,7 @@ final class GrokProcess: @unchecked Sendable {
     private(set) var availableModelsInfo: [(id: String, name: String, contextTokens: Int?)] = []
     private(set) var availableSlashCommands: [SlashCommand] = []
     private var latestPlanFileContent = ""
+    private let terminalHost = AcpTerminalHost()
 
     // MARK: - Parsing helpers (instance for access to state if needed)
 
@@ -541,6 +542,7 @@ final class GrokProcess: @unchecked Sendable {
         stdout = nil
         stderr = nil
         sessionId = nil
+        terminalHost.releaseAll()
         drainPendingRequests(with: NSError(
             domain: "ACP",
             code: -3,
@@ -816,6 +818,8 @@ final class GrokProcess: @unchecked Sendable {
             "protocolVersion": 1,
             "clientCapabilities": [
                 "fs": ["readTextFile": true, "writeTextFile": true],
+                // Must stay in sync with `AcpTerminalHost` — grok deserializes
+                // `terminal/create` as `{ terminalId }` and fails on `{}`.
                 "terminal": true
             ]
         ]) as? [String: Any]
@@ -1011,6 +1015,11 @@ final class GrokProcess: @unchecked Sendable {
                 return
             }
 
+            if method.hasPrefix("terminal/") {
+                handleTerminal(method: method, rid: rid, params: params)
+                return
+            }
+
             switch method {
             case "fs/read_text_file":
                 if let p = params["path"] as? String { handleFsRead(rid: rid, path: p) }
@@ -1019,7 +1028,13 @@ final class GrokProcess: @unchecked Sendable {
                     handleFsWrite(rid: rid, path: p, content: c)
                 }
             default:
-                if let r = rid { _ = writeJson(["jsonrpc": "2.0", "id": r, "result": [:]]) }
+                if let r = rid {
+                    _ = writeJson([
+                        "jsonrpc": "2.0",
+                        "id": r,
+                        "error": ["code": -32601, "message": "Method not found: \(method)"]
+                    ])
+                }
             }
             return
         }
@@ -1154,6 +1169,56 @@ final class GrokProcess: @unchecked Sendable {
     private func respond(rid: Any?, result: Any = [:]) {
         guard let id = rid else { return }
         _ = writeJson(["jsonrpc": "2.0", "id": id, "result": result])
+    }
+
+    private func handleTerminal(method: String, rid: Any?, params: [String: Any]) {
+        let cwd = currentWorkspace?.path
+            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        do {
+            switch method {
+            case "terminal/create":
+                respond(rid: rid, result: try terminalHost.create(params: params, defaultCwd: cwd))
+            case "terminal/output":
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
+                respond(rid: rid, result: try terminalHost.output(terminalId: id))
+            case "terminal/wait_for_exit", "terminal/waitForExit":
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
+                switch try terminalHost.waitForExit(terminalId: id, onExit: { [weak self] payload in
+                    self?.respond(rid: rid, result: payload)
+                }) {
+                case .alreadyExited(let payload):
+                    respond(rid: rid, result: payload)
+                case .pending:
+                    break
+                }
+            case "terminal/kill":
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
+                respond(rid: rid, result: try terminalHost.kill(terminalId: id))
+            case "terminal/release":
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
+                respond(rid: rid, result: try terminalHost.release(terminalId: id))
+            default:
+                if let r = rid {
+                    _ = writeJson([
+                        "jsonrpc": "2.0",
+                        "id": r,
+                        "error": ["code": -32601, "message": "Method not found: \(method)"]
+                    ])
+                }
+            }
+        } catch let error as AcpTerminalError {
+            if let r = rid {
+                _ = writeJson(["jsonrpc": "2.0", "id": r, "error": error.jsonRPC])
+            }
+        } catch {
+            if let r = rid {
+                _ = writeJson([
+                    "jsonrpc": "2.0",
+                    "id": r,
+                    "error": ["code": -32000, "message": error.localizedDescription]
+                ])
+            }
+        }
     }
 
     private func handleFsRead(rid: Any?, path: String) {

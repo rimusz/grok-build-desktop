@@ -24,6 +24,12 @@ UpdateChecker.checkAppRelease()   // notarized GitHub releases only
 UpdateChecker.checkGrokCLI()      // grok update --check --json
 ```
 
+## ACP terminals (agent shell)
+
+- `initialize` advertises `clientCapabilities.terminal: true`. grok then runs its shell through `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, and `terminal/release` (`AcpTerminalHost`).
+- `terminal/create` **must** return `{ "terminalId": "…" }`. An empty `{}` ACK makes grok fail with `failed to deserialize response` and every shell command dies.
+- Unknown host methods return JSON-RPC `-32601`, not `result: {}`.
+
 ## CLI working lines (ACP)
 
 - grok's pager batches tools into lines like `Read 1 skill, Listed 1 dir  [hooks: 5]`. GrokBuild mirrors that via `GrokActivityBuilder` → `Message.parts`.
