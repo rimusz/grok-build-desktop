@@ -1179,10 +1179,10 @@ final class GrokProcess: @unchecked Sendable {
             case "terminal/create":
                 respond(rid: rid, result: try terminalHost.create(params: params, defaultCwd: cwd))
             case "terminal/output":
-                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.unknownTerminal }
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
                 respond(rid: rid, result: try terminalHost.output(terminalId: id))
             case "terminal/wait_for_exit", "terminal/waitForExit":
-                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.unknownTerminal }
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
                 switch try terminalHost.waitForExit(terminalId: id, onExit: { [weak self] payload in
                     self?.respond(rid: rid, result: payload)
                 }) {
@@ -1192,10 +1192,10 @@ final class GrokProcess: @unchecked Sendable {
                     break
                 }
             case "terminal/kill":
-                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.unknownTerminal }
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
                 respond(rid: rid, result: try terminalHost.kill(terminalId: id))
             case "terminal/release":
-                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.unknownTerminal }
+                guard let id = params["terminalId"] as? String else { throw AcpTerminalError.missingTerminalId }
                 respond(rid: rid, result: try terminalHost.release(terminalId: id))
             default:
                 if let r = rid {

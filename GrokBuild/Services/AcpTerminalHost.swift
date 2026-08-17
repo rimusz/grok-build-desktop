@@ -3,6 +3,7 @@ import Foundation
 /// JSON-RPC errors for ACP `terminal/*` host methods.
 enum AcpTerminalError: Error, Equatable {
     case missingCommand
+    case missingTerminalId
     case unknownTerminal
     case launchFailed(String)
 
@@ -10,6 +11,8 @@ enum AcpTerminalError: Error, Equatable {
         switch self {
         case .missingCommand:
             return ["code": -32602, "message": "terminal/create requires command"]
+        case .missingTerminalId:
+            return ["code": -32602, "message": "terminal request requires terminalId"]
         case .unknownTerminal:
             return ["code": -32602, "message": "Unknown terminalId"]
         case .launchFailed(let message):
@@ -81,11 +84,12 @@ final class AcpTerminalHost: @unchecked Sendable {
         }
         process.terminationHandler = { [weak self, weak session] finished in
             guard let self, let session else { return }
-            let leftover = pipe.fileHandleForReading.readDataToEndOfFile()
+            let handle = pipe.fileHandleForReading
+            handle.readabilityHandler = nil
+            let leftover = handle.availableData
             if !leftover.isEmpty {
                 self.appendOutput(leftover, to: session)
             }
-            pipe.fileHandleForReading.readabilityHandler = nil
             let status = Self.exitStatusJSON(
                 reason: finished.terminationReason,
                 status: finished.terminationStatus
@@ -230,6 +234,13 @@ final class AcpTerminalHost: @unchecked Sendable {
         return ["exitCode": Int(status), "signal": NSNull()]
     }
 
+    static func exitStatus(from process: Process) -> [String: Any] {
+        if process.isRunning {
+            return exitStatusJSON(reason: .uncaughtSignal, status: 15)
+        }
+        return exitStatusJSON(reason: process.terminationReason, status: process.terminationStatus)
+    }
+
     static func waitResponse(from exitStatus: [String: Any]) -> [String: Any] {
         [
             "exitCode": exitStatus["exitCode"] ?? NSNull(),
@@ -270,7 +281,7 @@ final class AcpTerminalHost: @unchecked Sendable {
         lock.lock()
         let waiters = session.waiters
         session.waiters.removeAll()
-        let status = session.exitStatus ?? Self.exitStatusJSON(reason: .uncaughtSignal, status: 15)
+        let status = session.exitStatus ?? Self.exitStatus(from: session.process)
         session.exitStatus = status
         lock.unlock()
         let payload = Self.waitResponse(from: status)

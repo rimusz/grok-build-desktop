@@ -108,6 +108,24 @@ final class AcpTerminalHostTests: XCTestCase {
         let host = AcpTerminalHost()
         XCTAssertThrowsError(try host.output(terminalId: "missing")) { error in
             XCTAssertEqual((error as? AcpTerminalError)?.jsonRPC["code"] as? Int, -32602)
+            XCTAssertEqual((error as? AcpTerminalError)?.jsonRPC["message"] as? String, "Unknown terminalId")
         }
+        XCTAssertEqual(
+            AcpTerminalError.missingTerminalId.jsonRPC["message"] as? String,
+            "terminal request requires terminalId"
+        )
+    }
+
+    func testExitStatusFromFinishedProcessUsesRealCode() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/echo")
+        process.arguments = ["done"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try! process.run()
+        process.waitUntilExit()
+        let status = AcpTerminalHost.exitStatus(from: process)
+        XCTAssertEqual(status["exitCode"] as? Int, 0)
+        XCTAssertTrue(status["signal"] is NSNull)
     }
 }
