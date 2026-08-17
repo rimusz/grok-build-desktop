@@ -9,19 +9,29 @@ description: >-
 
 # Ship PR (GrokBuild / grok agent)
 
-Same loop as the Cursor `ship-pr` skill: **commit → push → create PR → wait for CI + Copilot → fix → commit → push**. Do not merge unless the user explicitly asks.
+Same loop as the Cursor `ship-pr` skill: **bump version → commit → push → create PR → wait for CI + Copilot → fix → commit → push**. Do not merge unless the user explicitly asks.
 
 ## Checklist
 
 ```
 Ship PR:
-- [ ] 1. Commit
-- [ ] 2. Push branch
-- [ ] 3. Create PR (if none)
-- [ ] 4. Wait for CI + Copilot/review
-- [ ] 5. Address feedback (fix / dismiss / ask)
-- [ ] 6. Commit + push again
-- [ ] 7. Re-wait until green and threads triaged
+- [ ] 1. Bump version (if needed)
+- [ ] 2. Commit
+- [ ] 3. Push branch
+- [ ] 4. Create PR (if none)
+- [ ] 5. Wait for CI + Copilot/review
+- [ ] 6. Address feedback (fix / dismiss / ask)
+- [ ] 7. Commit + push again
+- [ ] 8. Re-wait until green and threads triaged
+```
+
+## Version
+
+Before the **first** ship commit, bump `VERSION` (patch, e.g. `0.2.5` → `0.2.6`) when it still matches `main` and the PR changes app behavior. Include it in that commit. Do not bump again for review/CI follow-ups. Skip docs-only / test-only / skill-only PRs unless the user asks. Minor/major only when the user says so. Notarized releases stay on `grokbuild-release`.
+
+```bash
+git show main:VERSION 2>/dev/null || git show origin/main:VERSION
+cat VERSION
 ```
 
 ## Rules

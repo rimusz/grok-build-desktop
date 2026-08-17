@@ -681,7 +681,7 @@ OpenAI-compatible provider URLs; not a replacement for grok-native models. Custo
 
 `Resources/Skills/grokbuild-desktop/` — hints for agents working on GrokBuild itself (copied at build, not auto-installed).
 
-`Resources/Skills/grokbuild-ship-pr/` — commit → push → PR → wait for CI/Copilot → address feedback loop (copied at build, not auto-installed). Cursor twin: `.cursor/skills/ship-pr/`.
+`Resources/Skills/grokbuild-ship-pr/` — bump `VERSION` → commit → push → PR → wait for CI/Copilot → address feedback loop (copied at build, not auto-installed). Cursor twin: `.cursor/skills/ship-pr/`.
 
 ### MCP config shape
 
@@ -1048,6 +1048,6 @@ Prefer extending existing test files. Test pure logic without launching real `gr
 | `BUILDING.md` | Signing, notarization, release CI |
 | `.cursor/rules/` | Architecture, SwiftUI, CLI integration, AppKit panels |
 | `.cursor/skills/grokbuild-*` | Dev workflow, release, CLI checks |
-| `.cursor/skills/ship-pr/` | Commit → push → PR → CI/Copilot feedback loop (Cursor) |
+| `.cursor/skills/ship-pr/` | Bump `VERSION` → commit → push → PR → CI/Copilot feedback loop (Cursor) |
 | `GrokBuild/Resources/Skills/grokbuild-desktop/SKILL.md` | Hints for agents editing GrokBuild |
-| `GrokBuild/Resources/Skills/grokbuild-ship-pr/SKILL.md` | Same ship-PR loop for grok agent sessions |
+| `GrokBuild/Resources/Skills/grokbuild-ship-pr/SKILL.md` | Same ship-PR loop for grok agent sessions (includes `VERSION` bump) |
