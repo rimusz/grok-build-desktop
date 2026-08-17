@@ -247,6 +247,30 @@ enum SettingsTabKeepAlive {
     }
 }
 
+/// Settings vs session-pane navigation. Sidebar `onChange(selectedWorkspaceID)`
+/// re-fires the current project when Settings replaces chat; that must not
+/// dismiss the pane. Opening Settings also closes history/dashboard sheets so
+/// a leftover status-menu mouse-up cannot cover Settings with Sessions History.
+enum SettingsPaneNavigation {
+    static func shouldLeaveSettings(
+        incomingWorkspaceID: UUID?,
+        activeWorkspaceID: UUID?
+    ) -> Bool {
+        guard let incomingWorkspaceID else { return false }
+        return incomingWorkspaceID != activeWorkspaceID
+    }
+
+    static func openSettings(
+        tab: SettingsTab,
+        showSessions: inout Bool,
+        showSessionDashboard: inout Bool
+    ) -> SettingsTab {
+        showSessions = false
+        showSessionDashboard = false
+        return tab
+    }
+}
+
 private func openPath(_ path: String) {
     let expanded = (path as NSString).expandingTildeInPath
     NSWorkspace.shared.open(URL(fileURLWithPath: expanded))

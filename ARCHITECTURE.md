@@ -141,7 +141,7 @@ grok-deck2/
 
 **Status item menu order:** auth header (+ **Run `grok login` in Terminal…** / **Retry Connection** when signed out) → **Open GrokBuild** → **New Session** → **Sessions History…** → **Add Project…** → **Settings…** (⌘,) → **Check for Updates…** / **Upgrade Available…** → **View Usage on grok.com…** → **About GrokBuild** → **Quit GrokBuild**. DEBUG builds add **Simulate Updates** after the updates item.
 
-Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles.
+Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles. Status-item actions that front the window are deferred to the next main-queue turn so the menu click is not delivered into the newly keyed window.
 
 **Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
@@ -375,9 +375,9 @@ ContentView.LiveSession {
 
 **Lazy restore at launch:** `restorePersistedSessions()` rebuilds `LiveSession` shells (titles, grok ids, disk transcripts) but only **starts the selected session's process**. Others resume on first `selectSession` via `ensureSessionStarted`. Launch selection uses `SessionRestorePolicy`: prefer the saved `selectedSessionID` when it has a **restorable transcript** (in-memory or `SessionMessageStore` user/assistant rows — stale-fallback system notes alone do not count); otherwise pick the MRU tab in that workspace with a transcript, then fall back to grok-id-only tabs. `recentSessionOrder` is rebuilt from saved `lastAccessed` timestamps at launch. Resumed sessions with no local transcript yet skip the project welcome screen (`ChatStore.isResumedSessionTab`). Stale grok session ids fall back to `session/new` with a system note (`GrokSessionLoadError`); wording reflects whether a local transcript was preserved.
 
-**Transcript auto-repair:** `SessionTranscriptRecovery` reads grok's on-disk `~/.grok/sessions/{encoded-cwd}/{grokSessionID}/chat_history.jsonl` via `GrokSessionTranscriptImporter`. Empty tabs import the jsonl transcript. A tab that persisted a user prompt but no assistant **appends** imported assistants. Tabs that already have an assistant only **extend the last assistant** when grok's last assistant is a longer continuation (straight prefix, or a preamble glued to a truncated second assistant — two jsonl rows streamed into one bubble). Extra jsonl `user_info` rows do not replace a complete answer. `encodeWorkspacePath` matches grok's layout: `%2FUsers%2F…%2Fproject` with **no** trailing `%2F`. Runs at launch (`restorePersistedMessages`), on tab switch (`ChatStore.reconcileTranscriptFromGrokIfNeeded`), and after each successful turn (`finishPrompt`, with short retries if jsonl flushes late — retries parse jsonl off the main actor). Late `agent_message_chunk`s are still applied for 2s after `session/prompt` returns. Skips synthetic `<system-reminder>`-only rows and non-text session-update types. Stale-fallback-only tabs are not treated as restorable transcripts. `SessionMessageStore.mergeTranscripts` also keeps the longer conversation when a later save is shorter.
+**Transcript auto-repair:** `SessionTranscriptRecovery` reads grok's on-disk `~/.grok/sessions/{encoded-cwd}/{grokSessionID}/chat_history.jsonl` via `GrokSessionTranscriptImporter`. Empty tabs import the jsonl transcript. A tab that persisted a user prompt but no assistant **appends** imported assistants. Tabs that already have an assistant only **extend the last assistant** when grok's last assistant is a longer continuation (straight prefix, or a preamble glued to a truncated second assistant — two jsonl rows streamed into one bubble). Extra jsonl `user_info` rows do not replace a complete answer. `encodeWorkspacePath` matches grok's layout: `%2FUsers%2F…%2Fproject` with **no** trailing `%2F`. Runs at launch (`restorePersistedMessages`), on tab switch (`ChatStore.reconcileTranscriptFromGrokIfNeeded`), and after each successful turn (`finishPrompt`, with short retries if jsonl flushes late — retries parse jsonl off the main actor). Late `agent_message_chunk`s stay on the completed assistant for 2s after `session/prompt` returns (`LateAssistantChunkRouting`); a longer jsonl reconcile does **not** close that window, and a queued next prompt does not steal leftovers until `process.send` begins. A failed turn that recorded CLI working lines but no text is kept (`FailedPromptCleanup`). Skips synthetic `<system-reminder>`-only rows and non-text session-update types. Stale-fallback-only tabs are not treated as restorable transcripts. `SessionMessageStore.mergeTranscripts` also keeps the longer conversation when a later save is shorter.
 
-**CLI working lines:** grok's pager shows batched tool lines such as `Read 1 skill, Read 2 files, Listed 1 dir  [hooks: 5]` between assistant paragraphs. GrokBuild now does the same. `GrokActivityBuilder` folds `agent_message_chunk` + `tool_call` / `tool_call_update` + `hook_execution` into `Message.parts` (`.text` / `.activity`). `GrokActivitySummary` groups titles the way the CLI does (Read skills, then Read files, then Listed dirs; `[hooks: N]` counts `user_prompt_submit` + `pre_tool_use`, not `post_tool_use`; a `stop` hook is its own line). Live turns write parts as events arrive. Restored tabs that have no parts yet overlay them from `updates.jsonl` (`GrokActivityLog` / `SessionTranscriptRecovery.attachActivityIfNeeded`). `GrokActivityLineView` renders the dim `| ✦` / `| >` row. The collapsed `ToolActivityGroup` stays only when a turn has tools but no activity parts yet.
+**CLI working lines:** grok's pager shows batched tool lines such as `Read 1 skill, Read 2 files, Listed 1 dir  [hooks: 5]` between assistant paragraphs. GrokBuild now does the same. `GrokActivityBuilder` folds `agent_message_chunk` + `tool_call` / `tool_call_update` + `hook_execution` into `Message.parts` (`.text` / `.activity`). `GrokActivitySummary` groups titles the way the CLI does (Read skills, then Read files, then Listed dirs; `[hooks: N]` counts `user_prompt_submit` + `pre_tool_use`, not `post_tool_use`; a `stop` hook is its own line). Live turns write parts as events arrive. Restored tabs that have no parts yet overlay them from `updates.jsonl` (`GrokActivityLog` / `SessionTranscriptRecovery.attachActivity`). Each assistant is paired with the same-index jsonl turn; text-only turns are not dropped, so a later tool turn cannot land on an earlier bubble. `GrokActivityLineView` renders the dim `| ✦` / `| >` row. The collapsed `ToolActivityGroup` stays only when a turn has tools but no activity parts yet.
 
 **Eviction:** `enforceConnectionCap()` stops processes for sessions beyond the MRU cap. It keeps the selected tab, the MRU window of `maxConnectedSessions`, any `.busy` turn, and any session with live `/loop` tasks (`ConnectionCapPolicy` in `DashboardGrouping.swift`) so dashboard automations are not killed when a fifth tab opens.
 
@@ -699,6 +699,8 @@ Ordered config-first (session config → capabilities → grok ecosystem/inspect
 
 The settings chrome uses a custom horizontal **scrollable** tab bar (`SettingsView.settingsTabBar`) instead of `TabView`’s compressing segmented control — full titles stay readable; the bar scrolls sideways in a narrow window and auto-scrolls the selected tab into view. Visited panes stay mounted in a `ZStack` (`SettingsTabKeepAlive`) so `@State` / `.task` are not reset when switching tabs.
 
+`SettingsPaneNavigation` decides when the sidebar may leave Settings: only a *different* project dismisses the pane. `ContentView.openSettings` also closes Sessions History / Sessions Dashboard.
+
 | Tab | Pane | Data source |
 |-----|------|-------------|
 | `.agents` | Discovered agents + **default** session-agent picker (new sessions) + **custom subagent roles** CRUD | `listAgents`, `grokbuild.selectedAgent`, `SubagentRoleStore` |
@@ -820,6 +822,8 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 ├──────────────┴──────────────────────────────────┤
 │ SettingsView (replaces chat when open)          │
 └─────────────────────────────────────────────────┘
+
+Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) keeps the pane up unless the user picks a *different* project. Re-applying the current `selectedWorkspaceID` (SwiftUI `onChange` when chat is swapped out) does not dismiss Settings. Opening Settings also closes Sessions History / Sessions Dashboard so a leftover status-menu mouse-up cannot cover the pane. Status-item actions that front the window run on the next main-queue turn (`StatusBarController.performAfterStatusMenuCloses`) so `makeKeyAndOrderFront` is not under the menu click.
 ```
 
 ### Key views
@@ -864,7 +868,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
-| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`) |
+| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`). Dismisses Sessions History / Dashboard; same-project sidebar `onChange` does not leave Settings (`SettingsPaneNavigation`). |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
 | `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
@@ -990,7 +994,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
 | **Git branch/worktree** | `GitCheckoutSheet`, `GitService`, `ParallelSessionSheet` (named session + optional worktree) |
-| **Release / notarize** | `scripts/release.sh`, `.github/workflows/release.yml`, `BUILDING.md` |
+| **Release / notarize** | `.cursor/skills/grokbuild-release/SKILL.md` (clean main → version check → `make release`), `scripts/release.sh`, `BUILDING.md` |
 
 ---
 
@@ -1005,7 +1009,7 @@ make test    # Tests/GrokBuildTests/
 | `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete |
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` |
-| `GrokActivitySummaryTests.swift` | CLI tool-line grouping, hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore, `Message.parts` decode |
+| `GrokActivitySummaryTests.swift` | CLI tool-line grouping, hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
@@ -1015,6 +1019,7 @@ make test    # Tests/GrokBuildTests/
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Sessions History / Sessions Dashboard copy |
+| `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables, fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
 | `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |

@@ -54,4 +54,54 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertTrue(SettingsTabKeepAlive.shouldMount(.models, selected: .models, loaded: loaded))
         XCTAssertFalse(SettingsTabKeepAlive.shouldMount(.hooks, selected: .models, loaded: loaded))
     }
+
+    func testSameWorkspaceDoesNotLeaveSettings() {
+        let project = UUID()
+        XCTAssertFalse(
+            SettingsPaneNavigation.shouldLeaveSettings(
+                incomingWorkspaceID: project,
+                activeWorkspaceID: project
+            )
+        )
+    }
+
+    func testDifferentWorkspaceLeavesSettings() {
+        XCTAssertTrue(
+            SettingsPaneNavigation.shouldLeaveSettings(
+                incomingWorkspaceID: UUID(),
+                activeWorkspaceID: UUID()
+            )
+        )
+    }
+
+    func testNilIncomingWorkspaceKeepsSettings() {
+        XCTAssertFalse(
+            SettingsPaneNavigation.shouldLeaveSettings(
+                incomingWorkspaceID: nil,
+                activeWorkspaceID: UUID()
+            )
+        )
+    }
+
+    func testSelectingProjectFromEmptySessionLeavesSettings() {
+        XCTAssertTrue(
+            SettingsPaneNavigation.shouldLeaveSettings(
+                incomingWorkspaceID: UUID(),
+                activeWorkspaceID: nil
+            )
+        )
+    }
+
+    func testOpeningSettingsDismissesSessionSheets() {
+        var showSessions = true
+        var showDashboard = true
+        let tab = SettingsPaneNavigation.openSettings(
+            tab: .models,
+            showSessions: &showSessions,
+            showSessionDashboard: &showDashboard
+        )
+        XCTAssertEqual(tab, .models)
+        XCTAssertFalse(showSessions)
+        XCTAssertFalse(showDashboard)
+    }
 }
