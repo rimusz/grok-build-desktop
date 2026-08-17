@@ -123,6 +123,13 @@ class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Run after the status-item menu finishes tracking so `makeKeyAndOrderFront`
+    /// does not put the main window under the leftover mouse-up (which then hits
+    /// Sessions History / the selected project and leaves Settings).
+    private func performAfterStatusMenuCloses(_ action: @escaping () -> Void) {
+        DispatchQueue.main.async(execute: action)
+    }
+
     private var grokBuildTitleItem: NSMenuItem!
     private var terminalLoginItem: NSMenuItem!
     private var retryConnectionItem: NSMenuItem!
@@ -219,32 +226,44 @@ class StatusBarController: NSObject {
     }
 
     @objc private func openGrokBuild() {
-        showMainWindow()
+        performAfterStatusMenuCloses { [weak self] in
+            self?.showMainWindow()
+        }
     }
 
     @objc private func newSession() {
-        showMainWindow()
-        NotificationCenter.default.post(name: .newSessionRequested, object: nil)
+        performAfterStatusMenuCloses { [weak self] in
+            self?.showMainWindow()
+            NotificationCenter.default.post(name: .newSessionRequested, object: nil)
+        }
     }
 
     @objc private func browseSessions() {
-        showMainWindow()
-        NotificationCenter.default.post(name: .sessionsRequested, object: nil)
+        performAfterStatusMenuCloses { [weak self] in
+            self?.showMainWindow()
+            NotificationCenter.default.post(name: .sessionsRequested, object: nil)
+        }
     }
 
     @objc private func chooseWorkspace() {
-        NotificationCenter.default.post(name: .chooseWorkspaceRequested, object: nil)
-        showMainWindow()
+        performAfterStatusMenuCloses { [weak self] in
+            NotificationCenter.default.post(name: .chooseWorkspaceRequested, object: nil)
+            self?.showMainWindow()
+        }
     }
 
     @objc private func openSettings() {
-        showMainWindow()
-        NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+        performAfterStatusMenuCloses { [weak self] in
+            self?.showMainWindow()
+            NotificationCenter.default.post(name: .openSettingsRequested, object: nil)
+        }
     }
 
     @objc private func retryConnection() {
-        showMainWindow()
-        NotificationCenter.default.post(name: .retryConnectionRequested, object: nil)
+        performAfterStatusMenuCloses { [weak self] in
+            self?.showMainWindow()
+            NotificationCenter.default.post(name: .retryConnectionRequested, object: nil)
+        }
     }
 
     @objc private func openTerminalForLogin() {

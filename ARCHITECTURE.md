@@ -141,7 +141,7 @@ grok-deck2/
 
 **Status item menu order:** auth header (+ **Run `grok login` in Terminal…** / **Retry Connection** when signed out) → **Open GrokBuild** → **New Session** → **Sessions History…** → **Add Project…** → **Settings…** (⌘,) → **Check for Updates…** / **Upgrade Available…** → **View Usage on grok.com…** → **About GrokBuild** → **Quit GrokBuild**. DEBUG builds add **Simulate Updates** after the updates item.
 
-Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles.
+Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles. Status-item actions that front the window are deferred to the next main-queue turn so the menu click is not delivered into the newly keyed window.
 
 **Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
@@ -699,6 +699,8 @@ Ordered config-first (session config → capabilities → grok ecosystem/inspect
 
 The settings chrome uses a custom horizontal **scrollable** tab bar (`SettingsView.settingsTabBar`) instead of `TabView`’s compressing segmented control — full titles stay readable; the bar scrolls sideways in a narrow window and auto-scrolls the selected tab into view. Visited panes stay mounted in a `ZStack` (`SettingsTabKeepAlive`) so `@State` / `.task` are not reset when switching tabs.
 
+`SettingsPaneNavigation` decides when the sidebar may leave Settings: only a *different* project dismisses the pane. `ContentView.openSettings` also closes Sessions History / Sessions Dashboard.
+
 | Tab | Pane | Data source |
 |-----|------|-------------|
 | `.agents` | Discovered agents + **default** session-agent picker (new sessions) + **custom subagent roles** CRUD | `listAgents`, `grokbuild.selectedAgent`, `SubagentRoleStore` |
@@ -820,6 +822,8 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 ├──────────────┴──────────────────────────────────┤
 │ SettingsView (replaces chat when open)          │
 └─────────────────────────────────────────────────┘
+
+Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) keeps the pane up unless the user picks a *different* project. Re-applying the current `selectedWorkspaceID` (SwiftUI `onChange` when chat is swapped out) does not dismiss Settings. Opening Settings also closes Sessions History / Sessions Dashboard so a leftover status-menu mouse-up cannot cover the pane. Status-item actions that front the window run on the next main-queue turn (`StatusBarController.performAfterStatusMenuCloses`) so `makeKeyAndOrderFront` is not under the menu click.
 ```
 
 ### Key views
@@ -864,7 +868,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
-| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`) |
+| `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`). Dismisses Sessions History / Dashboard; same-project sidebar `onChange` does not leave Settings (`SettingsPaneNavigation`). |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
 | `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
@@ -990,7 +994,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
 | **Git branch/worktree** | `GitCheckoutSheet`, `GitService`, `ParallelSessionSheet` (named session + optional worktree) |
-| **Release / notarize** | `scripts/release.sh`, `.github/workflows/release.yml`, `BUILDING.md` |
+| **Release / notarize** | `.cursor/skills/grokbuild-release/SKILL.md` (clean main → version check → `make release`), `scripts/release.sh`, `BUILDING.md` |
 
 ---
 
@@ -1015,6 +1019,7 @@ make test    # Tests/GrokBuildTests/
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Sessions History / Sessions Dashboard copy |
+| `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables, fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
 | `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |

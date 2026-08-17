@@ -1,43 +1,17 @@
 ---
 name: grokbuild-release
-description: Versions, packages, signs, notarizes, and publishes GrokBuild GitHub releases. Use when bumping VERSION, running make release, editing release.yml, or helping with codesigning/notarization.
+description: Publishes a GrokBuild GitHub release from a clean main. Use when the user asks to release, run make release, or publish a GrokBuild version.
 ---
 
 # GrokBuild release
 
-## Version files
+1. Ensure the working tree is clean.
+2. `git switch main`
+3. `git pull --ff-only`
+4. Check set version is higher than existing release.
+5. `make release`
+6. Monitor and report the result.
 
-- `VERSION` — semver shown in About and used for release tags (e.g. `0.1.3`)
-- Tag format: `v{VERSION}` (e.g. `v0.1.3`)
+Stop if the tree is dirty, `git pull --ff-only` fails, or `VERSION` is not higher than the latest GitHub release (`gh release list`; tag `v{VERSION}`).
 
-## Local release
-
-```bash
-cp .env.example .env   # optional: SIGN_IDENTITY, NOTARY_PROFILE
-make release           # unsigned, publishes via gh
-make release RELEASE_TYPE=notarized
-```
-
-Script: `scripts/release.sh`. Requires `gh auth login`.
-
-## CI release
-
-- **Manual workflow dispatch** only — Actions → Release → Run workflow (see `BUILDING.md`)
-- Choose `notarized` (default) or `unsigned`
-- Tag push auto-release is disabled in `release.yml`
-
-## Checklist
-
-1. Bump `VERSION`
-2. **`make test`** — must pass; add tests if release/updater logic changed
-3. `make app` or `make dmg` to verify packaging
-4. Confirm signed entitlements include `com.apple.security.device.audio-input` (`codesign -d --entitlements - dist/GrokBuild.app`) — required for Voice control under Hardened Runtime (issue #17)
-5. **Update docs** — `BUILDING.md`, `README.md` (install/updates), `ARCHITECTURE.md` (in-app updates section), `scripts/README.md` if scripts changed
-6. Commit on feature branch; user creates tag/PR
-7. Do not force-push `main` or skip git hooks unless asked
-
-## Update checking in app
-
-`UpdateChecker` compares installed `AppVersion.short` to the newest **notarized** GitHub release (title contains `(Notarized)` or notes mention notarization); unsigned releases are ignored. CLI via `grok update --check --json`.
-
-When changing release naming, assets, or updater behavior, update `ARCHITECTURE.md`, `BUILDING.md`, and `UpdateCheckerTests.swift`.
+Do not bump `VERSION`, commit, or force-push. Stream `make release` and report pass/fail plus the release URL.

@@ -101,6 +101,13 @@ struct ContentView: View {
                 hiddenSessionWorkspaceIDs: $sessionLayout.hiddenSessionWorkspaceIDs,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
+                    if showSettings,
+                       !SettingsPaneNavigation.shouldLeaveSettings(
+                           incomingWorkspaceID: ws.id,
+                           activeWorkspaceID: selectedWorkspaceID
+                       ) {
+                        return
+                    }
                     showSettings = false
                     selectProject(ws)
                 },
@@ -390,7 +397,11 @@ struct ContentView: View {
     }
 
     private func openSettings(tab: SettingsTab) {
-        selectedSettingsTab = tab
+        selectedSettingsTab = SettingsPaneNavigation.openSettings(
+            tab: tab,
+            showSessions: &showSessions,
+            showSessionDashboard: &showSessionDashboard
+        )
         showSettings = true
     }
 
@@ -1039,10 +1050,13 @@ struct ContentView: View {
     }
 
     private func handleWorkspaceChange(_ newID: Workspace.ID?) {
+        guard SettingsPaneNavigation.shouldLeaveSettings(
+            incomingWorkspaceID: newID,
+            activeWorkspaceID: activeSession?.workspace.id ?? selectedWorkspaceID
+        ) else { return }
         if let id = newID,
            let ws = workspaceStore.workspaces.first(where: { $0.id == id }) {
             showSettings = false
-            if activeSession?.workspace.id == id { return }
             selectProject(ws)
         }
     }
@@ -1485,7 +1499,8 @@ private struct ContentViewNotificationHandlers: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .focusInputRequested)) { _ in
                 // handled inside ChatView via focus
             }
-            .onChange(of: selectedWorkspaceID) { _, newID in
+            .onChange(of: selectedWorkspaceID) { oldID, newID in
+                guard oldID != newID else { return }
                 onWorkspaceChange(newID)
             }
             .onChange(of: activeStore.messages) { _, _ in
