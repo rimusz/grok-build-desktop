@@ -177,6 +177,119 @@ final class GrokActivitySummaryTests: XCTestCase {
         )
     }
 
+    func testAttachActivityKeepsTextOnlyTurnFromStealingLaterTools() {
+        let textOnly = GrokActivityLog.Turn(
+            userText: "hi",
+            parts: [.text("Hello.")]
+        )
+        let withTools = GrokActivityLog.Turn(
+            userText: "read it",
+            parts: [
+                .text("I'll look."),
+                .activity(GrokActivityLine(summary: "Read 1 file", hookCount: 1, isLead: true)),
+                .text(" Done.")
+            ]
+        )
+        let messages = [
+            Message(role: .user, content: "hi"),
+            Message(role: .assistant, content: "Hello."),
+            Message(role: .user, content: "read it"),
+            Message(role: .assistant, content: "I'll look. Done.")
+        ]
+        let attached = SessionTranscriptRecovery.attachActivity(
+            messages: messages,
+            turns: [textOnly, withTools]
+        )
+        XCTAssertFalse(attached[1].hasActivityParts)
+        XCTAssertTrue(attached[3].hasActivityParts)
+        XCTAssertEqual(attached[1].content, "Hello.")
+        XCTAssertTrue(
+            attached[3].parts.contains(where: { part in
+                if case .activity(let line) = part {
+                    return line.summary.contains("Read 1 file")
+                }
+                return false
+            })
+        )
+    }
+
+    func testLateChunksStayOnCompletedAssistantUntilNextSendBegins() {
+        let previous = UUID()
+        let next = UUID()
+        let until = Date().addingTimeInterval(2)
+
+        XCTAssertEqual(
+            LateAssistantChunkRouting.destination(
+                streamingID: next,
+                currentPromptSendBegun: false,
+                lateUntil: until,
+                previousAssistantID: previous
+            ),
+            .late(previous)
+        )
+        XCTAssertEqual(
+            LateAssistantChunkRouting.destination(
+                streamingID: next,
+                currentPromptSendBegun: true,
+                lateUntil: until,
+                previousAssistantID: previous
+            ),
+            .streaming(next)
+        )
+        XCTAssertEqual(
+            LateAssistantChunkRouting.destination(
+                streamingID: nil,
+                currentPromptSendBegun: false,
+                lateUntil: until,
+                previousAssistantID: previous
+            ),
+            .late(previous)
+        )
+    }
+
+    func testLateChunkWindowStaysOpenAfterJsonlReconcile() {
+        let previous = UUID()
+        let until = Date().addingTimeInterval(2)
+        XCTAssertEqual(
+            LateAssistantChunkRouting.destination(
+                streamingID: nil,
+                currentPromptSendBegun: false,
+                lateUntil: until,
+                previousAssistantID: previous
+            ),
+            .late(previous)
+        )
+        XCTAssertNil(
+            LateAssistantChunkRouting.destination(
+                streamingID: nil,
+                currentPromptSendBegun: false,
+                lateUntil: Date().addingTimeInterval(-0.1),
+                previousAssistantID: previous
+            )
+        )
+    }
+
+    func testFailedPromptKeepsActivityOnlyAssistant() {
+        XCTAssertFalse(
+            FailedPromptCleanup.shouldDiscardEmptyAssistant(
+                content: "",
+                hasActivityParts: true
+            )
+        )
+        XCTAssertTrue(
+            FailedPromptCleanup.shouldDiscardEmptyAssistant(
+                content: "   ",
+                hasActivityParts: false
+            )
+        )
+        XCTAssertFalse(
+            FailedPromptCleanup.shouldDiscardEmptyAssistant(
+                content: "partial answer",
+                hasActivityParts: false
+            )
+        )
+    }
+
     func testMessageDecodeWithoutPartsStaysCompatible() throws {
         let old = Message(role: .assistant, content: "hello")
         var data = try JSONEncoder().encode(old)

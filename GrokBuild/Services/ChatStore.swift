@@ -179,6 +179,9 @@ final class ChatStore {
     private(set) var streamingMessageID: UUID?
     /// ACP sometimes delivers the last `agent_message_chunk`s after `session/prompt` returns.
     private var acceptLateAssistantChunksUntil: Date?
+    /// True once `process.send` has started for the current streaming bubble.
+    /// Late chunks from the previous turn must not use this bubble until then.
+    private var currentPromptSendBegun = false
     private var activityBuilder = GrokActivityBuilder()
     private var connectionWatchdogTask: Task<Void, Never>?
 
@@ -977,7 +980,7 @@ final class ChatStore {
         let assistant = Message(role: .assistant, content: "")
         messages.append(assistant)
         streamingMessageID = assistant.id
-        acceptLateAssistantChunksUntil = nil
+        currentPromptSendBegun = false
         activityBuilder = GrokActivityBuilder()
         isStreaming = true
         lastError = nil
@@ -992,6 +995,7 @@ final class ChatStore {
         let assistantID = assistant.id
 
         if waitForCompletion {
+            currentPromptSendBegun = true
             let ok = await process.send(payload, images: promptImages)
             finishPrompt(assistantID: assistantID, ok: ok)
             return ok
@@ -999,6 +1003,7 @@ final class ChatStore {
 
         Task { [weak self] in
             guard let self else { return }
+            self.currentPromptSendBegun = true
             let ok = await self.process.send(payload, images: promptImages)
             self.finishPrompt(assistantID: assistantID, ok: ok)
         }
@@ -1015,6 +1020,7 @@ final class ChatStore {
         isGrokking = false
         turnStartedAt = nil
         streamingMessageID = nil
+        currentPromptSendBegun = false
         acceptLateAssistantChunksUntil = Date().addingTimeInterval(2)
         if let start = thinkingStartedAt, !thinkingText.isEmpty {
             thinkingDuration = Date().timeIntervalSince(start)
@@ -1025,9 +1031,7 @@ final class ChatStore {
             connectionState = .ready
             postStatusUpdate("ready")
             notifyMessagesChanged()
-            if reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID) {
-                acceptLateAssistantChunksUntil = nil
-            }
+            _ = reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID)
             TurnCompletionSound.playIfNeeded()
             drainPromptQueueIfNeeded()
             Task { [weak self] in
@@ -1040,8 +1044,13 @@ final class ChatStore {
         lastError = process.state.errorMessage ?? "Failed to send to grok."
         connectionState = process.state == .ready ? .ready : process.state
         postStatusUpdate(statusName(for: connectionState))
+        activityBuilder.finish()
+        syncActivityPartsToStreamingMessage()
         if let idx = messages.firstIndex(where: { $0.id == assistantID }),
-           messages[idx].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+           FailedPromptCleanup.shouldDiscardEmptyAssistant(
+               content: messages[idx].content,
+               hasActivityParts: messages[idx].hasActivityParts
+           ) {
             messages.remove(at: idx)
         }
         notifyMessagesChanged()
@@ -1069,7 +1078,6 @@ final class ChatStore {
             }.value
             guard !isStreaming else { return }
             if applyImportedAssistantTail(imported, assistantID: assistantID) {
-                acceptLateAssistantChunksUntil = nil
                 return
             }
         }
@@ -1131,6 +1139,7 @@ final class ChatStore {
         isGrokking = false
         turnStartedAt = nil
         streamingMessageID = nil
+        currentPromptSendBegun = false
         pendingPermissions.removeAll()
         pendingExitPlan = nil
         pendingQuestions.removeAll()
@@ -1144,6 +1153,7 @@ final class ChatStore {
         isStreaming = false
         isGrokking = false
         streamingMessageID = nil
+        currentPromptSendBegun = false
         await process.stop()
         connectionState = .idle
         postStatusUpdate("idle")
@@ -1687,16 +1697,23 @@ final class ChatStore {
     }
 
     private func appendAssistantText(_ text: String) {
+        let destination = LateAssistantChunkRouting.destination(
+            streamingID: streamingMessageID,
+            currentPromptSendBegun: currentPromptSendBegun,
+            lateUntil: acceptLateAssistantChunksUntil,
+            previousAssistantID: previousAssistantIDForLateChunks
+        )
+        guard let destination else { return }
+
         let idx: Int?
         let isLateChunk: Bool
-        if let id = streamingMessageID {
+        switch destination {
+        case .streaming(let id):
             idx = messages.firstIndex(where: { $0.id == id })
             isLateChunk = false
-        } else if let until = acceptLateAssistantChunksUntil, Date() < until {
-            idx = messages.lastIndex(where: { $0.role == .assistant })
+        case .late(let id):
+            idx = messages.firstIndex(where: { $0.id == id })
             isLateChunk = true
-        } else {
-            return
         }
         guard let idx else { return }
 
@@ -1705,14 +1722,24 @@ final class ChatStore {
            !clean.contains("diff") { return }
 
         if !clean.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !messages[idx].content.isEmpty {
-            if isLateChunk, messages[idx].content.hasSuffix(clean) { return }
+            if isLateChunk {
+                if messages[idx].content.hasSuffix(clean) { return }
+                messages[idx].replaceContent(messages[idx].content + clean)
+                notifyMessagesChanged()
+                return
+            }
             activityBuilder.addMessage(clean)
             messages[idx].content = activityBuilder.textContent
             messages[idx].parts = activityBuilder.parts
-            if isLateChunk {
-                notifyMessagesChanged()
-            }
         }
+    }
+
+    private var previousAssistantIDForLateChunks: UUID? {
+        if let streaming = streamingMessageID,
+           let idx = messages.firstIndex(where: { $0.id == streaming }) {
+            return messages[..<idx].last(where: { $0.role == .assistant })?.id
+        }
+        return messages.last(where: { $0.role == .assistant })?.id
     }
 
     private func recordActivityTool(_ toolCall: ToolCall) {

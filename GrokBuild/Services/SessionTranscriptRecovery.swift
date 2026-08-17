@@ -83,10 +83,18 @@ enum SessionTranscriptRecovery {
             return messages
         }
         let turns = GrokActivityLog.turns(from: updatesURL)
-        guard !turns.isEmpty else { return messages }
+        return attachActivity(messages: messages, turns: turns)
+    }
 
+    /// Pair each assistant bubble with the same-index `updates.jsonl` turn.
+    /// Do not compact away turns that have no tools — that slides a later
+    /// activity line onto an earlier text-only answer.
+    static func attachActivity(messages: [Message], turns: [GrokActivityLog.Turn]) -> [Message] {
+        guard !turns.isEmpty else { return messages }
         var updated = messages
         let assistantIndexes = updated.indices.filter { updated[$0].role == .assistant }
+        guard !assistantIndexes.isEmpty else { return messages }
+
         let activityTurns = turns.filter { $0.parts.contains(where: \.isActivity) }
         guard !activityTurns.isEmpty else { return messages }
 
@@ -95,14 +103,12 @@ enum SessionTranscriptRecovery {
             return updated
         }
 
-        var turnIndex = 0
-        for idx in assistantIndexes {
-            guard turnIndex < activityTurns.count else { break }
-            updated[idx].parts = GrokActivityLog.align(
-                activityTurns[turnIndex].parts,
-                toContent: updated[idx].content
+        for (assistantIdx, turn) in zip(assistantIndexes, turns) {
+            guard turn.parts.contains(where: \.isActivity) else { continue }
+            updated[assistantIdx].parts = GrokActivityLog.align(
+                turn.parts,
+                toContent: updated[assistantIdx].content
             )
-            turnIndex += 1
         }
         return updated
     }
@@ -144,5 +150,47 @@ enum SessionTranscriptRecovery {
             }
         }
         return nil
+    }
+}
+
+/// Where a trailing `agent_message_chunk` should land after `session/prompt` returns.
+enum LateAssistantChunkRouting {
+    enum Destination: Equatable {
+        case streaming(UUID)
+        case late(UUID)
+    }
+
+    /// Keep leftover chunks on the completed assistant until the next
+    /// `session/prompt` send begins. A longer jsonl reconcile must not close
+    /// that window — ACP may still flush more text than disk has written.
+    static func destination(
+        streamingID: UUID?,
+        currentPromptSendBegun: Bool,
+        lateUntil: Date?,
+        previousAssistantID: UUID?,
+        now: Date = Date()
+    ) -> Destination? {
+        let lateOpen = lateUntil.map { now < $0 } ?? false
+        if let streamingID {
+            if !currentPromptSendBegun,
+               lateOpen,
+               let previousAssistantID,
+               previousAssistantID != streamingID {
+                return .late(previousAssistantID)
+            }
+            return .streaming(streamingID)
+        }
+        if lateOpen, let previousAssistantID {
+            return .late(previousAssistantID)
+        }
+        return nil
+    }
+}
+
+enum FailedPromptCleanup {
+    /// Keep a failed turn that recorded CLI working lines even when no
+    /// assistant text streamed.
+    static func shouldDiscardEmptyAssistant(content: String, hasActivityParts: Bool) -> Bool {
+        content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasActivityParts
     }
 }
