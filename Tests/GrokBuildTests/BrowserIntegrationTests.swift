@@ -331,6 +331,8 @@ final class BrowserIntegrationTests: XCTestCase {
         }
         XCTAssertTrue(source.contains("\"tab\", \"list\""))
         XCTAssertTrue(source.contains("Blank tab"))
+        XCTAssertTrue(source.contains("str(action)"))
+        XCTAssertFalse(source.contains("\"\", \"about:blank\""))
     }
 
     func testBrowserSkillInstallerDoesNothingWhenDisabled() throws {

@@ -155,7 +155,7 @@ def format_snapshot(snap):
         lines.append(f"Title: {title}")
     if url:
         lines.append(f"URL: {url}")
-    blank_urls = {"", "about:blank", "chrome://new-tab-page/", "chrome://newtab/"}
+    blank_urls = {"about:blank", "chrome://new-tab-page/", "chrome://newtab/"}
     if (not title) and url in blank_urls:
         lines.append("Blank tab — call browser_open_url before interacting.")
     if snap:
@@ -164,7 +164,9 @@ def format_snapshot(snap):
 
 
 def call_tabs(action):
-    action = (action or "list").strip()
+    if action is None:
+        action = "list"
+    action = str(action).strip()
     if action in ("", "list"):
         return text_result(run_agent_browser(["tab", "list"]))
     if action in ("new", "close"):
