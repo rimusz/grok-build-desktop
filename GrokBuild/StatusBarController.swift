@@ -39,10 +39,18 @@ enum StatusBarMenuCopy {
 
 /// Sidebar footer badge next to Settings when an update is waiting.
 enum SidebarUpdateButtonCopy {
+    /// Visible badge for an app version (`0.2.9` → `v0.2.9`) so it is not a bare number.
+    static func versionTitle(_ version: String) -> String {
+        let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Update" }
+        let digits = trimmed.drop(while: { $0 == "v" || $0 == "V" })
+        return "v\(digits)"
+    }
+
     static func title(appVersion: String?, cliVersion: String?) -> String {
         switch (appVersion, cliVersion) {
         case let (app?, nil):
-            return app
+            return versionTitle(app)
         case (nil, _?):
             return "CLI"
         case (_?, _?):

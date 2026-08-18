@@ -59,9 +59,11 @@ final class StatusBarMenuTests: XCTestCase {
     }
 
     func testSidebarUpdateButtonTitleAndAccessibility() {
+        XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("0.2.9"), "v0.2.9")
+        XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("v0.2.9"), "v0.2.9")
         XCTAssertEqual(
             SidebarUpdateButtonCopy.title(appVersion: "0.2.8", cliVersion: nil),
-            "0.2.8"
+            "v0.2.8"
         )
         XCTAssertEqual(
             SidebarUpdateButtonCopy.title(appVersion: nil, cliVersion: "1.0.6"),

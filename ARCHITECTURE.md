@@ -501,7 +501,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 
 **Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
 
-**agent-browser tools (via MCP):** `browser_open_url`, `browser_snapshot`, `browser_click_ref`, etc.
+**agent-browser tools (via MCP, `scripts/grokbuild-browser-mcp`):** `browser_open_url`, `browser_snapshot` (prefixes title/URL; `about:blank` is a blank tab, not a failure), `browser_tabs` (`agent-browser tab list` / `new` / `close` / index), `browser_click_ref`, `browser_type_ref`, `browser_screenshot`, `browser_eval_js`, `browser_wait_for_load`. There is no grok-native `browser_tab` in the session.
 
 **grok.com web:** drive grok.com via browser tools to reach web-only features (Imagine, skills, connectors), then continue locally with Computer Use — see `grokbuild-grok-web` skill.
 
@@ -801,7 +801,7 @@ sequenceDiagram
 
 - **Menu:** **Upgrade Available…** / **Check for Updates…** — refresh checks, then open `UpdatePanel` directly (whether or not updates are available)
 - **Banner:** `UpdatesBanner` in `ContentView` — **Updates Available** opens `UpdatePanel`
-- **Sidebar footer:** a blue button next to **Settings** (`SidebarUpdateButtonCopy`) when `UpdateScheduler.hasAnyActionableUpdate` — app-only shows the version, CLI-only **CLI**, both **Updates**. Dismissing the banner does not hide this button. Opens `UpdatePanel` (cached check).
+- **Sidebar footer:** a blue button next to **Settings** (`SidebarUpdateButtonCopy`) when `UpdateScheduler.hasAnyActionableUpdate` — app-only shows `v{version}` (never a bare `0.2.9`), CLI-only **CLI**, both **Updates**. Dismissing the banner does not hide this button. Opens `UpdatePanel` (cached check).
 - **Panel:** dual sections; mutual busy lock during install
 
 ### DEBUG simulate updates
@@ -1016,7 +1016,7 @@ make test    # Tests/GrokBuildTests/
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete, strip `ToolCallUpdate` protocol JSON from imported assistants |
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
-| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
+| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, MCP script tool names (`browser_tabs` / snapshot), settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
 | `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |

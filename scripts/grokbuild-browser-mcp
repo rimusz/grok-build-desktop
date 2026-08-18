@@ -23,8 +23,29 @@ TOOLS = [
     },
     {
         "name": "browser_snapshot",
-        "description": "Return a compact accessibility snapshot with stable refs.",
+        "description": (
+            "Return the active page title, URL, and a compact accessibility snapshot with refs. "
+            "A new automation profile is often about:blank — that is not a failure; call "
+            "browser_open_url first. Use browser_tabs to list tabs."
+        ),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "browser_tabs",
+        "description": (
+            "List or switch tabs in the controlled browser (agent-browser tab). "
+            "Default action is list. There is no browser_tab / tab-list tool besides this. "
+            "A fresh profile usually has one about:blank tab."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "list (default), new, close, or a 1-based tab index to focus.",
+                }
+            },
+        },
     },
     {
         "name": "browser_click_ref",
@@ -113,12 +134,56 @@ def text_result(text):
     return {"content": [{"type": "text", "text": text or "(no output)"}]}
 
 
+def page_location():
+    title = ""
+    url = ""
+    try:
+        title = run_agent_browser(["get", "title"])
+    except Exception:
+        pass
+    try:
+        url = run_agent_browser(["get", "url"])
+    except Exception:
+        pass
+    return title, url
+
+
+def format_snapshot(snap):
+    title, url = page_location()
+    lines = []
+    if title:
+        lines.append(f"Title: {title}")
+    if url:
+        lines.append(f"URL: {url}")
+    blank_urls = {"about:blank", "chrome://new-tab-page/", "chrome://newtab/"}
+    if (not title) and url in blank_urls:
+        lines.append("Blank tab — call browser_open_url before interacting.")
+    if snap:
+        lines.append(snap)
+    return "\n".join(lines) or "(empty page)"
+
+
+def call_tabs(action):
+    if action is None:
+        action = "list"
+    action = str(action).strip()
+    if action in ("", "list"):
+        return text_result(run_agent_browser(["tab", "list"]))
+    if action in ("new", "close"):
+        return text_result(run_agent_browser(["tab", action]))
+    if action.isdigit():
+        return text_result(run_agent_browser(["tab", action]))
+    raise ValueError("browser_tabs action must be list, new, close, or a tab number")
+
+
 def call_tool(name, args):
     args = args or {}
     if name == "browser_open_url":
         return text_result(run_agent_browser(["open", args["url"]]))
     if name == "browser_snapshot":
-        return text_result(run_agent_browser(["snapshot", "-i"]))
+        return text_result(format_snapshot(run_agent_browser(["snapshot", "-i"])))
+    if name == "browser_tabs":
+        return call_tabs(args.get("action"))
     if name == "browser_click_ref":
         return text_result(run_agent_browser(["click", args["ref"]]))
     if name == "browser_type_ref":

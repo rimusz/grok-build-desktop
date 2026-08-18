@@ -107,7 +107,7 @@ These are copied into the app bundle during packaging; they are not usually run 
 |--------|---------|
 | [`bundle-agent-desktop.sh`](bundle-agent-desktop.sh) | Locate `agent-desktop` on the system (or `AGENT_DESKTOP_PATH`) and copy it into `Contents/MacOS/` for Computer Use. Called by both build scripts. |
 | [`bundle-cursor-bridge.sh`](bundle-cursor-bridge.sh) | `npm install` in `GrokBuild/Resources/CursorBridge` (pinned to `registry.npmjs.org`) and copy the sidecar (`cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs`, `node_modules`) into `Contents/Resources/CursorBridge`. Requires Node ≥ 22.13 (major **and** minor checked); soft-skips if Node/npm is missing or too old; **fails the build** if npm install/copy fails when Node is present. Excludes `*.test.mjs` from the app bundle. |
-| [`grokbuild-browser-mcp`](grokbuild-browser-mcp) | Python MCP stdio server exposing browser tools via `agent-browser`. Copied to `Contents/Resources/grokbuild-browser-mcp`. |
+| [`grokbuild-browser-mcp`](grokbuild-browser-mcp) | Python MCP stdio server exposing `browser_open_url`, `browser_snapshot` (title/URL), `browser_tabs`, click/type/screenshot/eval/wait via `agent-browser`. Copied to `Contents/Resources/grokbuild-browser-mcp`. |
 
 **`bundle-agent-desktop.sh`**
 
