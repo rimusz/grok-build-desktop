@@ -345,7 +345,7 @@ final class ChatStore {
 
     /// Restore a previously saved transcript when reopening a session tab.
     func restorePersistedMessages(_ saved: [Message]) {
-        messages = filteredPersistedMessages(saved)
+        messages = AssistantTranscriptSanitizer.cleanedTranscript(filteredPersistedMessages(saved))
         streamingMessageID = nil
     }
 
@@ -355,7 +355,9 @@ final class ChatStore {
         grokSessionID: String?,
         workspace: Workspace
     ) {
-        let saved = SessionMessageStore.messages(for: sessionID)
+        let saved = AssistantTranscriptSanitizer.cleanedTranscript(
+            SessionMessageStore.messages(for: sessionID)
+        )
         let recovered = SessionTranscriptRecovery.recoverIfNeeded(
             sessionID: sessionID,
             grokSessionID: grokSessionID,
@@ -1640,6 +1642,7 @@ final class ChatStore {
             syncActivityPartsToStreamingMessage()
 
         case .rawLine(let line):
+            guard !AssistantTranscriptSanitizer.shouldDropRawLine(line) else { return }
             appendAssistantText(line)
         case .error(let msg):
             lastError = msg
@@ -1720,11 +1723,14 @@ final class ChatStore {
         let clean = text.replacingOccurrences(of: "<<USER>> ", with: "")
         if clean.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(">") &&
            !clean.contains("diff") { return }
+        guard AssistantTranscriptSanitizer.usableChunk(clean) != nil else { return }
 
         if !clean.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !messages[idx].content.isEmpty {
             if isLateChunk {
                 if messages[idx].content.hasSuffix(clean) { return }
-                messages[idx].replaceContent(messages[idx].content + clean)
+                let combined = AssistantTranscriptSanitizer.strip(messages[idx].content + clean)
+                if combined == messages[idx].content { return }
+                messages[idx].replaceContent(combined)
                 notifyMessagesChanged()
                 return
             }

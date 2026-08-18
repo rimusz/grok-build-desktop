@@ -60,9 +60,11 @@ enum GrokSessionTranscriptImporter {
                       !isSyntheticSystemReminderOnly(content) else { continue }
                 messages.append(Message(role: .user, content: content))
             case "assistant":
-                guard let content = extractAssistantText(from: row["content"]),
-                      !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
-                messages.append(Message(role: .assistant, content: stripThinkingTags(from: content)))
+                guard let content = extractAssistantText(from: row["content"]) else { continue }
+                let cleaned = AssistantTranscriptSanitizer.strip(stripThinkingTags(from: content))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !cleaned.isEmpty else { continue }
+                messages.append(Message(role: .assistant, content: cleaned))
             default:
                 continue
             }

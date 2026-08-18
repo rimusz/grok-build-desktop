@@ -76,6 +76,18 @@ final class GrokSessionTranscriptImporterTests: XCTestCase {
         XCTAssertEqual(messages.first?.content, "Visible answer")
     }
 
+    func testImportStripsProtocolJSONFromAssistant() throws {
+        let jsonl = """
+        {"type":"user","content":[{"type":"text","text":"go"}]}
+        {"type":"assistant","content":"I'll start.{\\"updateType\\":\\"ToolCallUpdate\\",\\"updateParams\\":{\\"status\\":\\"Completed\\"}} Done."}
+        {"type":"assistant","content":"{\\"updateType\\":\\"ToolCallUpdate\\",\\"agentTimestampMs\\":1,\\"promptId\\":\\"x\\"}"}
+        """
+        let file = try writeTempJSONL(jsonl)
+        let messages = GrokSessionTranscriptImporter.importMessages(from: file)
+        XCTAssertEqual(messages.count, 2)
+        XCTAssertEqual(messages[1].content, "I'll start. Done.")
+    }
+
     func testRecoverIfNeededImportsWhenLocalTranscriptEmpty() throws {
         let sessionID = UUID()
         defer { SessionMessageStore.remove(for: sessionID) }
