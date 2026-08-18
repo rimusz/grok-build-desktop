@@ -37,6 +37,35 @@ enum StatusBarMenuCopy {
     }
 }
 
+/// Sidebar footer badge next to Settings when an update is waiting.
+enum SidebarUpdateButtonCopy {
+    static func title(appVersion: String?, cliVersion: String?) -> String {
+        switch (appVersion, cliVersion) {
+        case let (app?, nil):
+            return app
+        case (nil, _?):
+            return "CLI"
+        case (_?, _?):
+            return "Updates"
+        default:
+            return "Update"
+        }
+    }
+
+    static func accessibilityLabel(appVersion: String?, cliVersion: String?) -> String {
+        switch (appVersion, cliVersion) {
+        case let (app?, nil):
+            return "GrokBuild \(app) available"
+        case let (nil, cli?):
+            return "grok CLI \(cli) available"
+        case let (app?, cli?):
+            return "GrokBuild \(app) and grok CLI \(cli) available"
+        default:
+            return "Updates available"
+        }
+    }
+}
+
 class StatusBarController: NSObject {
     private var statusItem: NSStatusItem
     private var menu: NSMenu

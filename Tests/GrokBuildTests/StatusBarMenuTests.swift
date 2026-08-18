@@ -58,6 +58,37 @@ final class StatusBarMenuTests: XCTestCase {
         )
     }
 
+    func testSidebarUpdateButtonTitleAndAccessibility() {
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.title(appVersion: "0.2.8", cliVersion: nil),
+            "0.2.8"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.title(appVersion: nil, cliVersion: "1.0.6"),
+            "CLI"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.title(appVersion: "0.2.8", cliVersion: "1.0.6"),
+            "Updates"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.title(appVersion: nil, cliVersion: nil),
+            "Update"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: "0.2.8", cliVersion: nil),
+            "GrokBuild 0.2.8 available"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: nil, cliVersion: "1.0.6"),
+            "grok CLI 1.0.6 available"
+        )
+        XCTAssertEqual(
+            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: "0.2.8", cliVersion: "1.0.6"),
+            "GrokBuild 0.2.8 and grok CLI 1.0.6 available"
+        )
+    }
+
     func testSessionsHistoryCopyIsDistinctFromDashboard() {
         XCTAssertEqual(SessionsHistoryCopy.windowTitle, "Sessions History")
         XCTAssertEqual(SessionsHistoryCopy.menuItem, "Sessions History…")

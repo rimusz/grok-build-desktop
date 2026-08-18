@@ -57,6 +57,9 @@ struct ContentView: View {
     @State private var showUpgradeBanner = false
     @State private var bannerAppVersion: String?
     @State private var bannerCLIVersion: String?
+    @State private var showSidebarUpdateButton = false
+    @State private var sidebarUpdateAppVersion: String?
+    @State private var sidebarUpdateCLIVersion: String?
 
     private var gitErrorAlertPresented: Binding<Bool> {
         Binding(
@@ -74,13 +77,7 @@ struct ContentView: View {
                 UpdatesBanner(
                     appVersion: bannerAppVersion,
                     cliVersion: bannerCLIVersion,
-                    onAction: {
-                        Task {
-                            await UpdateUI.presentUpdatePanel(refresh: false) {
-                                refreshUpgradeBannerState()
-                            }
-                        }
-                    },
+                    onAction: { openUpdatesPanel() },
                     onDismiss: {
                         isUpgradeBannerDismissed = true
                         refreshUpgradeBannerState()
@@ -142,7 +139,17 @@ struct ContentView: View {
                 onCreateWorktree: { gitCheckoutRequest = GitCheckoutRequest(project: $0, focusCreateWorktree: true) },
                 onSessionDisclosureChanged: { persistSessionLayout() },
                 onOpenSettings: { openSettings(tab: .agents) },
-                isSettingsSelected: showSettings
+                isSettingsSelected: showSettings,
+                hasActionableUpdate: showSidebarUpdateButton,
+                updateButtonTitle: SidebarUpdateButtonCopy.title(
+                    appVersion: sidebarUpdateAppVersion,
+                    cliVersion: sidebarUpdateCLIVersion
+                ),
+                updateButtonAccessibilityLabel: SidebarUpdateButtonCopy.accessibilityLabel(
+                    appVersion: sidebarUpdateAppVersion,
+                    cliVersion: sidebarUpdateCLIVersion
+                ),
+                onOpenUpdates: { openUpdatesPanel() }
             )
             .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
 
@@ -1367,16 +1374,27 @@ struct ContentView: View {
         }
     }
 
+    private func openUpdatesPanel() {
+        Task {
+            await UpdateUI.presentUpdatePanel(refresh: false) {
+                refreshUpgradeBannerState()
+            }
+        }
+    }
+
     private func refreshUpgradeBannerState() {
+        let appAvailable = UpdateScheduler.hasActionableAppUpdate
+        let cliAvailable = UpdateScheduler.hasActionableCLIUpdate
+        sidebarUpdateAppVersion = appAvailable ? UpdateScheduler.cachedAppRelease?.latestVersion : nil
+        sidebarUpdateCLIVersion = cliAvailable ? UpdateScheduler.cachedCLIStatus?.latestVersion : nil
+        showSidebarUpdateButton = appAvailable || cliAvailable
+
         guard !isUpgradeBannerDismissed else {
             showUpgradeBanner = false
             bannerAppVersion = nil
             bannerCLIVersion = nil
             return
         }
-
-        let appAvailable = UpdateScheduler.hasActionableAppUpdate
-        let cliAvailable = UpdateScheduler.hasActionableCLIUpdate
 
         guard appAvailable || cliAvailable else {
             showUpgradeBanner = false
@@ -1385,8 +1403,8 @@ struct ContentView: View {
             return
         }
 
-        bannerAppVersion = appAvailable ? UpdateScheduler.cachedAppRelease?.latestVersion : nil
-        bannerCLIVersion = cliAvailable ? UpdateScheduler.cachedCLIStatus?.latestVersion : nil
+        bannerAppVersion = sidebarUpdateAppVersion
+        bannerCLIVersion = sidebarUpdateCLIVersion
         showUpgradeBanner = true
     }
 }
