@@ -104,7 +104,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 ### App Experience
 
 - Menu bar item plus main window with status-dot icon, quick actions, settings, update checks, and sign-in recovery.
-- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. App updates are offered only for signed and notarized releases.
+- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, a blue button next to **Settings** in the sidebar opens that panel. App updates are offered only for signed and notarized releases.
 - Dark-mode-first SwiftUI design with accessibility labels for interactive status controls.
 
 ## Permissions & Privacy

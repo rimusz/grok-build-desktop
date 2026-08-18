@@ -49,6 +49,10 @@ struct SidebarView: View {
     var onSessionDisclosureChanged: () -> Void = {}
     var onOpenSettings: () -> Void
     var isSettingsSelected: Bool = false
+    var hasActionableUpdate: Bool = false
+    var updateButtonTitle: String = "Update"
+    var updateButtonAccessibilityLabel: String = "Updates available"
+    var onOpenUpdates: () -> Void = {}
 
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
@@ -206,16 +210,32 @@ struct SidebarView: View {
 
             Divider()
 
-            Button(action: onOpenSettings) {
-                Label("Settings", systemImage: "gearshape")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
-                    .background(isSettingsSelected ? Color.primary.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            HStack(spacing: 8) {
+                Button(action: onOpenSettings) {
+                    Label("Settings", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
+                        .background(isSettingsSelected ? Color.primary.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                if hasActionableUpdate {
+                    Button(action: onOpenUpdates) {
+                        Text(updateButtonTitle)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
+                    .controlSize(.small)
+                    .accessibilityLabel(updateButtonAccessibilityLabel)
+                    .help(updateButtonAccessibilityLabel)
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
         }
