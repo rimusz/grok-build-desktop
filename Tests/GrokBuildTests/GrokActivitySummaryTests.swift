@@ -16,6 +16,16 @@ final class GrokActivitySummaryTests: XCTestCase {
             .listed
         )
         XCTAssertNil(GrokActivitySummary.classify(title: "Tool call"))
+        XCTAssertEqual(GrokActivitySummary.classify(title: "Get"), .fetched)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "bash"), .ran)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "computer_list_apps"), .computerUse)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "computer list apps"), .computerUse)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "[subagent:general-purpose]"), .subagent)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "spawn.*bash"), .searched)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "\"name\":\"computer list apps\""), .searched)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "tool calls.*computer"), .searched)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "search"), .searched)
+        XCTAssertEqual(GrokActivitySummary.classify(title: "Search files"), .searched)
     }
 
     func testSummarizeMatchesCLIVerbOrder() {
@@ -32,6 +42,78 @@ final class GrokActivitySummaryTests: XCTestCase {
         XCTAssertEqual(
             GrokActivitySummary.line(titles: titles, hookCount: 5),
             "Read 1 skill, Read 2 files, Listed 1 dir  [hooks: 5]"
+        )
+    }
+
+    func testSummarizeMapsJunkTitlesToStableVerbs() {
+        XCTAssertEqual(
+            GrokActivitySummary.summarize(titles: [
+                "Read `/tmp/a.swift`",
+                "Read `/tmp/b.swift`",
+                "Read `/tmp/c.swift`",
+                "Read `/tmp/d.swift`",
+                "bash",
+                "buzz",
+                "Listed `/tmp`",
+                "Listed `/tmp/a`",
+                "Listed `/tmp/b`",
+                "\"name\":\"computer",
+                "spawn.*bash"
+            ]),
+            "Read 4 files, Ran 1 command, buzz, Listed 3 dirs, Searched 2"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.summarize(titles: [
+                "Read `/tmp/one.swift`",
+                "Listed `/tmp`",
+                "computer_list_apps",
+                "computer_list_apps",
+                "\"name\":\"computer list apps\"",
+                "tool calls.*computer"
+            ]),
+            "Read 1 file, Listed 1 dir, Computer Use ×2, Searched 2"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.summarize(titles: ["Get"]),
+            "Fetched 1"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.summarize(titles: [
+                "Read `/tmp/a.swift`",
+                "Read `/tmp/b.swift`",
+                "Read `/tmp/c.swift`",
+                "Read `/tmp/d.swift`",
+                "[subagent:general-purpose]"
+            ]),
+            "Read 4 files, subagent"
+        )
+    }
+
+    func testRefreshSummaryRewritesPersistedJunkClauses() {
+        XCTAssertEqual(
+            GrokActivitySummary.refreshSummary(
+                #"Read 4 files, bash, buzz, Listed 3 dirs, "name":"computer , spawn.*bash"#
+            ),
+            "Read 4 files, Ran 1 command, buzz, Listed 3 dirs, Searched 2"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.refreshSummary(
+                #"Read 1 file, Listed 1 dir, computer list apps ×2, "name":"computer list apps", tool calls.*computer"#
+            ),
+            "Read 1 file, Listed 1 dir, Computer Use ×2, Searched 2"
+        )
+        XCTAssertEqual(GrokActivitySummary.refreshSummary("Get"), "Fetched 1")
+        XCTAssertEqual(
+            GrokActivitySummary.refreshSummary("Read 4 files, [subagent:general-purpose]"),
+            "Read 4 files, subagent"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.refreshSummary("Read 1 skill, Read 2 files, Listed 1 dir"),
+            "Read 1 skill, Read 2 files, Listed 1 dir"
+        )
+        XCTAssertEqual(
+            GrokActivitySummary.refreshSummary("Read 1 skill, Read 5 files, Searched 4, Memory ×2, Listed 1 dir, subagent"),
+            "Read 1 skill, Read 5 files, Searched 4, Memory ×2, Listed 1 dir, subagent"
         )
     }
 
@@ -319,5 +401,63 @@ final class GrokActivitySummaryTests: XCTestCase {
         } else {
             XCTFail("expected text part to absorb the tail")
         }
+    }
+
+    func testSanitizerDropsToolCallUpdateFragments() {
+        let fragment = #"""
+        b7253ac98ff2-1595","agentTimestampMs":1787051849708,"promptId":"01a01495-9c83-74d1-89a2-76b8b9525b6c","streamStartMs":1787051840405,"turnStartMs":1787051744404,"updateType":"ToolCallUpdate","updateParams":{"toolCallId":"call-a7f8b242-4078-437c-95b8-3bd33f11bdd7-29","status":"Completed"}}}
+        """#
+        XCTAssertTrue(AssistantTranscriptSanitizer.isProtocolNoise(fragment))
+        XCTAssertTrue(AssistantTranscriptSanitizer.shouldDropRawLine(fragment))
+        XCTAssertTrue(AssistantTranscriptSanitizer.strip(fragment).isEmpty)
+        XCTAssertEqual(
+            AssistantTranscriptSanitizer.strip("I'll drive Terminal.\n\(fragment)\nDone.")
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "I'll drive Terminal.\nDone."
+        )
+        XCTAssertNil(AssistantTranscriptSanitizer.usableChunk(fragment))
+        XCTAssertTrue(AssistantTranscriptSanitizer.shouldDropRawLine(#"{"updateType":"ToolCallUpdate"}"#))
+        XCTAssertFalse(AssistantTranscriptSanitizer.shouldDropRawLine("[process stopped]"))
+    }
+
+    func testSanitizerKeepsOrdinaryAssistantProseAndJSONExamples() {
+        XCTAssertEqual(
+            AssistantTranscriptSanitizer.strip("Use `{\"ok\": true}` in the payload."),
+            "Use `{\"ok\": true}` in the payload."
+        )
+        XCTAssertFalse(AssistantTranscriptSanitizer.isProtocolNoise("I'll list apps and then drive Terminal."))
+    }
+
+    func testSanitizerDropsProtocolOnlyAssistantBubbles() {
+        let noise = Message(
+            role: .assistant,
+            content: #"{"updateType":"ToolCallUpdate","updateParams":{"status":"Completed"}}"#
+        )
+        let kept = Message(role: .assistant, content: "I'll start.")
+        let user = Message(role: .user, content: "overview")
+        let cleaned = AssistantTranscriptSanitizer.cleanedTranscript([user, noise, kept])
+        XCTAssertEqual(cleaned.map(\.content), ["overview", "I'll start."])
+    }
+
+    func testBuilderIgnoresProtocolChunks() {
+        var builder = GrokActivityBuilder()
+        builder.addMessage("I'll start.")
+        builder.addMessage(
+            #""updateType":"ToolCallUpdate","updateParams":{"toolCallId":"t1","status":"Completed"}}}"#
+        )
+        builder.addMessage(" Done.")
+        builder.finish()
+        XCTAssertEqual(builder.textContent, "I'll start. Done.")
+    }
+
+    func testAlignDoesNotReattachProtocolTail() {
+        let parts: [TranscriptPart] = [
+            .text("I'll start."),
+            .activity(GrokActivityLine(summary: "Read 1 file", hookCount: 0, isLead: true))
+        ]
+        let polluted = "I'll start.{\"updateType\":\"ToolCallUpdate\",\"updateParams\":{\"status\":\"Completed\"}}"
+        let aligned = GrokActivityLog.align(parts, toContent: polluted)
+        XCTAssertEqual(aligned.compactMap(\.text).joined(), "I'll start.")
+        XCTAssertTrue(aligned.contains(where: \.isActivity))
     }
 }

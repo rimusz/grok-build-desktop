@@ -74,6 +74,7 @@ enum SessionTranscriptRecovery {
         grokSessionID: String?,
         workspacePath: URL
     ) -> [Message] {
+        let messages = AssistantTranscriptSanitizer.cleanedTranscript(messages)
         guard let grokSessionID,
               let updatesURL = GrokActivityLog.updatesURL(
                   workspacePath: workspacePath,
@@ -100,7 +101,7 @@ enum SessionTranscriptRecovery {
 
         if assistantIndexes.count == 1, let idx = assistantIndexes.first, activityTurns.count == 1 {
             updated[idx].parts = GrokActivityLog.align(activityTurns[0].parts, toContent: updated[idx].content)
-            return updated
+            return AssistantTranscriptSanitizer.cleanedTranscript(updated)
         }
 
         for (assistantIdx, turn) in zip(assistantIndexes, turns) {
@@ -110,7 +111,7 @@ enum SessionTranscriptRecovery {
                 toContent: updated[assistantIdx].content
             )
         }
-        return updated
+        return AssistantTranscriptSanitizer.cleanedTranscript(updated)
     }
 
     /// Prefer grok's jsonl when it has more user/assistant text than the local tab.
