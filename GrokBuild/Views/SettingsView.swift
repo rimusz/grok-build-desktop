@@ -564,13 +564,17 @@ private struct BrowserSettingsPane: View {
                                 cliInstalled: status.isInstalled,
                                 hasRuntime: AgentBrowserService.hasManagedRuntimeDirectory()
                             ),
-                            systemImage: AgentBrowserService.hasManagedRuntimeDirectory()
-                                ? "checkmark.circle.fill"
-                                : "circle.dashed"
+                            systemImage: AgentBrowserService.managedRuntimeIsReady(
+                                cliInstalled: status.isInstalled,
+                                hasRuntime: AgentBrowserService.hasManagedRuntimeDirectory()
+                            ) ? "checkmark.circle.fill" : "circle.dashed"
                         )
                             .font(.callout.weight(.medium))
                             .foregroundStyle(
-                                AgentBrowserService.hasManagedRuntimeDirectory() ? .green : .secondary
+                                AgentBrowserService.managedRuntimeIsReady(
+                                    cliInstalled: status.isInstalled,
+                                    hasRuntime: AgentBrowserService.hasManagedRuntimeDirectory()
+                                ) ? .green : .secondary
                             )
 
                         Toggle(isOn: $showBrowserWindow) {

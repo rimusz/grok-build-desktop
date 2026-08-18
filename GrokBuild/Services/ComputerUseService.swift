@@ -174,7 +174,8 @@ enum ComputerUseService {
         reloadConfiguration: () async -> Void = {}
     ) async -> ApplyEnabledResult {
         var settings = baseSettings ?? ComputerUseSettingsStore.load()
-        guard settings.enabled != enabled else { return .unchanged }
+        let appliedEnabled = UserDefaults.standard.object(forKey: ComputerUseSettingsKeys.appliedEnabled) as? Bool
+        guard appliedEnabled != enabled else { return .unchanged }
 
         if enabled {
             if configurationIssue(settings: settings) != nil {

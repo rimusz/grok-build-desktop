@@ -130,7 +130,10 @@ enum AgentBrowserService {
         reloadConfiguration: () async -> Void = {}
     ) async -> ApplyEnabledResult {
         var settings = baseSettings ?? BrowserSettingsStore.load()
-        guard settings.enabled != enabled else { return .unchanged }
+        // Compare to the applied flag, not the draft. The Settings toggle updates
+        // `currentSettings.enabled` before onChange, so draft == desired.
+        let appliedEnabled = UserDefaults.standard.object(forKey: BrowserSettingsKeys.appliedEnabled) as? Bool
+        guard appliedEnabled != enabled else { return .unchanged }
 
         if enabled, browserToolsConfigurationIssue(settings: settings) != nil {
             return .needsSetup
@@ -143,8 +146,14 @@ enum AgentBrowserService {
         return .applied
     }
 
+    static func managedRuntimeIsReady(cliInstalled: Bool, hasRuntime: Bool) -> Bool {
+        cliInstalled && hasRuntime
+    }
+
     static func managedRuntimeStatusText(cliInstalled: Bool, hasRuntime: Bool) -> String {
-        if hasRuntime { return "Managed runtime installed and ready" }
+        if managedRuntimeIsReady(cliInstalled: cliInstalled, hasRuntime: hasRuntime) {
+            return "Managed runtime installed and ready"
+        }
         if cliInstalled { return "Managed runtime not ready or not installed" }
         return "Install agent-browser CLI first"
     }

@@ -139,6 +139,12 @@ final class BrowserIntegrationTests: XCTestCase {
             AgentBrowserService.managedRuntimeStatusText(cliInstalled: false, hasRuntime: false),
             "Install agent-browser CLI first"
         )
+        XCTAssertEqual(
+            AgentBrowserService.managedRuntimeStatusText(cliInstalled: false, hasRuntime: true),
+            "Install agent-browser CLI first"
+        )
+        XCTAssertTrue(AgentBrowserService.managedRuntimeIsReady(cliInstalled: true, hasRuntime: true))
+        XCTAssertFalse(AgentBrowserService.managedRuntimeIsReady(cliInstalled: false, hasRuntime: true))
     }
 
     @MainActor
@@ -181,6 +187,26 @@ final class BrowserIntegrationTests: XCTestCase {
         let result = await AgentBrowserService.applyEnabled(true, settings: settings)
         XCTAssertEqual(result, .needsSetup)
         XCTAssertFalse(BrowserSettingsStore.loadApplied().enabled)
+    }
+
+    @MainActor
+    func testApplyEnabledPersistsWhenDraftToggleAlreadyMatchesDesired() async {
+        var draft = BrowserSettings.defaults
+        draft.enabled = true
+        draft.runtimeMode = .external
+        draft.externalBrowserAppID = .chrome
+        guard AgentBrowserService.browserToolsConfigurationIssue(settings: draft) == nil else {
+            return
+        }
+
+        var applied = draft
+        applied.enabled = false
+        BrowserSettingsStore.save(draft)
+        BrowserSettingsStore.saveApplied(applied)
+
+        let result = await AgentBrowserService.applyEnabled(true, settings: draft)
+        XCTAssertEqual(result, .applied)
+        XCTAssertTrue(BrowserSettingsStore.loadApplied().enabled)
     }
 
     @MainActor
