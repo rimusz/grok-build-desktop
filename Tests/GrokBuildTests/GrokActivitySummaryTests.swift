@@ -426,6 +426,24 @@ final class GrokActivitySummaryTests: XCTestCase {
             "Use `{\"ok\": true}` in the payload."
         )
         XCTAssertFalse(AssistantTranscriptSanitizer.isProtocolNoise("I'll list apps and then drive Terminal."))
+        XCTAssertEqual(
+            AssistantTranscriptSanitizer.strip(
+                #"I'll start.{"updateType":"ToolCallUpdate","updateParams":{"status":"Completed"}}"#
+            ).trimmingCharacters(in: .whitespacesAndNewlines),
+            "I'll start."
+        )
+        XCTAssertEqual(
+            AssistantTranscriptSanitizer.strip(
+                "I'll start.{\"updateType\":\"ToolCallUpdate\",\"updateParams\":{\"status\":\"Completed\""
+            ).trimmingCharacters(in: .whitespacesAndNewlines),
+            "I'll start."
+        )
+        XCTAssertEqual(
+            AssistantTranscriptSanitizer.usableChunk(
+                #"I'll start.{"updateType":"ToolCallUpdate","updateParams":{"status":"Completed"}}"#
+            ),
+            "I'll start."
+        )
     }
 
     func testSanitizerDropsProtocolOnlyAssistantBubbles() {

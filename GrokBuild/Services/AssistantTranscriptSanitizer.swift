@@ -25,14 +25,17 @@ enum AssistantTranscriptSanitizer {
     static func usableChunk(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty { return text.isEmpty ? nil : text }
-        if isProtocolNoise(text) || looksLikeJSONFragment(trimmed) { return nil }
-        return text
+        let stripped = strip(text)
+        return stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : stripped
     }
 
     static func strip(_ text: String) -> String {
         var remaining = text
         while let range = firstProtocolJSONRange(in: remaining) {
             remaining.removeSubrange(range)
+        }
+        if let cut = unclosedProtocolJSONStart(in: remaining) {
+            remaining = String(remaining[..<cut])
         }
         let kept = remaining
             .components(separatedBy: .newlines)
@@ -41,7 +44,9 @@ enum AssistantTranscriptSanitizer {
                 return !isProtocolNoise(trimmed) && !looksLikeJSONFragment(trimmed)
             }
             .joined(separator: "\n")
-        if isProtocolNoise(kept) || looksLikeJSONFragment(kept.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        let trimmedKept = kept.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedKept.isEmpty { return "" }
+        if isProtocolNoise(kept) || looksLikeJSONFragment(trimmedKept) {
             return ""
         }
         return collapseBlankLines(kept)
@@ -117,6 +122,20 @@ enum AssistantTranscriptSanitizer {
             return true
         }
         return false
+    }
+
+    /// Drop an unclosed `{…` protocol object so preceding prose is kept.
+    private static func unclosedProtocolJSONStart(in text: String) -> String.Index? {
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index] == "{", matchingBrace(from: index, in: text) == nil {
+                if containsProtocolMarkers(String(text[index...])) {
+                    return index
+                }
+            }
+            text.formIndex(after: &index)
+        }
+        return nil
     }
 
     private static func firstProtocolJSONRange(in text: String) -> Range<String.Index>? {
