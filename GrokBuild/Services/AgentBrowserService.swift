@@ -115,6 +115,40 @@ enum AgentBrowserService {
         )
     }
 
+    enum ApplyEnabledResult: Sendable, Equatable {
+        case applied
+        case needsSetup
+        case unchanged
+    }
+
+    /// Persist the Browser Tools toggle immediately, matching Computer Use.
+    /// Runtime/CDP edits still go through Apply so a half-finished setup is not launched.
+    @MainActor
+    static func applyEnabled(
+        _ enabled: Bool,
+        settings baseSettings: BrowserSettings? = nil,
+        reloadConfiguration: () async -> Void = {}
+    ) async -> ApplyEnabledResult {
+        var settings = baseSettings ?? BrowserSettingsStore.load()
+        guard settings.enabled != enabled else { return .unchanged }
+
+        if enabled, browserToolsConfigurationIssue(settings: settings) != nil {
+            return .needsSetup
+        }
+
+        settings.enabled = enabled
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+        await reloadConfiguration()
+        return .applied
+    }
+
+    static func managedRuntimeStatusText(cliInstalled: Bool, hasRuntime: Bool) -> String {
+        if hasRuntime { return "Managed runtime installed and ready" }
+        if cliInstalled { return "Managed runtime not ready or not installed" }
+        return "Install agent-browser CLI first"
+    }
+
     static func browserToolsConfigurationIssue(settings: BrowserSettings = BrowserSettingsStore.load()) -> String? {
         guard bridgeScriptURL() != nil else {
             return "Browser bridge script is missing."

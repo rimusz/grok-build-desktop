@@ -408,10 +408,14 @@ private struct BrowserSettingsPane: View {
                     }
                 }
                 .toggleStyle(.switch)
+                .onChange(of: enabled) { _, newValue in
+                    guard newValue != appliedSettings.enabled else { return }
+                    Task { await applyEnabledChange(to: newValue) }
+                }
 
                 Divider()
 
-                Text("Install the agent-browser CLI (step 2), keep the runtime below on Managed Runtime and install it (step 3), then click Apply. GrokBuild will also install a small browser-control skill into your Grok skills folder.")
+                Text("Turn on the switch to inject browser MCP tools now. Install the agent-browser CLI (step 2) and pick a runtime (step 3) first if the switch snaps back off. Other runtime edits still need Apply. GrokBuild also installs a small browser-control skill into your Grok skills folder.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -555,9 +559,19 @@ private struct BrowserSettingsPane: View {
                     isSelected: selectedRuntimeMode == .managed
                 ) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label(managedRuntimeStatusText, systemImage: status.isReady ? "checkmark.circle.fill" : "circle.dashed")
+                        Label(
+                            AgentBrowserService.managedRuntimeStatusText(
+                                cliInstalled: status.isInstalled,
+                                hasRuntime: AgentBrowserService.hasManagedRuntimeDirectory()
+                            ),
+                            systemImage: AgentBrowserService.hasManagedRuntimeDirectory()
+                                ? "checkmark.circle.fill"
+                                : "circle.dashed"
+                        )
                             .font(.callout.weight(.medium))
-                            .foregroundStyle(status.isReady ? .green : .secondary)
+                            .foregroundStyle(
+                                AgentBrowserService.hasManagedRuntimeDirectory() ? .green : .secondary
+                            )
 
                         Toggle(isOn: $showBrowserWindow) {
                             VStack(alignment: .leading, spacing: 2) {
@@ -831,9 +845,22 @@ private struct BrowserSettingsPane: View {
         }
     }
 
+    private func applyEnabledChange(to newValue: Bool) async {
+        let result = await AgentBrowserService.applyEnabled(newValue, settings: currentSettings) {
+            onConfigurationChanged()
+        }
+        if case .needsSetup = result {
+            enabled = appliedSettings.enabled
+        } else {
+            appliedSettings = BrowserSettingsStore.loadApplied()
+            await refreshStatus()
+        }
+    }
+
     private var statusBadge: some View {
-        let color: Color = enabled ? browserStatusColor : .secondary
-        let text = enabled ? (status.isReady ? "Ready" : "Setup needed") : "Disabled"
+        let isEnabled = appliedSettings.enabled
+        let color: Color = isEnabled ? browserStatusColor : .secondary
+        let text = isEnabled ? (status.isReady ? "Ready" : "Setup needed") : "Disabled"
 
         return Text(text)
             .font(.caption.weight(.semibold))
@@ -883,16 +910,6 @@ private struct BrowserSettingsPane: View {
 
     private var defaultCDPURL: String {
         "http://127.0.0.1:9222"
-    }
-
-    private var managedRuntimeStatusText: String {
-        if status.isReady {
-            return "Managed runtime installed and ready"
-        }
-        if status.isInstalled {
-            return "Managed runtime not ready or not installed"
-        }
-        return "Install agent-browser CLI first"
     }
 
     private var currentSettings: BrowserSettings {

@@ -116,6 +116,7 @@ enum ComputerUseSettingsKeys {
     static let appliedAllowPhysicalMouse = "grokbuild.computerUse.applied.allowPhysicalMouse"
     static let appliedSessionName = "grokbuild.computerUse.applied.sessionName"
     static let appliedCursorIntegrationEnabled = "grokbuild.computerUse.applied.cursorIntegration.enabled"
+    static let promptedAccessibilityCDHash = "grokbuild.computerUse.promptedAccessibilityCDHash"
 }
 
 enum ComputerUseSettingsStore {

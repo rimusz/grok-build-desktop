@@ -91,7 +91,7 @@ On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/
 
 ### Optional Automation
 
-Enable Browser and Computer Use from **Settings → Browser** / **Settings → Computer Use**, then **Apply and Restart**.
+Enable Browser and Computer Use from **Settings → Browser** / **Settings → Computer Use**. The enable switches apply immediately and restart grok. Runtime or permission edits still use **Apply and Restart**.
 
 - **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
@@ -112,7 +112,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 - Optional **Privacy Mode** (Settings → App) redacts project paths and names in the UI for screen sharing; it does not change stored sessions or CLI data.
 - GrokBuild Desktop App talks to the local `grok` CLI; your prompts, tool calls, model routing, auth, and CLI-side storage follow the CLI's behavior.
 - Browser control uses a separate managed Chromium profile by default. If you attach to an existing browser over CDP, Grok can interact with that browser window.
-- Computer Use requires macOS Accessibility permission. Screenshots require Screen Recording and are optional.
+- Computer Use requires macOS Accessibility permission. Screenshots require Screen Recording and are optional. After a local `make run` ad-hoc rebuild, macOS may drop that trust; GrokBuild prompts once per new app signature, or re-add `.build/GrokBuild.app` in System Settings → Privacy & Security → Accessibility.
 - You can control tool approval behavior in **Settings → Permissions** and **Settings → Computer Use** (Auto / Ask / Deny, plus limits).
 
 ## Building from source

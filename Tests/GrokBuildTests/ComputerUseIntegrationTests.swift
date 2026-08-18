@@ -187,6 +187,49 @@ final class ComputerUseIntegrationTests: XCTestCase {
         )
     }
 
+    func testShouldPromptForLostAccessibilityOncePerSignature() {
+        XCTAssertTrue(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: "abc"
+            )
+        )
+        XCTAssertTrue(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "def",
+                lastPromptedHash: "abc"
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: true,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: false,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
+        )
+    }
+
     func testMergedPermissionStatusUsesLocalAccessibilityWhenGranted() {
         let cliStatus = ComputerUsePermissionStatus(
             accessibility: "denied",
@@ -518,7 +561,8 @@ final class ComputerUseIntegrationTests: XCTestCase {
             ComputerUseSettingsKeys.appliedScreenshotMode,
             ComputerUseSettingsKeys.appliedIncludeScreenshots,
             ComputerUseSettingsKeys.appliedAllowPhysicalMouse,
-            ComputerUseSettingsKeys.appliedSessionName
+            ComputerUseSettingsKeys.appliedSessionName,
+            ComputerUseSettingsKeys.promptedAccessibilityCDHash
         ]
     }
 

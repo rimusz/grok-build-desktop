@@ -46,6 +46,33 @@ final class MarkdownBlockParserTests: XCTestCase {
         XCTAssertTrue(MarkdownBlockParser.looksLikeInlineMath("x=y"))
     }
 
+    func testSmashedInlineTableBecomesATableBlock() {
+        let smashed = "Results: shell and browser control do not. | Capability | Result | What I ran ||---|---|---|| Shell / terminal | Fail | `echo` never started. || Browser | Fail | No browser_* tools. |"
+        let expanded = MarkdownBlockParser.expandSmashedTables(smashed)
+        XCTAssertTrue(expanded.contains("\n|---|---|---|\n"), expanded)
+        XCTAssertTrue(expanded.contains("Results: shell and browser control do not."), expanded)
+
+        let blocks = MarkdownBlockParser.parse(smashed)
+        XCTAssertGreaterThanOrEqual(blocks.count, 2)
+        guard let table = blocks.first(where: {
+            if case .table = $0 { return true }
+            return false
+        }) else {
+            return XCTFail("Expected a table block from smashed GFM")
+        }
+        if case .table(let headers, let rows) = table {
+            XCTAssertEqual(headers, ["Capability", "Result", "What I ran"])
+            XCTAssertEqual(rows.count, 2)
+            XCTAssertEqual(rows[0][0], "Shell / terminal")
+            XCTAssertEqual(rows[1][0], "Browser")
+        }
+    }
+
+    func testSmashedTableInsideFenceIsLeftAlone() {
+        let fenced = "```\n| A | B ||---|---|| x | y |\n```"
+        XCTAssertEqual(MarkdownBlockParser.expandSmashedTables(fenced), fenced)
+    }
+
     func testGFMTableIsATableBlock() {
         let markdown = """
         Intro

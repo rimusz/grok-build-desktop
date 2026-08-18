@@ -233,7 +233,7 @@ Built from `GrokLaunchOptions` in `ChatStore.restartProcess`. Working directory 
 
 ### ACP lifecycle
 
-1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake). `clientCapabilities.terminal` is `true`; `AcpTerminalHost` implements `terminal/create` / `output` / `wait_for_exit` / `kill` / `release`. Unknown host methods return JSON-RPC `-32601` (never an empty `{}` result — grok fails to deserialize that).
+1. `start(workspace:options:)` — spawn process, `initializeACP()` (JSON-RPC handshake). `clientCapabilities.terminal` is `true`; `AcpTerminalHost` implements `terminal/create` / `output` / `wait_for_exit` / `kill` / `release`. `terminal/create` splits a shell command line (`bash -lc '…'`) into executable + args so Process never treats the whole line as argv0. Unknown host methods return JSON-RPC `-32601` (never an empty `{}` result — grok fails to deserialize that).
 2. `createSession(workspace:mcpServers:)` **or** `loadSession(id:…)` if resuming. When `session/load` fails with `FS_NOT_FOUND` / “Path not found” (stale on-disk grok session), GrokBuild falls back to `session/new`, sets `sessionLoadStartedFreshFallback`, and `ChatStore` adds a system note — local transcript is preserved. During load, the CLI replays prior turn history via `session/update` with `_meta.isReplay: true`; `GrokProcess` skips routing those to `ChatStore` (still applies `contextUsage` / `totalTokens`, and `turnUsage` when breakdown keys are present) so resume does not re-drive live tool/thinking UI. Last-turn input/cache/output/reasoning is parsed from `session/prompt` result `_meta` **and** `_x.ai/session_notification` (`TurnTokenUsageParser`); that `totalTokens` is per-turn and is not written to the context ring.
 3. MCP servers from `MCPServerConfig` passed in `session/new` (browser, computer use when enabled).
 4. `send(_:)` — prompt during `.ready`/`.busy`.
@@ -460,9 +460,10 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.privacyMode` | `GrokSettingsKeys` | Display-only Privacy Mode (Settings → App). Redacts project paths/names and session titles in the UI; never mutates persisted data |
 | `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
 | `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
-| `grokbuild.browser.applied.*` | | **Applied** settings used at process start |
+| `grokbuild.browser.applied.*` | | **Applied** settings used at process start. The Browser Tools toggle writes both draft and applied immediately (`AgentBrowserService.applyEnabled`) |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
+| `grokbuild.computerUse.promptedAccessibilityCDHash` | | Last app signature that triggered an Accessibility re-prompt after a rebuild |
 | `grokbuild.customModelProviders` | `ProviderStore` | Reusable custom model providers (UserDefaults) |
 | `GrokBuild.cursorBridge.managedEnabled` | `CursorBridgeSettingsKeys` | Auto-set when Cursor provider is installed; starts the bundled sidecar on launch when a key is saved (not a Settings toggle) |
 | `grokbuild.updates.autoCheckEnabled` | `UpdateSettingsStore` | Background update checks |
@@ -496,7 +497,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
 | Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
 | Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
-| Chat UI | Settings → **Browser** (`SettingsView` `.browser`). On/off, **runtime choice** (managed ↔ existing Chromium). No in-chat toggle — app-wide, applied on session restart |
+| Chat UI | Settings → **Browser** (`SettingsView` `.browser`). The enable switch applies immediately (same as Computer Use) and restarts grok so `grokbuild-browser` is injected. Runtime/CDP edits still need **Apply**. No in-chat toggle — app-wide |
 
 **Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
 
@@ -658,7 +659,7 @@ grok owns memory storage, indexing, search, and first-turn injection ([`13-memor
 
 **Tools:** `computer_snapshot`, `computer_click`, `computer_type`, `computer_screenshot`, etc.
 
-**Permissions:** macOS Accessibility; merged status from GrokBuild, helper, agent-desktop, CLI.
+**Permissions:** macOS Accessibility; merged status from GrokBuild, helper, agent-desktop, CLI. After an ad-hoc `make run` resign, `ComputerUseService.promptIfAccessibilityLostAfterResign` asks once per CDHash.
 
 ### Custom models
 
@@ -838,7 +839,7 @@ Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) k
 | `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
-| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. Assistant text is line-oriented like grok CLI (`GrokMarkdownStyle`: blue headings, cyan inline code, lists) plus GFM tables and fenced code; mermaid/LaTeX still use WKWebView (reload only when source changes, fixed height after load). Inline `$…$` spans require math signals (not currency/`$PATH`). Inline ``code`` is extracted before Foundation markdown so placeholders like `<BUZZ_DOMAIN>` do not open HTML and swallow the rest of the line. Chat messages use a `VStack` (not `LazyVStack`); the transcript `ScrollView` is width-bounded (`GeometryReader` + `chatColumnWidth`). Each markdown line is a wrapping `NSTextView` sized from `layoutManager.usedRect` so long paragraphs are not clipped. |
+| `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. Assistant text is line-oriented like grok CLI (`GrokMarkdownStyle`: blue headings, cyan inline code, lists) plus GFM tables and fenced code; smashed one-line tables (`| A | B ||---|---|| row |`) are expanded before parse. mermaid/LaTeX still use WKWebView (reload only when source changes, fixed height after load). Inline `$…$` spans require math signals (not currency/`$PATH`). Inline ``code`` is extracted before Foundation markdown so placeholders like `<BUZZ_DOMAIN>` do not open HTML and swallow the rest of the line. Chat messages use a `VStack` (not `LazyVStack`); the transcript `ScrollView` is width-bounded (`GeometryReader` + `chatColumnWidth`). Each markdown line is a wrapping `NSTextView` sized from `layoutManager.usedRect` so long paragraphs are not clipped. |
 | `PreviewPane.swift` | Diff detection from assistant messages; apply/commit |
 | `SessionBrowserView.swift` | **Sessions History** — resume/delete archived grok sessions; per-row **delete** + **Clear Empty** bulk cleanup (`GrokCLIService.deleteSession` + `SessionNameStore.removeName`). Copy: `SessionsHistoryCopy`. Distinct from live **Sessions Dashboard**. |
 | `GitCheckoutSheet.swift` | Branch switch / worktree create; `WindowTrafficLights` close |
@@ -1013,20 +1014,20 @@ make test    # Tests/GrokBuildTests/
 |------|--------|
 | `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete, strip `ToolCallUpdate` protocol JSON from imported assistants |
-| `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` |
+| `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
-| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, external browser launch args, presets |
+| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
 | `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |
-| `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions |
+| `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions, Accessibility re-prompt after resign |
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
 | `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, sidebar update-button copy, Sessions History / Sessions Dashboard copy |
 | `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
-| `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables, fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
+| `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables (including smashed one-line tables), fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
 | `CompetitiveUXTests.swift` | Session status resolution, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 
