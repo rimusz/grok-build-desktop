@@ -93,7 +93,7 @@ On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/
 
 Enable Browser and Computer Use from **Settings → Browser** / **Settings → Computer Use**. The enable switches apply immediately and restart grok. Runtime or permission edits still use **Apply and Restart**.
 
-- **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.
+- **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev) (open URL, snapshot, list tabs, click/type). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP. A new automation profile starts on a blank tab until Grok opens a URL.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
 - **Memory** — experimental and off by default. Enable from **Settings → Memory**, then browse `~/.grok/memory/` and add "Remember" notes there. Slash commands like `/flush` and `/dream` remain TUI-only.
 - **Background tasks** — scheduled `/loop` tasks plus background shells, monitors, and subagents mirrored in the Tasks pill and the session dashboard **Scheduled** group. **New Automation** on the dashboard creates a named session that repeats a prompt on a schedule (`/loop`) — for recurring checks, not a one-off chat. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (sessions with live `/loop` tasks are kept out of LRU eviction; inactive tabs without schedules may still be stopped).
@@ -104,7 +104,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 ### App Experience
 
 - Menu bar item plus main window with status-dot icon, quick actions, settings, update checks, and sign-in recovery.
-- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, a blue button next to **Settings** in the sidebar opens that panel. App updates are offered only for signed and notarized releases.
+- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, a blue version button next to **Settings** (for example **v0.2.9**) opens that panel. App updates are offered only for signed and notarized releases.
 - Dark-mode-first SwiftUI design with accessibility labels for interactive status controls.
 
 ## Permissions & Privacy

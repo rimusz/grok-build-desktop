@@ -15,14 +15,21 @@ Prefer the managed browser runtime unless the user explicitly asks to use an exi
 
 ## Browser Tool Workflow
 
+Use the `grokbuild-browser` MCP tools. Do not search the workspace for browser implementations.
+
+Available tools: `browser_open_url`, `browser_snapshot`, `browser_tabs`, `browser_click_ref`, `browser_type_ref`, `browser_wait_for_load`, `browser_screenshot`, `browser_eval_js`.
+
+grok's native `browser_tab` is not in the session. "List tabs" → `browser_tabs`. "What's on the page?" → `browser_snapshot`.
+
 When the user asks to use a browser:
 
-1. Use `browser_open_url` to navigate.
-2. Use `browser_snapshot` to inspect page content and refs.
-3. Use `browser_click_ref` and `browser_type_ref` for interactions by ref.
-4. Use `browser_wait_for_load` after navigation or actions that change the page.
-5. Use `browser_screenshot` when visual evidence is useful.
-6. Use `browser_eval_js` only when snapshot/ref tools are insufficient.
+1. If they named a site, `browser_open_url` first. A new automation profile is usually one `about:blank` tab — an empty snapshot is not a broken browser.
+2. `browser_tabs` (default `list`) to see open tabs; `new` / `close` / a 1-based index to switch.
+3. `browser_snapshot` for title, URL, and refs. If it says blank tab, open a URL — do not report failure.
+4. `browser_click_ref` and `browser_type_ref` for interactions by ref.
+5. `browser_wait_for_load` after navigation or actions that change the page.
+6. `browser_screenshot` when visual evidence is useful.
+7. `browser_eval_js` only when snapshot/ref tools are insufficient.
 
 Keep results concise. Summarize what changed or what was found; do not dump full DOM content.
 

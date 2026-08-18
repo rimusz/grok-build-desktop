@@ -310,6 +310,27 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: installedSkill.path))
         let contents = try String(contentsOf: installedSkill, encoding: .utf8)
         XCTAssertTrue(contents.contains("GrokBuild Browser Control"))
+        XCTAssertTrue(contents.contains("browser_tabs"))
+        XCTAssertTrue(contents.contains("about:blank"))
+    }
+
+    func testBrowserMCPScriptAdvertisesTabAndSnapshotTools() throws {
+        let script = try XCTUnwrap(browserMCPScriptURL())
+        let source = try String(contentsOf: script, encoding: .utf8)
+        for name in [
+            "browser_open_url",
+            "browser_snapshot",
+            "browser_tabs",
+            "browser_click_ref",
+            "browser_type_ref",
+            "browser_screenshot",
+            "browser_eval_js",
+            "browser_wait_for_load"
+        ] {
+            XCTAssertTrue(source.contains("\"name\": \"\(name)\""), name)
+        }
+        XCTAssertTrue(source.contains("\"tab\", \"list\""))
+        XCTAssertTrue(source.contains("Blank tab"))
     }
 
     func testBrowserSkillInstallerDoesNothingWhenDisabled() throws {
@@ -383,5 +404,19 @@ final class BrowserIntegrationTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathComponent(".grok")
             .appendingPathComponent("skills")
+    }
+
+    private func browserMCPScriptURL() -> URL? {
+        var directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for _ in 0..<5 {
+            let candidate = directory
+                .appendingPathComponent("scripts")
+                .appendingPathComponent("grokbuild-browser-mcp")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            directory.deleteLastPathComponent()
+        }
+        return nil
     }
 }
