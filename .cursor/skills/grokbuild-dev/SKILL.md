@@ -44,6 +44,8 @@ Full checklist: `.cursor/rules/docs-and-tests.mdc`.
 
 `make run` / `make app` also run `scripts/bundle-cursor-bridge.sh` when Node ≥ 22.13 is available (installs `GrokBuild/Resources/CursorBridge` deps from `registry.npmjs.org` into the `.app`; copies `cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs` — excludes `*.test.mjs`). Missing/old Node soft-skips; npm failures fail the build. Managed Cursor bridge UI: Settings → Models. Bridge SDK auth contract and Node requirement: `grokbuild-grok-cli` skill + `ARCHITECTURE.md`.
 
+`make run` ad-hoc signs `.build/GrokBuild.app` unless `SIGN_IDENTITY` is set. Ad-hoc resign drops macOS Accessibility; the app re-prompts once per new CDHash when Computer Use is enabled. Prefer a Developer ID in `.env` for day-to-day `make run` so the trust entry sticks.
+
 ## grok CLI dependency
 
 App requires `grok` on PATH or at `~/.grok/bin/grok`. User must run `grok login`. Test CLI: `grok --version`.

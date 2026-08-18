@@ -70,6 +70,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if CursorBridgeRuntime.isEnabled {
             Task { await CursorBridgeRuntime.startIfNeeded() }
         }
+
+        Task { @MainActor in
+            await ComputerUseService.promptIfAccessibilityLostAfterResign()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

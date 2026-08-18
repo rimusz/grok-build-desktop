@@ -88,5 +88,12 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 </plist>
 EOF
 
-"$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
+# Prefer a real identity when SIGN_IDENTITY is set so Accessibility survives rebuilds.
+# Ad-hoc (`-`) changes CDHash every `make run` and macOS drops the trust entry.
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+if [ -n "$SIGN_IDENTITY" ]; then
+    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE" "$SIGN_IDENTITY"
+else
+    "$SCRIPT_DIR/codesign-app-bundle.sh" "$APP_BUNDLE"
+fi
 echo "Dev app ready: $APP_BUNDLE"

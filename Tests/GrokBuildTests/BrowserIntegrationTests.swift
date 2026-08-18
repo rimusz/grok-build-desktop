@@ -126,6 +126,108 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(env?.first?["value"], "/opt/homebrew/bin/agent-browser")
     }
 
+    func testManagedRuntimeStatusTextUsesRuntimeDirectoryNotCLIDoctor() {
+        XCTAssertEqual(
+            AgentBrowserService.managedRuntimeStatusText(cliInstalled: true, hasRuntime: true),
+            "Managed runtime installed and ready"
+        )
+        XCTAssertEqual(
+            AgentBrowserService.managedRuntimeStatusText(cliInstalled: true, hasRuntime: false),
+            "Managed runtime not ready or not installed"
+        )
+        XCTAssertEqual(
+            AgentBrowserService.managedRuntimeStatusText(cliInstalled: false, hasRuntime: false),
+            "Install agent-browser CLI first"
+        )
+        XCTAssertEqual(
+            AgentBrowserService.managedRuntimeStatusText(cliInstalled: false, hasRuntime: true),
+            "Install agent-browser CLI first"
+        )
+        XCTAssertTrue(AgentBrowserService.managedRuntimeIsReady(cliInstalled: true, hasRuntime: true))
+        XCTAssertFalse(AgentBrowserService.managedRuntimeIsReady(cliInstalled: false, hasRuntime: true))
+    }
+
+    @MainActor
+    func testApplyEnabledLeavesBrowserOffWhenAlreadyOff() async {
+        var settings = BrowserSettings.defaults
+        settings.enabled = false
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        let result = await AgentBrowserService.applyEnabled(false, settings: settings)
+        XCTAssertEqual(result, .unchanged)
+        XCTAssertFalse(BrowserSettingsStore.loadApplied().enabled)
+    }
+
+    @MainActor
+    func testApplyEnabledTurnsBrowserOffWithoutSetup() async {
+        var settings = BrowserSettings.defaults
+        settings.enabled = true
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        let result = await AgentBrowserService.applyEnabled(false, settings: settings)
+        XCTAssertEqual(result, .applied)
+        XCTAssertFalse(BrowserSettingsStore.loadApplied().enabled)
+        XCTAssertFalse(BrowserSettingsStore.load().enabled)
+    }
+
+    @MainActor
+    func testApplyEnabledNeedsSetupWhenManagedRuntimeIsMissing() async {
+        guard !AgentBrowserService.hasManagedRuntimeDirectory() else {
+            return
+        }
+
+        var settings = BrowserSettings.defaults
+        settings.enabled = false
+        settings.runtimeMode = .managed
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        let result = await AgentBrowserService.applyEnabled(true, settings: settings)
+        XCTAssertEqual(result, .needsSetup)
+        XCTAssertFalse(BrowserSettingsStore.loadApplied().enabled)
+    }
+
+    @MainActor
+    func testApplyEnabledPersistsWhenDraftToggleAlreadyMatchesDesired() async {
+        var draft = BrowserSettings.defaults
+        draft.enabled = true
+        draft.runtimeMode = .external
+        draft.externalBrowserAppID = .chrome
+        guard AgentBrowserService.browserToolsConfigurationIssue(settings: draft) == nil else {
+            return
+        }
+
+        var applied = draft
+        applied.enabled = false
+        BrowserSettingsStore.save(draft)
+        BrowserSettingsStore.saveApplied(applied)
+
+        let result = await AgentBrowserService.applyEnabled(true, settings: draft)
+        XCTAssertEqual(result, .applied)
+        XCTAssertTrue(BrowserSettingsStore.loadApplied().enabled)
+    }
+
+    @MainActor
+    func testApplyEnabledTurnsBrowserOnWhenExternalChromeIsReady() async {
+        var settings = BrowserSettings.defaults
+        settings.enabled = false
+        settings.runtimeMode = .external
+        settings.externalBrowserAppID = .chrome
+        guard AgentBrowserService.browserToolsConfigurationIssue(settings: settings) == nil else {
+            return
+        }
+
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+
+        let result = await AgentBrowserService.applyEnabled(true, settings: settings)
+        XCTAssertEqual(result, .applied)
+        XCTAssertTrue(BrowserSettingsStore.loadApplied().enabled)
+        XCTAssertEqual(BrowserSettingsStore.loadApplied().runtimeMode, .external)
+    }
+
     func testBrowserMCPConfigIncludesHeadedEnvironmentWhenEnabled() throws {
         let settings = BrowserSettings(
             enabled: true,

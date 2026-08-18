@@ -183,15 +183,33 @@ final class AcpTerminalHost: @unchecked Sendable {
         env: [String: String],
         byteLimit: Int
     )? {
-        guard let command = params["command"] as? String else { return nil }
+        var args = (params["args"] as? [String]) ?? []
+        let command: String
+        if let value = params["command"] as? String {
+            command = value
+        } else if let tokens = params["command"] as? [Any] {
+            let strings = tokens.compactMap { $0 as? String }
+            guard let first = strings.first else { return nil }
+            command = first
+            args = Array(strings.dropFirst()) + args
+        } else if let value = params["commandLine"] as? String ?? params["cmd"] as? String {
+            command = value
+        } else {
+            return nil
+        }
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let args = (params["args"] as? [String]) ?? []
         let cwd = params["cwd"] as? String
         var env: [String: String] = [:]
         if let list = params["env"] as? [[String: Any]] {
             for item in list {
                 if let name = item["name"] as? String, let value = item["value"] as? String {
+                    env[name] = value
+                }
+            }
+        } else if let dict = params["env"] as? [String: Any] {
+            for (name, raw) in dict {
+                if let value = raw as? String {
                     env[name] = value
                 }
             }
@@ -208,13 +226,59 @@ final class AcpTerminalHost: @unchecked Sendable {
     }
 
     static func resolveLaunch(command: String, args: [String]) -> (exe: String, args: [String]) {
-        if command.hasPrefix("/") {
-            return (command, args)
+        let tokens = splitCommandLine(command)
+        let exeToken: String
+        let extraArgs: [String]
+        if tokens.count >= 2 {
+            exeToken = tokens[0]
+            extraArgs = Array(tokens.dropFirst()) + args
+        } else if tokens.count == 1 {
+            exeToken = tokens[0]
+            extraArgs = args
+        } else {
+            return ("/bin/zsh", ["-c", shellJoin([command] + args)])
         }
-        if let resolved = lookupInPath(command) {
-            return (resolved, args)
+
+        if exeToken.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: exeToken) {
+            return (exeToken, extraArgs)
+        }
+        if !exeToken.contains("/"), let resolved = lookupInPath(exeToken) {
+            return (resolved, extraArgs)
         }
         return ("/bin/zsh", ["-c", shellJoin([command] + args)])
+    }
+
+    /// Split `bash -lc 'echo hi'` into `["bash", "-lc", "echo hi"]` so Process never
+    /// treats the whole line as a single executable path.
+    static func splitCommandLine(_ line: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        var index = line.startIndex
+        while index < line.endIndex {
+            let character = line[index]
+            if let active = quote {
+                if character == active {
+                    quote = nil
+                } else {
+                    current.append(character)
+                }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if character.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+            } else {
+                current.append(character)
+            }
+            index = line.index(after: index)
+        }
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+        return tokens
     }
 
     static func truncateFromStart(_ data: Data, byteLimit: Int) -> (data: Data, truncated: Bool) {

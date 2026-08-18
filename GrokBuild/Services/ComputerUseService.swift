@@ -174,7 +174,8 @@ enum ComputerUseService {
         reloadConfiguration: () async -> Void = {}
     ) async -> ApplyEnabledResult {
         var settings = baseSettings ?? ComputerUseSettingsStore.load()
-        guard settings.enabled != enabled else { return .unchanged }
+        let appliedEnabled = UserDefaults.standard.object(forKey: ComputerUseSettingsKeys.appliedEnabled) as? Bool
+        guard appliedEnabled != enabled else { return .unchanged }
 
         if enabled {
             if configurationIssue(settings: settings) != nil {
@@ -509,6 +510,42 @@ enum ComputerUseService {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// After `make run` ad-hoc re-sign, macOS drops Accessibility. Prompt once per CDHash
+    /// so Computer Use comes back without a Settings visit.
+    @MainActor
+    static func promptIfAccessibilityLostAfterResign(
+        settings: ComputerUseSettings = ComputerUseSettingsStore.loadApplied()
+    ) async {
+        let cdHash = codeSignatureCDHash()
+        let lastPrompted = UserDefaults.standard.string(
+            forKey: ComputerUseSettingsKeys.promptedAccessibilityCDHash
+        )
+        guard shouldPromptForLostAccessibility(
+            enabled: settings.enabled,
+            granted: localAccessibilityGranted(),
+            cdHash: cdHash,
+            lastPromptedHash: lastPrompted
+        ) else {
+            return
+        }
+
+        UserDefaults.standard.set(
+            cdHash ?? "unknown",
+            forKey: ComputerUseSettingsKeys.promptedAccessibilityCDHash
+        )
+        _ = try? await requestPermissions(settings: settings)
+    }
+
+    static func shouldPromptForLostAccessibility(
+        enabled: Bool,
+        granted: Bool,
+        cdHash: String?,
+        lastPromptedHash: String?
+    ) -> Bool {
+        guard enabled, !granted else { return false }
+        return lastPromptedHash != (cdHash ?? "unknown")
     }
 
     static var appBundlePath: String {

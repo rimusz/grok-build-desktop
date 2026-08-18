@@ -31,6 +31,75 @@ final class AcpTerminalHostTests: XCTestCase {
         XCTAssertEqual(launch.args, ["hi"])
     }
 
+    func testSplitCommandLineKeepsQuotedScript() {
+        XCTAssertEqual(
+            AcpTerminalHost.splitCommandLine("bash -lc 'echo SHELL_OK && pwd'"),
+            ["bash", "-lc", "echo SHELL_OK && pwd"]
+        )
+        XCTAssertEqual(
+            AcpTerminalHost.splitCommandLine("/bin/bash -lc \"uname -s\""),
+            ["/bin/bash", "-lc", "uname -s"]
+        )
+    }
+
+    func testResolveLaunchSplitsBashLcCommandLine() {
+        let launch = AcpTerminalHost.resolveLaunch(
+            command: "bash -lc 'echo SHELL_OK && uname -s && pwd && whoami'",
+            args: []
+        )
+        XCTAssertTrue(launch.exe.hasSuffix("/bash"), launch.exe)
+        XCTAssertEqual(launch.args.first, "-lc")
+        XCTAssertEqual(launch.args.last, "echo SHELL_OK && uname -s && pwd && whoami")
+        XCTAssertFalse(launch.exe.contains(" "), "must not use the whole line as argv0")
+    }
+
+    func testResolveLaunchSplitsAbsoluteBashLcCommandLine() {
+        let launch = AcpTerminalHost.resolveLaunch(
+            command: "/bin/bash -lc 'echo hi'",
+            args: []
+        )
+        XCTAssertEqual(launch.exe, "/bin/bash")
+        XCTAssertEqual(launch.args, ["-lc", "echo hi"])
+    }
+
+    func testParseCreateRequestAcceptsCommandArrayAndEnvMap() {
+        let parsed = AcpTerminalHost.parseCreateRequest([
+            "command": ["bash", "-lc", "echo hi"],
+            "env": ["FOO": "bar"]
+        ])
+        XCTAssertEqual(parsed?.command, "bash")
+        XCTAssertEqual(parsed?.args, ["-lc", "echo hi"])
+        XCTAssertEqual(parsed?.env["FOO"], "bar")
+    }
+
+    func testCreateBashLcReturnsOutput() {
+        let host = AcpTerminalHost()
+        defer { host.releaseAll() }
+        let created = try! host.create(
+            params: ["command": "bash -lc 'echo ACP-BASH-OK'"],
+            defaultCwd: FileManager.default.temporaryDirectory
+        )
+        let id = created["terminalId"] as? String
+        XCTAssertNotNil(id)
+
+        let exited = expectation(description: "bash -lc exits")
+        switch try! host.waitForExit(terminalId: id!) { payload in
+            XCTAssertEqual(payload["exitCode"] as? Int, 0)
+            exited.fulfill()
+        } {
+        case .alreadyExited(let payload):
+            XCTAssertEqual(payload["exitCode"] as? Int, 0)
+            exited.fulfill()
+        case .pending:
+            break
+        }
+        wait(for: [exited], timeout: 3)
+
+        let snapshot = try! host.output(terminalId: id!)
+        XCTAssertTrue((snapshot["output"] as? String)?.contains("ACP-BASH-OK") == true, "\(snapshot)")
+        _ = try? host.release(terminalId: id!)
+    }
+
     func testResolveLaunchFallsBackToZshWhenNotOnPath() {
         let launch = AcpTerminalHost.resolveLaunch(
             command: "definitely-not-a-real-binary-xyz",

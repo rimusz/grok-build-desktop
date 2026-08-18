@@ -28,6 +28,7 @@ UpdateChecker.checkGrokCLI()      // grok update --check --json
 
 - `initialize` advertises `clientCapabilities.terminal: true`. grok then runs its shell through `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, and `terminal/release` (`AcpTerminalHost`).
 - `terminal/create` **must** return `{ "terminalId": "…" }`. An empty `{}` ACK makes grok fail with `failed to deserialize response` and every shell command dies.
+- grok often sends `command` as a full line (`bash -lc 'echo …'`). `AcpTerminalHost.resolveLaunch` splits that into executable + args. Using the whole line as `Process.executableURL` produces `The file "bash -lc '…'" doesn't exist`.
 - Unknown host methods return JSON-RPC `-32601`, not `result: {}`.
 
 ## CLI working lines (ACP)
@@ -87,7 +88,7 @@ Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error]
 
 ## Browser backend
 
-Browser tools are provided by the bundled `agent-browser` CLI (`BrowserSettings.swift`), exposed to grok as an stdio MCP server (`grokbuild-browser`) via `AgentBrowserService.browserMCPConfig`; managed or external Chromium over CDP. (grok's native `browser_tab` was evaluated and removed — it wasn't exposed to sessions in practice.)
+Browser tools are provided by the bundled `agent-browser` CLI (`BrowserSettings.swift`), exposed to grok as an stdio MCP server (`grokbuild-browser`) via `AgentBrowserService.browserMCPConfig`; managed or external Chromium over CDP. The Settings → Browser enable switch calls `applyEnabled` and restarts grok immediately — leaving the switch off means **no** `browser_*` tools, even when agent-browser is installed. grok sessions can also inherit Cursor MCP servers via `[compat.cursor]` (`context7`, `XcodeBuildMCP`, the Cursor copy of `grokbuild-computer-use`); those are not browser tools. (grok's native `browser_tab` was evaluated and removed — it wasn't exposed to sessions in practice.)
 
 ## Scheduled tasks (mirror of grok `scheduler_*`)
 

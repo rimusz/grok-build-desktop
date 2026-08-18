@@ -70,6 +70,20 @@ final class ComputerUseIntegrationTests: XCTestCase {
         XCTAssertEqual(ComputerUseSettingsStore.loadApplied(), applied)
     }
 
+    @MainActor
+    func testApplyEnabledComparesAgainstAppliedFlagNotDraft() async {
+        var draft = ComputerUseSettings.defaults
+        draft.enabled = false
+        var applied = draft
+        applied.enabled = true
+        ComputerUseSettingsStore.save(draft)
+        ComputerUseSettingsStore.saveApplied(applied)
+
+        let result = await ComputerUseService.applyEnabled(false, settings: draft)
+        XCTAssertEqual(result, .applied)
+        XCTAssertFalse(ComputerUseSettingsStore.loadApplied().enabled)
+    }
+
     func testComputerUseMCPConfigSerializesForACP() throws {
         let helper = URL(fileURLWithPath: "/tmp/GrokBuildComputerUseMCP")
         let agentDesktop = URL(fileURLWithPath: "/opt/homebrew/bin/agent-desktop")
@@ -184,6 +198,49 @@ final class ComputerUseIntegrationTests: XCTestCase {
         XCTAssertEqual(
             guidance,
             "Open System Settings → Privacy & Security → Accessibility and enable GrokBuild."
+        )
+    }
+
+    func testShouldPromptForLostAccessibilityOncePerSignature() {
+        XCTAssertTrue(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: "abc"
+            )
+        )
+        XCTAssertTrue(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: false,
+                cdHash: "def",
+                lastPromptedHash: "abc"
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: true,
+                granted: true,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
+        )
+        XCTAssertFalse(
+            ComputerUseService.shouldPromptForLostAccessibility(
+                enabled: false,
+                granted: false,
+                cdHash: "abc",
+                lastPromptedHash: nil
+            )
         )
     }
 
@@ -518,7 +575,8 @@ final class ComputerUseIntegrationTests: XCTestCase {
             ComputerUseSettingsKeys.appliedScreenshotMode,
             ComputerUseSettingsKeys.appliedIncludeScreenshots,
             ComputerUseSettingsKeys.appliedAllowPhysicalMouse,
-            ComputerUseSettingsKeys.appliedSessionName
+            ComputerUseSettingsKeys.appliedSessionName,
+            ComputerUseSettingsKeys.promptedAccessibilityCDHash
         ]
     }
 

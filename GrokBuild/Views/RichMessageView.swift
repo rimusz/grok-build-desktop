@@ -26,7 +26,7 @@ enum MarkdownBlock: Identifiable, Hashable {
 enum MarkdownBlockParser {
     static func parse(_ text: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
-        var remaining = text
+        var remaining = expandSmashedTables(text)
 
         while !remaining.isEmpty {
             if let match = firstSpecialBlock(in: remaining) {
@@ -172,6 +172,68 @@ enum MarkdownBlockParser {
         if trimmed.hasSuffix("|") { trimmed.removeLast() }
         return trimmed.split(separator: "|", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// grok often streams GFM tables as one line (`| A | B ||---|---|| row |`).
+    /// Split those into real rows so `matchTable` can render a grid.
+    static func expandSmashedTables(_ text: String) -> String {
+        guard text.contains("|") else { return text }
+        var result = ""
+        var rest = text[...]
+        while let fence = rest.range(of: "```") {
+            result.append(expandSmashedTablesOutsideFence(String(rest[..<fence.lowerBound])))
+            result.append("```")
+            rest = rest[fence.upperBound...]
+            if let close = rest.range(of: "```") {
+                result.append(String(rest[..<close.upperBound]))
+                rest = rest[close.upperBound...]
+            } else {
+                result.append(String(rest))
+                rest = rest[rest.endIndex...]
+            }
+        }
+        result.append(expandSmashedTablesOutsideFence(String(rest)))
+        return result
+    }
+
+    private static func expandSmashedTablesOutsideFence(_ text: String) -> String {
+        text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { expandSmashedTableLine(String($0)) }
+            .joined(separator: "\n")
+    }
+
+    private static func expandSmashedTableLine(_ line: String) -> String {
+        guard line.contains("|---") || line.contains("| ---") else { return line }
+        let expanded = line.replacingOccurrences(of: "||", with: "|\n|")
+        var pieces = expanded.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        guard let separatorIndex = pieces.firstIndex(where: { isTableSeparator($0) }),
+              separatorIndex > 0 else {
+            return expanded
+        }
+        let headerIndex = separatorIndex - 1
+        let headerLine = pieces[headerIndex]
+        if isTableRow(headerLine) { return expanded }
+        guard let pipe = firstTableRowStart(in: headerLine) else { return expanded }
+        let prefix = headerLine[..<pipe].trimmingCharacters(in: .whitespaces)
+        let header = String(headerLine[pipe...])
+        if prefix.isEmpty {
+            pieces[headerIndex] = header
+        } else {
+            pieces[headerIndex] = String(prefix)
+            pieces.insert(header, at: separatorIndex)
+        }
+        return pieces.joined(separator: "\n")
+    }
+
+    private static func firstTableRowStart(in line: String) -> String.Index? {
+        var index = line.startIndex
+        while index < line.endIndex {
+            if line[index] == "|", isTableRow(String(line[index...])) {
+                return index
+            }
+            index = line.index(after: index)
+        }
+        return nil
     }
 
     private static func matchDisplayMath(in text: String) -> Match? {

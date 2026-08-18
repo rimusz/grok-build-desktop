@@ -33,7 +33,7 @@ swift build -c release
 ./.build/release/GrokBuild
 ```
 
-`make run` uses `scripts/build-dev-app.sh` for a lightweight `.app` wrapper; `make app` produces a full `dist/GrokBuild.app` for distribution.
+`make run` uses `scripts/build-dev-app.sh` for a lightweight `.app` wrapper; `make app` produces a full `dist/GrokBuild.app` for distribution. When `SIGN_IDENTITY` is set in `.env`, the dev bundle is signed with that identity so Accessibility survives rebuilds. Otherwise the bundle is ad-hoc signed and macOS may require re-adding GrokBuild in Accessibility after each `make run`.
 
 ## For Development (Recommended)
 
