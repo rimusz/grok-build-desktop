@@ -443,7 +443,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Key | Store | Contents |
 |-----|-------|----------|
 | `GrokBuild.projects.v1` | `WorkspaceStore` | `[Workspace]` JSON |
-| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden, **`pinnedSessionIDs`** (sidebar session pins; max `SessionLayoutStore.maxPinnedSessions`) |
+| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden, **`pinnedSessionIDs`** (global sidebar pins; max `SessionLayoutStore.maxPinnedSessions`), and **`settledSessionIDs`** (restorable sessions parked in the Settled shelf) |
 | `GrokBuild.sessionMessages.v1` | `SessionMessageStore` | Per live-session-tab chat transcript (`[Message]` JSON by session UUID); saved on `.liveSessionMessagesChanged` (user send + turn complete) and during full `persistSessionLayout(saveMessages: true)` passes such as app quit via `.grokBuildPrepareForShutdown` |
 | `GrokBuild.workspaceLayout.v1` | `SessionLayoutStore` | Pin order, workspace order, **`agentSettingsByWorkspace`** |
 | `grokbuild.sessionSelections.v1` | `ChatStore` | Per grok session id: mode |
@@ -581,7 +581,7 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 
 ### Session status + unread badges
 
-`SessionActivityStatus` (`Services/SessionStatus.swift`): `idle` / `working` / `needsInput` / `finishedUnread` / `error`, resolved by the pure `SessionStatusResolver.resolve(SessionStatusInputs)`. `ChatStore.activityStatus(hasUnreadCompletion:)` feeds `SidebarSession.status` (dot badge in `SessionSidebarRow`). Unread is tracked in `ContentView` (`unreadSessionIDs` / `lastSeenStreaming` / `lastSeenMessageCounts`) via `BackgroundSessionUnread.shouldMark`: prefer streaming `true → false` on `.liveSessionMessagesChanged` (assistant placeholder is created at turn start, so message count often does not grow on completion); focusing (`selectSession`) clears unread.
+`SessionActivityStatus` (`Services/SessionStatus.swift`): `idle` / `working` / `needsInput` / `finishedUnread` / `error`, resolved by the pure `SessionStatusResolver.resolve(SessionStatusInputs)`. `ChatStore.activityStatus(hasUnreadCompletion:)` feeds `SidebarSession.status`; `SidebarPresentation.statusLabel` renders visible Working elapsed time / Needs input / Completed / Error copy in `SessionSidebarRow`. Unread is tracked in `ContentView` (`unreadSessionIDs` / `lastSeenStreaming` / `lastSeenMessageCounts`) via `BackgroundSessionUnread.shouldMark`: prefer streaming `true → false` on `.liveSessionMessagesChanged` (assistant placeholder is created at turn start, so message count often does not grow on completion); focusing (`selectSession`) clears unread.
 
 ### Turn-completion sound
 
@@ -593,7 +593,7 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 
 ### Session polish (sidebar + rewind)
 
-Sidebar session context menu (`SidebarView`): rename, pin/unpin session (`SessionLayoutSnapshot.pinnedSessionIDs`, sorted above unpinned in `ContentView.visibleSessionIDs`), mark unread/read, duplicate (new empty tab with “(copy)” title), clear transcript (`ChatStore.clearTranscript`), close. Project menu includes **New Worktree Session…** (`onCreateWorktree` → `GitCheckoutSheet` with create focus). Linked worktrees show a **WT** badge via `GitService.isWorktree(at:)` (`.git` is a file). Chat-only **Rewind to Here…** on each message (`MessageBubble` context menu → confirmation) truncates the transcript with `ChatStore.rewind(to:)` (no file restore).
+`SidebarView` uses `SidebarPresentation` for case-insensitive project/session/role search and status copy. Pinned sessions render once in a global **Pinned** section, with their project subtitle; per-project groups contain only unpinned, unsettled sessions. Idle/completed/error sessions can be **Settled** into a collapsible global shelf (`SessionLayoutSnapshot.settledSessionIDs`) without deleting their transcript or grok session; **Return to Active** restores the project row. Working and needs-input sessions cannot be settled. Pinning returns a settled session to active. The session context menu also supports rename, mark unread/read, duplicate (new empty tab with “(copy)” title), clear transcript (`ChatStore.clearTranscript`), and close. Project menu includes **New Worktree Session…** (`onCreateWorktree` → `GitCheckoutSheet` with create focus). Linked worktrees show a **WT** badge via `GitService.isWorktree(at:)` (`.git` is a file). Chat-only **Rewind to Here…** on each message (`MessageBubble` context menu → confirmation) truncates the transcript with `ChatStore.rewind(to:)` (no file restore).
 
 ### Doctor + onboarding
 
@@ -835,7 +835,7 @@ Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) k
 
 | File | Role |
 |------|------|
-| `SidebarView.swift` | Project list, session list, pins, settings entry; blue update button in the footer when an upgrade is waiting; git branch caption on the selected project; project path is a tooltip, not a subtitle |
+| `SidebarView.swift` | Searchable project/session list, global Pinned and Settled sections, visible attention/elapsed status, settings entry; blue update button in the footer when an upgrade is waiting; git branch caption on the selected project; project path is a tooltip, not a subtitle |
 | `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
@@ -960,7 +960,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
 | **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU, pin/unread/duplicate/clear) |
-| **Session pin / WT badge** | `SessionLayoutSnapshot.pinnedSessionIDs`, `GitService.isWorktree`, `SidebarView` |
+| **Sidebar search / pin / settle / status / WT badge** | `SidebarPresentation`, `SessionLayoutSnapshot.pinnedSessionIDs` / `settledSessionIDs`, `SessionActivityStatus`, `GitService.isWorktree`, `SidebarView` |
 | **Chat rewind / clear transcript** | `ChatStore.rewind(to:)`, `clearTranscript()`, message context menu in `ChatView` |
 | **Privacy Mode** | `PrivacyMode.swift`, `GrokSettingsKeys.privacyMode`, Settings → App |
 | **Session restore at launch** | `ContentView.restorePersistedSessions`, `SessionRestorePolicy`, `SessionTranscriptRecovery`, `ensureSessionStarted` |

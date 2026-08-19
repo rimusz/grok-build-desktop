@@ -45,6 +45,87 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertFalse(SessionActivityStatus.idle.demandsAttention)
     }
 
+    func testSidebarStatusLabelsIncludeWorkingDurationAndAttentionCopy() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        XCTAssertEqual(
+            SidebarPresentation.statusLabel(
+                for: .working,
+                workingSince: start,
+                now: start.addingTimeInterval(125)
+            ),
+            "Working 2m"
+        )
+        XCTAssertEqual(
+            SidebarPresentation.statusLabel(
+                for: .needsInput,
+                workingSince: nil,
+                now: start
+            ),
+            "Needs input"
+        )
+        XCTAssertEqual(
+            SidebarPresentation.statusLabel(
+                for: .finishedUnread,
+                workingSince: nil,
+                now: start
+            ),
+            "Completed"
+        )
+        XCTAssertNil(
+            SidebarPresentation.statusLabel(for: .idle, workingSince: nil, now: start)
+        )
+    }
+
+    func testSidebarSearchMatchesProjectsSessionsAndRolesCaseInsensitively() {
+        XCTAssertTrue(SidebarPresentation.matches("auth", values: ["Desktop", "Fix Auth Flow"]))
+        XCTAssertTrue(SidebarPresentation.matches("RESEARCH", values: ["researcher"]))
+        XCTAssertFalse(SidebarPresentation.matches("billing", values: ["Fix Auth Flow"]))
+        XCTAssertTrue(SidebarPresentation.matches("  ", values: []))
+
+        let workspaceID = UUID()
+        let roleOnlyMatch = SidebarSession(
+            id: UUID(),
+            workspaceID: workspaceID,
+            title: "Investigate issue",
+            isRunning: false,
+            roleName: "Researcher"
+        )
+        XCTAssertTrue(
+            SidebarPresentation.matchesWorkspace(
+                "research",
+                workspaceName: "Desktop",
+                sessions: [roleOnlyMatch]
+            )
+        )
+        XCTAssertFalse(
+            SidebarPresentation.matchesWorkspace(
+                "billing",
+                workspaceName: "Desktop",
+                sessions: [roleOnlyMatch]
+            )
+        )
+    }
+
+    func testSidebarSearchBypassesCollapsedSessionPreview() {
+        XCTAssertTrue(
+            SidebarPresentation.shouldCollapseSessions(isFilterEmpty: true, isExpanded: false)
+        )
+        XCTAssertFalse(
+            SidebarPresentation.shouldCollapseSessions(isFilterEmpty: false, isExpanded: false)
+        )
+        XCTAssertFalse(
+            SidebarPresentation.shouldCollapseSessions(isFilterEmpty: true, isExpanded: true)
+        )
+    }
+
+    func testSidebarOnlySettlesSessionsThatDoNotNeedLiveAttention() {
+        XCTAssertTrue(SidebarPresentation.canSettle(.idle))
+        XCTAssertTrue(SidebarPresentation.canSettle(.finishedUnread))
+        XCTAssertTrue(SidebarPresentation.canSettle(.error))
+        XCTAssertFalse(SidebarPresentation.canSettle(.working))
+        XCTAssertFalse(SidebarPresentation.canSettle(.needsInput))
+    }
+
     // MARK: - Background unread detection
 
     func testBackgroundUnreadMarksOnStreamingEndEvenWithoutMessageGrowth() {

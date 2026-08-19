@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import GrokBuild
 
 final class StatusBarMenuTests: XCTestCase {
@@ -59,6 +60,8 @@ final class StatusBarMenuTests: XCTestCase {
     }
 
     func testSidebarUpdateButtonTitleAndAccessibility() {
+        XCTAssertEqual(SidebarUpdateButtonAppearance.background, Color.blue)
+        XCTAssertEqual(SidebarUpdateButtonAppearance.foreground, Color.white)
         XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("0.2.9"), "v0.2.9")
         XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("v0.2.9"), "v0.2.9")
         XCTAssertEqual(

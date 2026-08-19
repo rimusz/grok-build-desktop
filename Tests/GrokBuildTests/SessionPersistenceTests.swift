@@ -136,6 +136,7 @@ final class SessionPersistenceTests: XCTestCase {
     func testSessionLayoutStoreRoundTripsSnapshot() {
         let workspaceID = UUID()
         let sessionID = UUID()
+        let settledSessionID = UUID()
         let snapshot = SessionLayoutSnapshot(
             records: [
                 SavedSessionRecord(
@@ -151,7 +152,9 @@ final class SessionPersistenceTests: XCTestCase {
             selectedWorkspaceID: workspaceID,
             selectedSessionIDByWorkspace: [workspaceID: sessionID],
             expandedSessionWorkspaceIDs: [workspaceID],
-            hiddenSessionWorkspaceIDs: [UUID()]
+            hiddenSessionWorkspaceIDs: [UUID()],
+            pinnedSessionIDs: [sessionID],
+            settledSessionIDs: [settledSessionID]
         )
 
         SessionLayoutStore.saveSessions(snapshot)
@@ -164,6 +167,23 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.selectedSessionIDByWorkspace, snapshot.selectedSessionIDByWorkspace)
         XCTAssertEqual(loaded.expandedSessionWorkspaceIDs, snapshot.expandedSessionWorkspaceIDs)
         XCTAssertEqual(loaded.hiddenSessionWorkspaceIDs, snapshot.hiddenSessionWorkspaceIDs)
+        XCTAssertEqual(loaded.pinnedSessionIDs, snapshot.pinnedSessionIDs)
+        XCTAssertEqual(loaded.settledSessionIDs, snapshot.settledSessionIDs)
+    }
+
+    func testSessionShelvesDropInvalidDuplicatesOverlapAndExcessPins() {
+        let sessionIDs = (0..<22).map { _ in UUID() }
+        let validSessionIDs = Set(sessionIDs.prefix(21))
+        let shelves = SessionLayoutStore.normalizedSessionShelves(
+            pinnedSessionIDs: [sessionIDs[0], sessionIDs[0]]
+                + Array(sessionIDs[1...20])
+                + [sessionIDs[21]],
+            settledSessionIDs: [sessionIDs[0], sessionIDs[20], sessionIDs[21]],
+            validSessionIDs: validSessionIDs
+        )
+
+        XCTAssertEqual(shelves.pinned, Array(sessionIDs.prefix(SessionLayoutStore.maxPinnedSessions)))
+        XCTAssertEqual(shelves.settled, [sessionIDs[20]])
     }
 
     func testSessionLayoutSnapshotDecodesWithoutPerWorkspaceSelection() throws {
@@ -185,6 +205,8 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.selectedSessionIDByWorkspace, [:])
         XCTAssertEqual(decoded.expandedSessionWorkspaceIDs, [])
         XCTAssertEqual(decoded.hiddenSessionWorkspaceIDs, [])
+        XCTAssertEqual(decoded.pinnedSessionIDs, [])
+        XCTAssertEqual(decoded.settledSessionIDs, [])
     }
 
     func testWorkspaceLayoutStoreRoundTripsPinnedAndManualOrder() {

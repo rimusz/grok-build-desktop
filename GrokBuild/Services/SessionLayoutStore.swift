@@ -78,8 +78,10 @@ struct SessionLayoutSnapshot: Codable {
     var selectedSessionIDByWorkspace: [UUID: UUID]
     var expandedSessionWorkspaceIDs: Set<UUID>
     var hiddenSessionWorkspaceIDs: Set<UUID>
-    /// Session tab IDs pinned to the top of their project group in the sidebar.
+    /// Session tab IDs shown in the global Pinned section, in display order.
     var pinnedSessionIDs: [UUID]
+    /// Sessions parked in the global Settled shelf instead of their project group.
+    var settledSessionIDs: Set<UUID>
 
     init(
         records: [SavedSessionRecord],
@@ -89,7 +91,8 @@ struct SessionLayoutSnapshot: Codable {
         selectedSessionIDByWorkspace: [UUID: UUID] = [:],
         expandedSessionWorkspaceIDs: Set<UUID> = [],
         hiddenSessionWorkspaceIDs: Set<UUID> = [],
-        pinnedSessionIDs: [UUID] = []
+        pinnedSessionIDs: [UUID] = [],
+        settledSessionIDs: Set<UUID> = []
     ) {
         self.records = records
         self.sessionOrderByWorkspace = sessionOrderByWorkspace
@@ -99,6 +102,7 @@ struct SessionLayoutSnapshot: Codable {
         self.expandedSessionWorkspaceIDs = expandedSessionWorkspaceIDs
         self.hiddenSessionWorkspaceIDs = hiddenSessionWorkspaceIDs
         self.pinnedSessionIDs = pinnedSessionIDs
+        self.settledSessionIDs = settledSessionIDs
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -110,6 +114,7 @@ struct SessionLayoutSnapshot: Codable {
         case expandedSessionWorkspaceIDs
         case hiddenSessionWorkspaceIDs
         case pinnedSessionIDs
+        case settledSessionIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -122,6 +127,7 @@ struct SessionLayoutSnapshot: Codable {
         expandedSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .expandedSessionWorkspaceIDs) ?? []
         hiddenSessionWorkspaceIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .hiddenSessionWorkspaceIDs) ?? []
         pinnedSessionIDs = try container.decodeIfPresent([UUID].self, forKey: .pinnedSessionIDs) ?? []
+        settledSessionIDs = try container.decodeIfPresent(Set<UUID>.self, forKey: .settledSessionIDs) ?? []
     }
 }
 
@@ -165,6 +171,23 @@ enum SessionLayoutStore {
     static let maxPinnedSessions = 20
     private static let sessionKey = "GrokBuild.sessionLayout.v2"
     private static let workspaceLayoutKey = "GrokBuild.workspaceLayout.v1"
+
+    static func normalizedSessionShelves(
+        pinnedSessionIDs: [UUID],
+        settledSessionIDs: Set<UUID>,
+        validSessionIDs: Set<UUID>
+    ) -> (pinned: [UUID], settled: Set<UUID>) {
+        var seenPinnedIDs: Set<UUID> = []
+        let pinned = Array(
+            pinnedSessionIDs
+                .filter { validSessionIDs.contains($0) && seenPinnedIDs.insert($0).inserted }
+                .prefix(maxPinnedSessions)
+        )
+        let settled = settledSessionIDs
+            .intersection(validSessionIDs)
+            .subtracting(pinned)
+        return (pinned, settled)
+    }
 
     static func loadSessions() -> SessionLayoutSnapshot {
         guard let data = UserDefaults.standard.data(forKey: sessionKey),

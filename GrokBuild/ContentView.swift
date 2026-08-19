@@ -90,12 +90,14 @@ struct ContentView: View {
                 workspaces: $workspaceStore.workspaces,
                 orderedWorkspaces: workspaceStore.orderedWorkspaces,
                 pinnedWorkspaceIDs: workspaceStore.pinnedWorkspaceIDs,
+                pinnedSessionIDs: sessionLayout.pinnedSessionIDs,
                 selectedWorkspaceID: $selectedWorkspaceID,
                 sessions: sidebarSessions,
                 hiddenSessionCounts: hiddenSessionCounts,
                 selectedSessionID: selectedSessionID,
                 expandedSessionWorkspaceIDs: $sessionLayout.expandedSessionWorkspaceIDs,
                 hiddenSessionWorkspaceIDs: $sessionLayout.hiddenSessionWorkspaceIDs,
+                settledSessionIDs: $sessionLayout.settledSessionIDs,
                 onAddWorkspace: { showPicker = true },
                 onSelectWorkspace: { ws in
                     if showSettings,
@@ -120,6 +122,8 @@ struct ContentView: View {
                 },
                 onPinSession: { pinSession($0) },
                 onUnpinSession: { unpinSession($0) },
+                onSettleSession: { settleSession($0) },
+                onUnsettleSession: { unsettleSession($0) },
                 onMarkSessionUnread: { unreadSessionIDs.insert($0) },
                 onMarkSessionRead: { unreadSessionIDs.remove($0) },
                 onDuplicateSession: { id in
@@ -529,6 +533,7 @@ struct ContentView: View {
         let store = closing.store
         liveSessions.remove(at: index)
         sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
+        sessionLayout.settledSessionIDs.remove(id)
 
         if selectedSessionID == id {
             if let sibling = liveSessions.last(where: { $0.workspace.id == closing.workspace.id }) {
@@ -604,7 +609,10 @@ struct ContentView: View {
         _ = sessionListRevision
         var counts: [Workspace.ID: Int] = [:]
         for workspace in workspaceStore.workspaces {
-            let total = liveSessions(for: workspace.id).count
+            let total = liveSessions(for: workspace.id).filter {
+                !sessionLayout.pinnedSessionIDs.contains($0.id)
+                    && !sessionLayout.settledSessionIDs.contains($0.id)
+            }.count
             counts[workspace.id] = max(0, total - SessionLayoutStore.maxSidebarSessions)
         }
         return counts
@@ -614,8 +622,14 @@ struct ContentView: View {
         _ = sessionListRevision
         var result: [SidebarSession] = []
         for workspace in workspaceStore.workspaces {
-            let visibleIDs = visibleSessionIDs(for: workspace.id)
-            for session in liveSessions where visibleIDs.contains(session.id) {
+            let workspaceSessions = liveSessions(for: workspace.id)
+            var orderedIDs = sessionLayout.sessionOrderByWorkspace[workspace.id] ?? workspaceSessions.map(\.id)
+            orderedIDs.removeAll { id in !workspaceSessions.contains { $0.id == id } }
+            for session in workspaceSessions where !orderedIDs.contains(session.id) {
+                orderedIDs.append(session.id)
+            }
+            for id in orderedIDs {
+                guard let session = workspaceSessions.first(where: { $0.id == id }) else { continue }
                 result.append(
                     SidebarSession(
                         id: session.id,
@@ -633,7 +647,8 @@ struct ContentView: View {
                         roleName: session.store.hasExplicitAgent
                             || !session.store.effectiveAgentSelection.isEmpty
                             ? session.store.effectiveAgentDisplayName
-                            : ""
+                            : "",
+                        workingSince: session.store.turnStartedAt
                     )
                 )
             }
@@ -642,16 +657,15 @@ struct ContentView: View {
     }
 
     private func visibleSessionIDs(for workspaceID: Workspace.ID) -> [UUID] {
-        let eligible = liveSessions(for: workspaceID)
+        let eligible = liveSessions(for: workspaceID).filter {
+            !sessionLayout.pinnedSessionIDs.contains($0.id)
+                && !sessionLayout.settledSessionIDs.contains($0.id)
+        }
         var order = sessionLayout.sessionOrderByWorkspace[workspaceID] ?? eligible.map(\.id)
         order.removeAll { id in !eligible.contains { $0.id == id } }
         for session in eligible where !order.contains(session.id) {
             order.append(session.id)
         }
-        let pinned = sessionLayout.pinnedSessionIDs
-        let pinnedOrdered = pinned.filter { order.contains($0) }
-        let rest = order.filter { !pinned.contains($0) }
-        order = pinnedOrdered + rest
         if order.count > SessionLayoutStore.maxSidebarSessions {
             let selected = selectedSessionID
             var trimmed = Array(order.prefix(SessionLayoutStore.maxSidebarSessions))
@@ -748,7 +762,11 @@ struct ContentView: View {
             selectedByWorkspace[selectedSession.workspace.id] = selectedSessionID
         }
 
-        let pinnedSessionIDs = sessionLayout.pinnedSessionIDs.filter { recordIDs.contains($0) }
+        let sessionShelves = SessionLayoutStore.normalizedSessionShelves(
+            pinnedSessionIDs: sessionLayout.pinnedSessionIDs,
+            settledSessionIDs: sessionLayout.settledSessionIDs,
+            validSessionIDs: recordIDs
+        )
         sessionLayout = SessionLayoutSnapshot(
             records: records,
             sessionOrderByWorkspace: order,
@@ -757,7 +775,8 @@ struct ContentView: View {
             selectedSessionIDByWorkspace: selectedByWorkspace,
             expandedSessionWorkspaceIDs: expandedSessionWorkspaceIDs,
             hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs,
-            pinnedSessionIDs: pinnedSessionIDs
+            pinnedSessionIDs: sessionShelves.pinned,
+            settledSessionIDs: sessionShelves.settled
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }
@@ -1186,12 +1205,32 @@ struct ContentView: View {
         }
         pinned.append(id)
         sessionLayout.pinnedSessionIDs = pinned
+        sessionLayout.settledSessionIDs.remove(id)
         persistSessionLayout(saveMessages: false)
         sessionListRevision &+= 1
     }
 
     private func unpinSession(_ id: UUID) {
         sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
+        persistSessionLayout(saveMessages: false)
+        sessionListRevision &+= 1
+    }
+
+    private func settleSession(_ id: UUID) {
+        guard let session = liveSessions.first(where: { $0.id == id }),
+              SidebarPresentation.canSettle(
+                session.store.activityStatus(
+                    hasUnreadCompletion: id != selectedSessionID && unreadSessionIDs.contains(id)
+                )
+              ) else { return }
+        sessionLayout.pinnedSessionIDs.removeAll { $0 == id }
+        sessionLayout.settledSessionIDs.insert(id)
+        persistSessionLayout(saveMessages: false)
+        sessionListRevision &+= 1
+    }
+
+    private func unsettleSession(_ id: UUID) {
+        guard sessionLayout.settledSessionIDs.remove(id) != nil else { return }
         persistSessionLayout(saveMessages: false)
         sessionListRevision &+= 1
     }
