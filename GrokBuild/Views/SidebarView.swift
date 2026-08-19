@@ -14,18 +14,83 @@ struct SidebarSession: Identifiable, Hashable {
     var isWorktree: Bool = false
     /// Bound session agent / custom role display name (empty to hide).
     var roleName: String = ""
+    /// Start of the current turn, used for the visible Working duration.
+    var workingSince: Date?
+}
+
+enum SidebarPresentation {
+    static func matches(_ query: String, values: [String]) -> Bool {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return true }
+        return values.contains { $0.localizedCaseInsensitiveContains(normalized) }
+    }
+
+    static func matchesWorkspace(
+        _ query: String,
+        workspaceName: String,
+        sessions: [SidebarSession]
+    ) -> Bool {
+        matches(
+            query,
+            values: [workspaceName] + sessions.flatMap { [$0.title, $0.roleName] }
+        )
+    }
+
+    static func shouldCollapseSessions(isFilterEmpty: Bool, isExpanded: Bool) -> Bool {
+        isFilterEmpty && !isExpanded
+    }
+
+    static func canSettle(_ status: SessionActivityStatus) -> Bool {
+        status != .working && status != .needsInput
+    }
+
+    static func statusLabel(
+        for status: SessionActivityStatus,
+        workingSince: Date?,
+        now: Date
+    ) -> String? {
+        switch status {
+        case .idle:
+            return nil
+        case .working:
+            guard let workingSince else { return "Working" }
+            return "Working \(durationLabel(from: workingSince, to: now))"
+        case .needsInput:
+            return "Needs input"
+        case .finishedUnread:
+            return "Completed"
+        case .error:
+            return "Error"
+        }
+    }
+
+    static func durationLabel(from start: Date, to end: Date) -> String {
+        let seconds = max(0, Int(end.timeIntervalSince(start)))
+        if seconds < 60 { return "\(max(1, seconds))s" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+    }
+}
+
+enum SidebarUpdateButtonAppearance {
+    static let background = Color.blue
+    static let foreground = Color.white
 }
 
 struct SidebarView: View {
     @Binding var workspaces: [Workspace]
     var orderedWorkspaces: [Workspace]
     var pinnedWorkspaceIDs: [UUID]
+    var pinnedSessionIDs: [UUID] = []
     @Binding var selectedWorkspaceID: Workspace.ID?
     var sessions: [SidebarSession] = []
     var hiddenSessionCounts: [Workspace.ID: Int] = [:]
     var selectedSessionID: UUID?
     @Binding var expandedSessionWorkspaceIDs: Set<Workspace.ID>
     @Binding var hiddenSessionWorkspaceIDs: Set<Workspace.ID>
+    @Binding var settledSessionIDs: Set<UUID>
 
     var onAddWorkspace: () -> Void
     var onSelectWorkspace: (Workspace) -> Void
@@ -35,6 +100,8 @@ struct SidebarView: View {
     var onCloseSession: (UUID) -> Void = { _ in }
     var onPinSession: (UUID) -> Void = { _ in }
     var onUnpinSession: (UUID) -> Void = { _ in }
+    var onSettleSession: (UUID) -> Void = { _ in }
+    var onUnsettleSession: (UUID) -> Void = { _ in }
     var onMarkSessionUnread: (UUID) -> Void = { _ in }
     var onMarkSessionRead: (UUID) -> Void = { _ in }
     var onDuplicateSession: (UUID) -> Void = { _ in }
@@ -57,18 +124,78 @@ struct SidebarView: View {
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
     @State private var renameText = ""
+    @State private var settledSessionsExpanded = false
 
     private let collapsedSessionLimit = 5
 
     private var filtered: [Workspace] {
-        let base = filter.isEmpty ? orderedWorkspaces : orderedWorkspaces.filter {
-            $0.displayName.localizedCaseInsensitiveContains(filter)
+        guard !isFilterEmpty else { return orderedWorkspaces }
+        return orderedWorkspaces.filter { workspace in
+            SidebarPresentation.matchesWorkspace(
+                filter,
+                workspaceName: workspace.displayName,
+                sessions: activeSessions(for: workspace.id)
+            )
         }
-        return base
     }
 
     private func sessions(for workspaceID: Workspace.ID) -> [SidebarSession] {
         sessions.filter { $0.workspaceID == workspaceID }
+    }
+
+    private var isFilterEmpty: Bool {
+        filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func activeSessions(for workspaceID: Workspace.ID) -> [SidebarSession] {
+        sessions(for: workspaceID).filter {
+            !$0.isPinned && !settledSessionIDs.contains($0.id)
+        }
+    }
+
+    private func displayedActiveSessions(for workspace: Workspace) -> [SidebarSession] {
+        let active = activeSessions(for: workspace.id)
+        if isFilterEmpty {
+            var limited = Array(active.prefix(SessionLayoutStore.maxSidebarSessions))
+            if let selected = active.first(where: { $0.id == selectedSessionID }),
+               !limited.contains(where: { $0.id == selected.id }),
+               !limited.isEmpty {
+                limited[limited.count - 1] = selected
+            }
+            return limited
+        }
+        if workspace.displayName.localizedCaseInsensitiveContains(filter) {
+            return active
+        }
+        return active.filter {
+            SidebarPresentation.matches(filter, values: [$0.title, $0.roleName])
+        }
+    }
+
+    private var pinnedSessions: [SidebarSession] {
+        sessions.filter(\.isPinned).filter { session in
+            SidebarPresentation.matches(
+                filter,
+                values: [session.title, session.roleName, workspaceName(for: session.workspaceID)]
+            )
+        }.sorted { left, right in
+            let leftIndex = pinnedSessionIDs.firstIndex(of: left.id) ?? .max
+            let rightIndex = pinnedSessionIDs.firstIndex(of: right.id) ?? .max
+            return leftIndex < rightIndex
+        }
+    }
+
+    private var settledSessions: [SidebarSession] {
+        sessions.filter { settledSessionIDs.contains($0.id) }.filter { session in
+            SidebarPresentation.matches(
+                filter,
+                values: [session.title, session.roleName, workspaceName(for: session.workspaceID)]
+            )
+        }
+    }
+
+    private func workspaceName(for id: Workspace.ID) -> String {
+        orderedWorkspaces.first(where: { $0.id == id })?.displayName ?? "Project"
     }
 
     private func isSessionsExpanded(for workspaceID: Workspace.ID) -> Bool {
@@ -103,9 +230,19 @@ struct SidebarView: View {
             .padding(.bottom, 6)
 
             List {
+                if !pinnedSessions.isEmpty {
+                    Section {
+                        ForEach(pinnedSessions) { session in
+                            sessionRow(session, showsProject: true)
+                        }
+                    } header: {
+                        Label("Pinned", systemImage: "pin.fill")
+                    }
+                }
+
                 Section {
                     ForEach(filtered) { ws in
-                        let projectSessions = sessions(for: ws.id)
+                        let projectSessions = displayedActiveSessions(for: ws)
                         let isSelected = selectedWorkspaceID == ws.id
                         VStack(alignment: .leading, spacing: 0) {
                             Button {
@@ -146,11 +283,14 @@ struct SidebarView: View {
                         }
 
                         if (isSelected || !projectSessions.isEmpty),
-                           !hiddenSessionWorkspaceIDs.contains(ws.id) {
+                           (!isFilterEmpty || !hiddenSessionWorkspaceIDs.contains(ws.id)) {
                             let isExpanded = isSessionsExpanded(for: ws.id)
-                            let shownSessions = isExpanded ? projectSessions : collapsedSessions(from: projectSessions)
+                            let shownSessions = SidebarPresentation.shouldCollapseSessions(
+                                isFilterEmpty: isFilterEmpty,
+                                isExpanded: isExpanded
+                            ) ? collapsedSessions(from: projectSessions) : projectSessions
 
-                            if isExpanded {
+                            if isExpanded && isFilterEmpty {
                                 ForEach(shownSessions) { session in
                                     sessionRow(session)
                                 }
@@ -164,7 +304,7 @@ struct SidebarView: View {
                             }
 
                             let hidden = hiddenCount(for: ws.id, loadedSessions: projectSessions, isExpanded: isExpanded)
-                            if hidden > 0 || isExpanded {
+                            if isFilterEmpty && (hidden > 0 || isExpanded) {
                                 HStack(spacing: 6) {
                                     Text(isExpanded ? "Show less" : "Show more")
                                         .font(.caption.weight(.medium))
@@ -204,9 +344,34 @@ struct SidebarView: View {
                 } header: {
                     Label("Projects", systemImage: "folder")
                 }
+
+                if !settledSessions.isEmpty {
+                    Section {
+                        if settledSessionsExpanded || !isFilterEmpty {
+                            ForEach(settledSessions) { session in
+                                sessionRow(session, showsProject: true)
+                            }
+                            if isFilterEmpty {
+                                Button("Hide settled sessions") {
+                                    settledSessionsExpanded = false
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Button("Show \(settledSessions.count) settled \(settledSessions.count == 1 ? "session" : "sessions")") {
+                                settledSessionsExpanded = true
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Label("Settled", systemImage: "checkmark.circle")
+                    }
+                }
             }
             .listStyle(.sidebar)
-            .searchable(text: $filter, prompt: "Filter projects")
+            .searchable(text: $filter, prompt: "Search projects and sessions")
 
             Divider()
 
@@ -226,11 +391,15 @@ struct SidebarView: View {
                     Button(action: onOpenUpdates) {
                         Text(updateButtonTitle)
                             .font(.caption.weight(.semibold))
+                            .foregroundStyle(SidebarUpdateButtonAppearance.foreground)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
+                            .background(
+                                SidebarUpdateButtonAppearance.background,
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.blue)
+                    .buttonStyle(.plain)
                     .controlSize(.small)
                     .accessibilityLabel(updateButtonAccessibilityLabel)
                     .help(updateButtonAccessibilityLabel)
@@ -270,13 +439,14 @@ struct SidebarView: View {
         onSessionDisclosureChanged()
     }
 
-    private func sessionRow(_ session: SidebarSession) -> some View {
+    private func sessionRow(_ session: SidebarSession, showsProject: Bool = false) -> some View {
         SessionSidebarRow(
             session: session,
             isSelected: selectedSessionID == session.id,
+            projectName: showsProject ? workspaceName(for: session.workspaceID) : nil,
             onSelect: { onSelectSession(session.id) }
         )
-        .listRowInsets(EdgeInsets(top: 2, leading: 18, bottom: 2, trailing: 10))
+        .listRowInsets(EdgeInsets(top: 2, leading: showsProject ? 8 : 18, bottom: 2, trailing: 10))
         .listRowBackground(Color.clear)
         .contextMenu {
             Button("Rename…") {
@@ -287,6 +457,11 @@ struct SidebarView: View {
                 Button("Unpin Session") { onUnpinSession(session.id) }
             } else {
                 Button("Pin Session") { onPinSession(session.id) }
+            }
+            if settledSessionIDs.contains(session.id) {
+                Button("Return to Active") { onUnsettleSession(session.id) }
+            } else if SidebarPresentation.canSettle(session.status) {
+                Button("Settle Session") { onSettleSession(session.id) }
             }
             if session.status == .finishedUnread {
                 Button("Mark as Read") { onMarkSessionRead(session.id) }
@@ -400,6 +575,7 @@ struct SidebarView: View {
 private struct SessionSidebarRow: View {
     let session: SidebarSession
     let isSelected: Bool
+    var projectName: String?
     var onSelect: () -> Void
     @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
@@ -420,16 +596,26 @@ private struct SessionSidebarRow: View {
                         .foregroundStyle(.orange)
                         .accessibilityLabel("Pinned")
                 }
-                Text(PrivacyMode.redactLabel(session.title, placeholder: "Session", enabled: privacyMode))
-                    .font(.callout.weight(isSelected ? .semibold : .regular))
-                    .lineLimit(1)
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                if !session.roleName.isEmpty {
-                    Text(session.roleName)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .accessibilityLabel("Role \(session.roleName)")
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text(PrivacyMode.redactLabel(session.title, placeholder: "Session", enabled: privacyMode))
+                            .font(.callout.weight(isSelected ? .semibold : .regular))
+                            .lineLimit(1)
+                            .foregroundStyle(isSelected ? .primary : .secondary)
+                        if !session.roleName.isEmpty {
+                            Text(session.roleName)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .accessibilityLabel("Role \(session.roleName)")
+                        }
+                    }
+                    if let projectName {
+                        Text(PrivacyMode.redactLabel(projectName, placeholder: "Project", enabled: privacyMode))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
                 }
                 if session.isWorktree {
                     Text("WT")
@@ -456,29 +642,33 @@ private struct SessionSidebarRow: View {
 
     @ViewBuilder
     private var statusBadge: some View {
+        TimelineView(.periodic(from: .now, by: session.status == .working ? 1 : 60)) { context in
+            if let label = SidebarPresentation.statusLabel(
+                for: session.status,
+                workingSince: session.workingSince,
+                now: context.date
+            ) {
+                HStack(spacing: 3) {
+                    Image(systemName: session.status.symbolName)
+                        .font(.system(size: 8, weight: .semibold))
+                    Text(label)
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(statusColor)
+                .accessibilityLabel(label)
+                .help(label)
+            }
+        }
+    }
+
+    private var statusColor: Color {
         switch session.status {
-        case .idle:
-            EmptyView()
-        case .working:
-            Image(systemName: session.status.symbolName)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.blue)
-                .accessibilityLabel(session.status.accessibilityLabel)
-        case .needsInput:
-            Image(systemName: session.status.symbolName)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.orange)
-                .accessibilityLabel(session.status.accessibilityLabel)
-        case .finishedUnread:
-            Image(systemName: session.status.symbolName)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.green)
-                .accessibilityLabel(session.status.accessibilityLabel)
-        case .error:
-            Image(systemName: session.status.symbolName)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.red)
-                .accessibilityLabel(session.status.accessibilityLabel)
+        case .idle: .secondary
+        case .working: .blue
+        case .needsInput: .orange
+        case .finishedUnread: .green
+        case .error: .red
         }
     }
 }

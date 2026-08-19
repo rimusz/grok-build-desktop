@@ -49,8 +49,8 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 - Streaming agent sessions for `grok agent stdio` with Markdown (headings, tables, fenced code, and grok CLI–style colors), thinking blocks, CLI-style working lines (`Read 1 skill, Listed 1 dir  [hooks: 5]` — search patterns and Computer Use calls stay as Searched / Computer Use, not raw grep), live tool cards, permission prompts, plan/question cards, and diff review. The agent shell runs in-app via ACP `terminal/*` (create / output / wait / kill / release). Protocol telemetry is not shown as assistant text.
 - Multi-tab sessions with lazy restore, resumable grok sessions, **Sessions History** (clock — resume/delete archived grok sessions), and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
-- **Session status badges** on the sidebar — working, needs-input, finished-unread, or error — cleared when you focus the session, so parallel tabs show which one needs you.
-- **Session context menu** — pin a session to the top of its project group, mark unread/read, duplicate, clear the transcript, or close. Right-click a message to **Rewind to Here** (chat-only truncate; does not restore files).
+- **Visible session status** on the sidebar — Working with elapsed time, Needs input, Completed, or Error — cleared when you focus the session, so parallel tabs show which one needs you.
+- **Session context menu** — pin a session to the global Pinned section, settle finished work into a restorable shelf, mark unread/read, duplicate, clear the transcript, or close. Right-click a message to **Rewind to Here** (chat-only truncate; does not restore files).
 - **Steer mid-turn** — send a prompt while grok is working to inject it into the running turn instead of queueing (grok never cancels the turn). Turn it on for every send with **Settings → App → Steer by default**, or pick **Steer into current turn** from the queue menu.
 - **Sound on finish** — optionally chime when a turn ends and GrokBuild is not focused (**Settings → App**).
 - **Privacy Mode** — redact project paths, project names, and session titles in the UI for screenshots (**Settings → App**). Stored data is unchanged.
@@ -60,7 +60,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ### Project Workflow
 
-- Persistent project sidebar: pinned projects, pinned sessions, recent sessions, rename/close, and **Add Project**. Session titles skip injected prompt dumps (`<user_info>` / OS banners) and use the next real user line. Project folder path is a tooltip on the project name (hover), not a truncated second line.
+- Persistent project sidebar with global project/session search, pinned projects, a global Pinned session section, recent sessions, a collapsible Settled shelf, rename/close, and **Add Project**. Session titles skip injected prompt dumps (`<user_info>` / OS banners) and use the next real user line. Project folder path is a tooltip on the project name (hover), not a truncated second line.
 - Per-tab **model** and per-project **reasoning effort**.
 - Git branches and worktrees from the **selected** sidebar project’s branch chip (or **Branches & Worktrees…** on the project menu); **New Worktree Session…** on the project menu; **WT** badge on linked worktrees. The session dashboard **Needs review** group lists tabs with uncommitted changes; **Preview** opens the diff pane to apply, commit, or open a PR.
 - **Open in** Finder, Cursor, VS Code, Terminal, iTerm, or Zed.
