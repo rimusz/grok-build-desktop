@@ -642,23 +642,32 @@ private struct SessionSidebarRow: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        TimelineView(.periodic(from: .now, by: session.status == .working ? 1 : 60)) { context in
-            if let label = SidebarPresentation.statusLabel(
-                for: session.status,
-                workingSince: session.workingSince,
-                now: context.date
-            ) {
-                HStack(spacing: 3) {
-                    Image(systemName: session.status.symbolName)
-                        .font(.system(size: 8, weight: .semibold))
-                    Text(label)
-                        .font(.caption2.weight(.medium))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(statusColor)
-                .accessibilityLabel(label)
-                .help(label)
+        if session.status == .working {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                statusBadgeLabel(now: context.date)
             }
+        } else {
+            statusBadgeLabel(now: Date())
+        }
+    }
+
+    @ViewBuilder
+    private func statusBadgeLabel(now: Date) -> some View {
+        if let label = SidebarPresentation.statusLabel(
+            for: session.status,
+            workingSince: session.workingSince,
+            now: now
+        ) {
+            HStack(spacing: 3) {
+                Image(systemName: session.status.symbolName)
+                    .font(.system(size: 8, weight: .semibold))
+                Text(label)
+                    .font(.caption2.weight(.medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(statusColor)
+            .accessibilityLabel(label)
+            .help(label)
         }
     }
 

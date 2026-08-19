@@ -762,8 +762,11 @@ struct ContentView: View {
             selectedByWorkspace[selectedSession.workspace.id] = selectedSessionID
         }
 
-        let pinnedSessionIDs = sessionLayout.pinnedSessionIDs.filter { recordIDs.contains($0) }
-        let settledSessionIDs = sessionLayout.settledSessionIDs.intersection(recordIDs)
+        let sessionShelves = SessionLayoutStore.normalizedSessionShelves(
+            pinnedSessionIDs: sessionLayout.pinnedSessionIDs,
+            settledSessionIDs: sessionLayout.settledSessionIDs,
+            validSessionIDs: recordIDs
+        )
         sessionLayout = SessionLayoutSnapshot(
             records: records,
             sessionOrderByWorkspace: order,
@@ -772,8 +775,8 @@ struct ContentView: View {
             selectedSessionIDByWorkspace: selectedByWorkspace,
             expandedSessionWorkspaceIDs: expandedSessionWorkspaceIDs,
             hiddenSessionWorkspaceIDs: hiddenSessionWorkspaceIDs,
-            pinnedSessionIDs: pinnedSessionIDs,
-            settledSessionIDs: settledSessionIDs
+            pinnedSessionIDs: sessionShelves.pinned,
+            settledSessionIDs: sessionShelves.settled
         )
         SessionLayoutStore.saveSessions(sessionLayout)
     }

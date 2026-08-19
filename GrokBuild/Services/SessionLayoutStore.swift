@@ -172,6 +172,23 @@ enum SessionLayoutStore {
     private static let sessionKey = "GrokBuild.sessionLayout.v2"
     private static let workspaceLayoutKey = "GrokBuild.workspaceLayout.v1"
 
+    static func normalizedSessionShelves(
+        pinnedSessionIDs: [UUID],
+        settledSessionIDs: Set<UUID>,
+        validSessionIDs: Set<UUID>
+    ) -> (pinned: [UUID], settled: Set<UUID>) {
+        var seenPinnedIDs: Set<UUID> = []
+        let pinned = Array(
+            pinnedSessionIDs
+                .filter { validSessionIDs.contains($0) && seenPinnedIDs.insert($0).inserted }
+                .prefix(maxPinnedSessions)
+        )
+        let settled = settledSessionIDs
+            .intersection(validSessionIDs)
+            .subtracting(pinned)
+        return (pinned, settled)
+    }
+
     static func loadSessions() -> SessionLayoutSnapshot {
         guard let data = UserDefaults.standard.data(forKey: sessionKey),
               let decoded = try? JSONDecoder().decode(SessionLayoutSnapshot.self, from: data) else {

@@ -171,6 +171,21 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(loaded.settledSessionIDs, snapshot.settledSessionIDs)
     }
 
+    func testSessionShelvesDropInvalidDuplicatesOverlapAndExcessPins() {
+        let sessionIDs = (0..<22).map { _ in UUID() }
+        let validSessionIDs = Set(sessionIDs.prefix(21))
+        let shelves = SessionLayoutStore.normalizedSessionShelves(
+            pinnedSessionIDs: [sessionIDs[0], sessionIDs[0]]
+                + Array(sessionIDs[1...20])
+                + [sessionIDs[21]],
+            settledSessionIDs: [sessionIDs[0], sessionIDs[20], sessionIDs[21]],
+            validSessionIDs: validSessionIDs
+        )
+
+        XCTAssertEqual(shelves.pinned, Array(sessionIDs.prefix(SessionLayoutStore.maxPinnedSessions)))
+        XCTAssertEqual(shelves.settled, [sessionIDs[20]])
+    }
+
     func testSessionLayoutSnapshotDecodesWithoutPerWorkspaceSelection() throws {
         let workspaceID = UUID()
         let sessionID = UUID()
