@@ -10,6 +10,9 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
     /// Per-tab session-agent selection id (see `GrokAgentProfiles`). `nil` means the tab has no
     /// explicit override and follows the global default (`grokbuild.selectedAgent`).
     var agent: String?
+    /// Optional Agent binding (`SpecialistAgent.id`). Survives restore; cleared when
+    /// the Agent is deleted or the composer pill picks a role that does not map to one.
+    var specialistAgentID: UUID?
     var lastAccessed: Date
 
     init(
@@ -19,6 +22,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         title: String? = nil,
         model: String? = nil,
         agent: String? = nil,
+        specialistAgentID: UUID? = nil,
         lastAccessed: Date
     ) {
         self.id = id
@@ -27,6 +31,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         self.title = title
         self.model = model
         self.agent = agent
+        self.specialistAgentID = specialistAgentID
         self.lastAccessed = lastAccessed
     }
 
@@ -38,6 +43,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         title = try container.decodeIfPresent(String.self, forKey: .title)
         model = try container.decodeIfPresent(String.self, forKey: .model)
         agent = try container.decodeIfPresent(String.self, forKey: .agent)
+        specialistAgentID = try container.decodeIfPresent(UUID.self, forKey: .specialistAgentID)
         lastAccessed = try container.decode(Date.self, forKey: .lastAccessed)
     }
 
@@ -48,6 +54,7 @@ struct SavedSessionRecord: Codable, Identifiable, Hashable {
         case title
         case model
         case agent
+        case specialistAgentID
         case lastAccessed
     }
 }

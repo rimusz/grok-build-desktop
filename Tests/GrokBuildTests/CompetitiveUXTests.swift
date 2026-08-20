@@ -8,6 +8,11 @@ final class CompetitiveUXTests: XCTestCase {
 
     // MARK: - Session status
 
+    func testSidebarSectionAddActionsUseConsistentAccessibleCopy() {
+        XCTAssertEqual(SidebarSectionActions.newAgent, "New Agent")
+        XCTAssertEqual(SidebarSectionActions.addProject, "Add Project")
+    }
+
     func testStatusPriorityNeedsInputWinsOverWorking() {
         let status = SessionStatusResolver.resolve(
             SessionStatusInputs(isStreaming: true, isAwaitingUser: true)

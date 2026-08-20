@@ -1,6 +1,6 @@
 ---
-description: grok CLI integration — process lifecycle, commands, updates, auth, custom models / Cursor bridge
-globs: GrokBuild/Services/{GrokProcess,AcpTerminalHost,GrokCLIService,ChatStore,UpdateChecker,CustomModelSettings,CursorBridge,CursorBridgeRuntime,CursorBridgeAPIKey,DoctorReport}.swift,GrokBuild/Resources/CursorBridge/**
+description: grok CLI integration — process lifecycle, commands, updates, auth, session agents / roster binding, custom models / Cursor bridge
+globs: GrokBuild/Services/{GrokProcess,AcpTerminalHost,GrokCLIService,ChatStore,SpecialistAgentStore,SpecialistAgentRoster,UpdateChecker,CustomModelSettings,CursorBridge,CursorBridgeRuntime,CursorBridgeAPIKey,DoctorReport}.swift,GrokBuild/Resources/CursorBridge/**
 alwaysApply: false
 ---
 
@@ -11,6 +11,7 @@ alwaysApply: false
 - `GrokProcess` — spawns `grok agent … stdio`, parses ACP (including last-turn `TurnTokenUsage` from `session/prompt` `_meta` and `_x.ai/session_notification`, plus `hook_execution` on `session/update` and `_x.ai/session/update`), hosts `terminal/*` via `AcpTerminalHost`, posts `.grokStatusChanged`.
 - `GrokCLIService` — one-shot CLI commands (`run`, session list, `--version`, `formatVersionOutput`).
 - `ChatStore` — bridges UI to `GrokProcess`, session resume IDs, permission settings, `lastTurnUsage`.
+- `SpecialistAgentStore` / `SpecialistAgentRoster` — GrokBuild sidebar Agent identities in Application Support `agents.v1.json`; optional per-tab binding is `SavedSessionRecord.specialistAgentID`. Linked roles sync through `SubagentRoleStore`; per-tab `--agent` remains owned by `ChatStore`.
 - `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
 - `CustomModelStore` / `ProviderStore` — OpenAI-compatible models/providers in `~/.grok/config.toml` (Settings → Models). Display names: `ProviderModelNaming` (Provider + model). Settings lists: `CustomModelListOrdering` (A–Z by Provider + model). Custom-provider editor: `CustomProviderExample` (Spark dummy-key LAN example).
 - `CursorBridgeRuntime` + `CursorBridge` + `CursorBridgeAPIKey` — managed Cursor OpenAI sidecar on `127.0.0.1:18787` (bundled Node/`@cursor/sdk`). Real key is **not** in config.toml (`api_key = "local"`); file under Application Support `Secrets/cursor-api-key`. SDK auth via env `CURSOR_API_KEY` and `cursor-bridge-auth.mjs` (`resolveCursorApiKey` — ignore grok session JWT Bearer). Requires Node ≥ 22.13.

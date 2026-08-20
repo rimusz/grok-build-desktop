@@ -1206,10 +1206,20 @@ enum SubagentRoleStore {
     /// instruction to its prompt file. Prompt files for removed roles are deleted only when
     /// the role's `prompt_file` in config.toml pointed to the GrokBuild-managed path.
     static func save(_ roles: [SubagentRole]) throws {
+        try save(roles, configURL: configURL, promptsDirectory: promptsDirectory)
+    }
+
+    /// Testable save that writes `config.toml` + prompt files at injected paths.
+    static func save(
+        _ roles: [SubagentRole],
+        configURL: URL,
+        promptsDirectory: URL,
+        relativePromptBaseURL: URL = URL(fileURLWithPath: NSHomeDirectory())
+    ) throws {
         let existing = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
         // Capture prompt_file paths before overwriting, so we can check which files are safe to delete.
         let previousPromptFiles = parsePromptFilePaths(existing)
-        let updated = rewrite(existing, roles: roles)
+        let updated = rewrite(existing, roles: roles, promptsDirectory: promptsDirectory)
 
         try FileManager.default.createDirectory(
             at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1217,16 +1227,21 @@ enum SubagentRoleStore {
             at: promptsDirectory, withIntermediateDirectories: true)
 
         for role in roles {
-            try role.instruction.write(to: promptURL(for: role.name), atomically: true, encoding: .utf8)
+            try role.instruction.write(
+                to: promptsDirectory.appendingPathComponent("\(role.name).md"),
+                atomically: true,
+                encoding: .utf8
+            )
         }
 
         // Remove prompt files only for roles that no longer exist and whose prompt_file
         // resolved to the GrokBuild-managed path (to avoid deleting user-maintained files).
         let keptNames = Set(roles.map(\.name))
-        let homeURL = URL(fileURLWithPath: NSHomeDirectory())
         for (name, rawPath) in previousPromptFiles where !keptNames.contains(name) {
-            let managedURL = promptURL(for: name).standardized
-            let resolvedURL = URL(fileURLWithPath: resolvePath(rawPath, relativeTo: homeURL)).standardized
+            let managedURL = promptsDirectory.appendingPathComponent("\(name).md").standardized
+            let resolvedURL = URL(
+                fileURLWithPath: resolvePath(rawPath, relativeTo: relativePromptBaseURL)
+            ).standardized
             if resolvedURL == managedURL {
                 try? FileManager.default.removeItem(at: managedURL)
             }
@@ -1260,7 +1275,11 @@ enum SubagentRoleStore {
 
     /// Drops all existing `[subagents.roles.*]` tables, then appends fresh ones, keeping every
     /// other section intact.
-    static func rewrite(_ contents: String, roles: [SubagentRole]) -> String {
+    static func rewrite(
+        _ contents: String,
+        roles: [SubagentRole],
+        promptsDirectory: URL = promptsDirectory
+    ) -> String {
         var output: [String] = []
         var skipping = false
 
@@ -1296,7 +1315,7 @@ enum SubagentRoleStore {
                       !Self.managedRoleFields.contains(key) else { continue }
                 result += "\(key) = \(rawValue)\n"
             }
-            result += "prompt_file = \(quote(promptURL(for: role.name).path))\n"
+            result += "prompt_file = \(quote(promptsDirectory.appendingPathComponent("\(role.name).md").path))\n"
         }
 
         if !result.hasSuffix("\n") { result += "\n" }

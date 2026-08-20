@@ -234,6 +234,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowMenu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.zoom(_:)), keyEquivalent: ""))
         NSApp.windowsMenu = windowMenu
 
+        let helpMenu = NSMenu(title: "Help")
+        let helpItem = NSMenuItem()
+        helpItem.submenu = helpMenu
+        mainMenu.addItem(helpItem)
+        let grokBuildHelp = NSMenuItem(
+            title: HelpMenuCopy.help,
+            action: #selector(showHelp),
+            keyEquivalent: "?"
+        )
+        grokBuildHelp.target = self
+        helpMenu.addItem(grokBuildHelp)
+        helpMenu.addItem(.separator())
+        let gettingStarted = NSMenuItem(
+            title: HelpMenuCopy.gettingStarted,
+            action: #selector(showGettingStarted),
+            keyEquivalent: ""
+        )
+        gettingStarted.target = self
+        helpMenu.addItem(gettingStarted)
+        let settingsGuide = NSMenuItem(
+            title: HelpMenuCopy.settingsGuide,
+            action: #selector(showSettingsGuide),
+            keyEquivalent: ""
+        )
+        settingsGuide.target = self
+        helpMenu.addItem(settingsGuide)
+        let agentsHelp = NSMenuItem(
+            title: HelpMenuCopy.agentsRolesAndSubagents,
+            action: #selector(showAgentsHelp),
+            keyEquivalent: ""
+        )
+        agentsHelp.target = self
+        helpMenu.addItem(agentsHelp)
+        NSApp.helpMenu = helpMenu
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -243,6 +278,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func showAbout() {
         AboutPanel.show()
+    }
+
+    @objc private func showHelp() {
+        Task { @MainActor in HelpPanel.show(topic: .overview) }
+    }
+
+    @objc private func showGettingStarted() {
+        Task { @MainActor in HelpPanel.show(topic: .gettingStarted) }
+    }
+
+    @objc private func showSettingsGuide() {
+        Task { @MainActor in HelpPanel.show(topic: .settings) }
+    }
+
+    @objc private func showAgentsHelp() {
+        Task { @MainActor in HelpPanel.show(topic: .agents) }
     }
 
     @objc private func openSettings() {

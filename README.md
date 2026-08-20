@@ -60,7 +60,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ### Project Workflow
 
-- Persistent project sidebar with global project/session search, pinned projects, a global Pinned session section, recent sessions, a collapsible Settled shelf, rename/close, and **Add Project**. Session titles skip injected prompt dumps (`<user_info>` / OS banners) and use the next real user line. Project folder path is a tooltip on the project name (hover), not a truncated second line.
+- Persistent sidebar with global agent/project/session search, pinned projects, a global Pinned session section, recent sessions, a collapsible Settled shelf, rename/close, and an **Add Project** plus in the Projects section header. Session titles skip injected prompt dumps (`<user_info>` / OS banners) and use the next real user line. Project folder path is a tooltip on the project name (hover), not a truncated second line.
 - Per-tab **model** and per-project **reasoning effort**.
 - Git branches and worktrees from the **selected** sidebar project’s branch chip (or **Branches & Worktrees…** on the project menu); **New Worktree Session…** on the project menu; **WT** badge on linked worktrees. The session dashboard **Needs review** group lists tabs with uncommitted changes; **Preview** opens the diff pane to apply, commit, or open a PR.
 - **Open in** Finder, Cursor, VS Code, Terminal, iTerm, or Zed.
@@ -84,10 +84,29 @@ On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/
 
 ### Agent Capabilities
 
-- **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the composer agent/role pill (first in the composer row, before mode and model). These choices pass through as `grok --agent` and restart the affected session.
-- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
-- **Using subagents** — keep the main agent as Default and prompt normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
+- **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the composer agent/role pill (first in the composer row, before mode and model). Its **Run this session as** menu separates discovered agents from custom roles and makes clear that choosing a role runs the whole session rather than spawning a subagent. These choices pass through as `grok --agent` and restart the affected session.
+- **Agents** — a global **Agents** section above Projects in the sidebar, with a **New Agent** plus in its header. The list defaults to **active** Agents (pinned, or with a live session in the current project); use **Show all agents** to see the rest. Add sample agents (Chief, Scout, Builder, Verifier, Operator) or create your own with a name, instructions, glyph, and color. Pin / Unpin keeps an Agent in the active list. Click an Agent to focus its live session in the current project or start a new one; bound sessions keep that identity in the session list, dashboard, and composer pill after restart. Deleting asks for confirmation, removes the roster identity, and leaves linked roles and existing sessions intact. Manage Agents from the sidebar (not Settings).
+- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`. Saving an Agent also updates that linked role prompt. Deleting a role from Settings → Agents asks for confirmation before removing its table and managed prompt file; existing sessions stay.
+- **Using subagents** — keep the main agent as Default and prompt normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Custom roles** in the session-role picker run the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
 - Inspect hooks, plugins, marketplace sources (install/enable/disable), compatibility layers (Cursor/Claude/Codex), skills, MCP servers, and session permissions from Settings.
+
+#### Why use Agents?
+
+Agents turn recurring work styles into durable, recognizable shortcuts instead of making you restate instructions for every session:
+
+- **Consistent specialization** — save instructions once for roles such as research, implementation, review, or operations.
+- **Faster project switching** — click an Agent to focus its live session in the current project or start a correctly configured one.
+- **Persistent identity** — the Agent name and glyph stay attached to its session across restore and duplication, and appear in the sidebar, dashboard, and composer.
+- **Visible activity** — quickly see which Agents are Working or Idle; pin important ones and keep the default list focused on active work.
+- **Reusable roles** — the linked role can run the whole current session or be invoked by grok as a child subagent when requested.
+
+The three concepts are intentionally separate:
+
+- **Agent** — GrokBuild’s saved identity, instructions, appearance, and session shortcut.
+- **Session role** — the `grok --agent` role used to run the entire current session.
+- **Subagent** — a child worker that grok spawns during a turn; choosing a custom role in the composer does not spawn one.
+
+Example workflow: use **Chief** to keep scope and coordinate, **Scout** to research, **Builder** to implement, and **Verifier** to independently review. They can run as separate visible sessions, or Chief can ask grok to delegate a focused task to one of their linked roles as a subagent.
 
 ### Optional Automation
 
@@ -103,6 +122,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 
 ### App Experience
 
+- Native **Help** menu with **GrokBuild Help**, **Getting Started**, **Settings Guide**, and **Agents, Roles & Subagents** guides.
 - Menu bar item plus main window with status-dot icon, quick actions, settings, update checks, and sign-in recovery.
 - In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, a blue version button next to **Settings** (for example **v0.2.9**) opens that panel. App updates are offered only for signed and notarized releases.
 - Dark-mode-first SwiftUI design with accessibility labels for interactive status controls.

@@ -648,6 +648,49 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.agent, "explore")
     }
 
+    func testSavedSessionRecordDecodesWithoutSpecialistAgentID() throws {
+        let record = SavedSessionRecord(id: UUID(), workspaceID: UUID(), lastAccessed: Date())
+        let decoded = try JSONDecoder().decode(
+            SavedSessionRecord.self,
+            from: JSONEncoder().encode(record)
+        )
+        XCTAssertNil(decoded.specialistAgentID)
+    }
+
+    func testSavedSessionRecordRoundTripsSpecialistAgentID() throws {
+        let specialistID = UUID()
+        let record = SavedSessionRecord(
+            id: UUID(),
+            workspaceID: UUID(),
+            grokSessionID: "abc",
+            title: "Scout",
+            model: "grok-build",
+            agent: "scout",
+            specialistAgentID: specialistID,
+            lastAccessed: Date()
+        )
+        let decoded = try JSONDecoder().decode(SavedSessionRecord.self, from: JSONEncoder().encode(record))
+        XCTAssertEqual(decoded.specialistAgentID, specialistID)
+        XCTAssertEqual(decoded.agent, "scout")
+    }
+
+    func testSavedSessionRecordDecodesLegacyJSONWithoutSpecialistAgentID() throws {
+        let sessionID = UUID()
+        let workspaceID = UUID()
+        let json = """
+        {
+          "id": "\(sessionID.uuidString)",
+          "workspaceID": "\(workspaceID.uuidString)",
+          "agent": "scout",
+          "lastAccessed": 0
+        }
+        """
+        let decoded = try JSONDecoder().decode(SavedSessionRecord.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.id, sessionID)
+        XCTAssertEqual(decoded.agent, "scout")
+        XCTAssertNil(decoded.specialistAgentID)
+    }
+
     @MainActor
     func testChatStoreTabFollowsGlobalDefaultAgentUntilOverridden() {
         let defaults = UserDefaults.standard
