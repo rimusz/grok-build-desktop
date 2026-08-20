@@ -195,4 +195,293 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         XCTAssertTrue(updated.contains("[subagents.roles.helper]"))
         XCTAssertFalse(updated.contains("model ="), "empty model must be omitted so the role inherits the session model")
     }
+
+    // MARK: - SpecialistAgent validation
+
+    func testSpecialistAgentValidationRequiresNameMissionGlyphAndColor() {
+        XCTAssertEqual(
+            SpecialistAgent(name: "  ", mission: "Route work", glyph: "crown").validationError,
+            "Name is required."
+        )
+        XCTAssertEqual(
+            SpecialistAgent(name: "Chief", mission: "   ", glyph: "crown").validationError,
+            "Mission is required."
+        )
+        XCTAssertEqual(
+            SpecialistAgent(name: "Chief", mission: "Route work", glyph: " ").validationError,
+            "Glyph is required."
+        )
+        XCTAssertEqual(
+            SpecialistAgent(name: "Chief", mission: "Route work", glyph: "crown", color: "blue").validationError,
+            "Color must be a hex value such as #RRGGBB."
+        )
+        XCTAssertNil(
+            SpecialistAgent(name: "Chief", mission: "Route work", glyph: "crown", color: "#5e5ce6").validationError
+        )
+    }
+
+    func testSpecialistAgentColorCanonicalizesHex() {
+        XCTAssertEqual(SpecialistAgent.canonicalizeColor("  #5e5ce6  "), "#5E5CE6")
+        XCTAssertEqual(SpecialistAgent.canonicalizeColor("aabbcc"), "#AABBCC")
+        XCTAssertEqual(SpecialistAgent.canonicalizeColor("#abc"), "#AABBCC")
+        XCTAssertNil(SpecialistAgent.canonicalizeColor("blue"))
+        XCTAssertNil(SpecialistAgent.canonicalizeColor("#GGG"))
+    }
+
+    func testSpecialistAgentRoleNameRejectsInvalidAndReservedNames() {
+        XCTAssertNotNil(
+            SpecialistAgent(name: "Scout", mission: "Research", roleName: "bad name").validationError
+        )
+        XCTAssertEqual(
+            SpecialistAgent(name: "Scout", mission: "Research", roleName: "explore").validationError,
+            "\"explore\" is reserved by a built-in subagent."
+        )
+        XCTAssertNil(
+            SpecialistAgent(name: "Scout", mission: "Research", roleName: "researcher").validationError
+        )
+    }
+
+    func testSpecialistAgentNormalizeTrimsOptionalsAndDedupesSkills() {
+        let agent = SpecialistAgent(
+            name: "  Builder  ",
+            mission: " Implement code ",
+            glyph: " hammer ",
+            color: "#abc",
+            roleName: "  ",
+            defaultModel: "  grok-build  ",
+            preferredSkills: [" /review ", "", "/review", " /design "]
+        ).normalized()
+
+        XCTAssertEqual(agent.name, "Builder")
+        XCTAssertEqual(agent.mission, "Implement code")
+        XCTAssertEqual(agent.glyph, "hammer")
+        XCTAssertEqual(agent.color, "#AABBCC")
+        XCTAssertNil(agent.roleName)
+        XCTAssertEqual(agent.defaultModel, "grok-build")
+        XCTAssertEqual(agent.preferredSkills, ["/review", "/design"])
+    }
+
+    func testSpecialistAgentCodableRoundTripPreservesAllFields() throws {
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        let sessionID = UUID()
+        let original = SpecialistAgent(
+            name: "Verifier",
+            mission: "Independent review",
+            glyph: "checkmark.shield",
+            color: "#34C759",
+            roleName: "verifier-role",
+            defaultModel: "grok-build",
+            permissionProfile: .readOnly,
+            browserEnabled: true,
+            computerUseEnabled: false,
+            preferredSkills: ["/review"],
+            createdAt: created,
+            updatedAt: created,
+            lastSessionID: sessionID
+        )
+        let data = try SpecialistAgentStore.encode([original])
+        let decoded = try SpecialistAgentStore.decode(data)
+        XCTAssertEqual(decoded, [original])
+    }
+
+    func testSpecialistAgentDecodeFillsMissingOptionalFields() throws {
+        let json = """
+        [
+          {
+            "id": "11111111-1111-1111-1111-111111111111",
+            "name": "Chief",
+            "mission": "Route work",
+            "glyph": "crown",
+            "color": "#5E5CE6",
+            "createdAt": "2023-11-14T22:13:20Z",
+            "updatedAt": "2023-11-14T22:13:20Z"
+          }
+        ]
+        """
+        let decoded = try SpecialistAgentStore.decode(Data(json.utf8))
+        let agent = try XCTUnwrap(decoded.first)
+        XCTAssertEqual(agent.name, "Chief")
+        XCTAssertNil(agent.roleName)
+        XCTAssertNil(agent.defaultModel)
+        XCTAssertEqual(agent.permissionProfile, .inherit)
+        XCTAssertFalse(agent.browserEnabled)
+        XCTAssertFalse(agent.computerUseEnabled)
+        XCTAssertEqual(agent.preferredSkills, [])
+        XCTAssertNil(agent.lastSessionID)
+    }
+
+    func testSpecialistAgentDefaultStorageURLIsVersionedApplicationSupportFile() {
+        let url = SpecialistAgentStore.defaultStorageURL
+        XCTAssertTrue(url.path.contains("Application Support/GrokBuild"))
+        XCTAssertEqual(url.lastPathComponent, "agents.v1.json")
+    }
+
+    // MARK: - SpecialistAgentStore persistence
+
+    @MainActor
+    func testSpecialistAgentStoreMissingFileLoadsEmptyRoster() {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+
+        let store = SpecialistAgentStore(storageURL: url)
+        XCTAssertTrue(store.agents.isEmpty)
+        XCTAssertNil(store.loadError)
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreCreateUpdateDeleteRoundTrip() throws {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+        var now = Date(timeIntervalSince1970: 1_700_000_000)
+        let store = SpecialistAgentStore(storageURL: url, now: { now })
+
+        let created = try store.create(SpecialistAgent(
+            name: "  Chief  ",
+            mission: " Route work ",
+            glyph: "crown",
+            color: "#5e5ce6",
+            roleName: "chief",
+            permissionProfile: .workspaceWrite
+        ))
+        XCTAssertEqual(created.name, "Chief")
+        XCTAssertEqual(created.color, "#5E5CE6")
+        XCTAssertEqual(created.createdAt, now)
+        XCTAssertEqual(created.updatedAt, now)
+        XCTAssertEqual(store.agents.count, 1)
+
+        let reloaded = SpecialistAgentStore(storageURL: url)
+        XCTAssertEqual(reloaded.agents, store.agents)
+
+        now = now.addingTimeInterval(60)
+        let updated = try store.update(SpecialistAgent(
+            id: created.id,
+            name: "Chief",
+            mission: "Keep scope tight",
+            glyph: "crown.fill",
+            color: "#5E5CE6",
+            roleName: "chief",
+            permissionProfile: .workspaceWrite,
+            createdAt: Date(timeIntervalSince1970: 0),
+            lastSessionID: UUID()
+        ))
+        XCTAssertEqual(updated.id, created.id)
+        XCTAssertEqual(updated.createdAt, created.createdAt)
+        XCTAssertEqual(updated.updatedAt, now)
+        XCTAssertEqual(updated.mission, "Keep scope tight")
+        XCTAssertEqual(updated.glyph, "crown.fill")
+        XCTAssertNotNil(updated.lastSessionID)
+
+        try store.delete(id: created.id)
+        XCTAssertTrue(store.agents.isEmpty)
+        XCTAssertTrue(SpecialistAgentStore(storageURL: url).agents.isEmpty)
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreRejectsDuplicateNames() throws {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+        let store = SpecialistAgentStore(storageURL: url)
+
+        try store.create(SpecialistAgent(name: "Builder", mission: "Implement"))
+        XCTAssertThrowsError(
+            try store.create(SpecialistAgent(name: "builder", mission: "Also implement"))
+        ) { error in
+            XCTAssertEqual(error as? SpecialistAgentStoreError, .duplicateName("builder"))
+        }
+        XCTAssertEqual(store.agents.count, 1)
+
+        let first = try XCTUnwrap(store.agents.first)
+        try store.create(SpecialistAgent(name: "Scout", mission: "Research"))
+        XCTAssertThrowsError(
+            try store.update(SpecialistAgent(id: first.id, name: "scout", mission: "Implement"))
+        ) { error in
+            XCTAssertEqual(error as? SpecialistAgentStoreError, .duplicateName("scout"))
+        }
+        XCTAssertEqual(store.agent(id: first.id)?.name, "Builder")
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreRejectsInvalidAndReservedRoleOnCreate() {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+        let store = SpecialistAgentStore(storageURL: url)
+
+        XCTAssertThrowsError(
+            try store.create(SpecialistAgent(name: "Scout", mission: "Research", roleName: "explore"))
+        ) { error in
+            XCTAssertEqual(
+                error as? SpecialistAgentStoreError,
+                .invalidAgent("\"explore\" is reserved by a built-in subagent.")
+            )
+        }
+        XCTAssertThrowsError(
+            try store.create(SpecialistAgent(name: "Scout", mission: "Research", roleName: "bad name"))
+        )
+        XCTAssertTrue(store.agents.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreMalformedJSONSetsLoadErrorWithoutRewrite() throws {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let payload = Data("{not-json".utf8)
+        try payload.write(to: url)
+
+        let store = SpecialistAgentStore(storageURL: url)
+        XCTAssertTrue(store.agents.isEmpty)
+        XCTAssertEqual(store.loadError, .loadFailed)
+        XCTAssertEqual(try Data(contentsOf: url), payload)
+
+        store.reload()
+        XCTAssertEqual(store.loadError, .loadFailed)
+        XCTAssertEqual(try Data(contentsOf: url), payload)
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreFailedWriteRollsBackInMemoryMutation() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grokbuild-agents-\(UUID().uuidString)", isDirectory: true)
+        let blockedParent = root.appendingPathComponent("blocked", isDirectory: false)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("not-a-directory".utf8).write(to: blockedParent)
+        let url = blockedParent.appendingPathComponent("agents.v1.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = SpecialistAgentStore(storageURL: url)
+        XCTAssertThrowsError(try store.create(SpecialistAgent(name: "Chief", mission: "Route"))) { error in
+            XCTAssertEqual(error as? SpecialistAgentStoreError, .persistFailed)
+        }
+        XCTAssertTrue(store.agents.isEmpty)
+    }
+
+    @MainActor
+    func testSpecialistAgentStoreUpdateAndDeleteUnknownIDFail() {
+        let url = Self.temporaryStoreURL()
+        defer { Self.removeStore(at: url) }
+        let store = SpecialistAgentStore(storageURL: url)
+
+        XCTAssertThrowsError(
+            try store.update(SpecialistAgent(name: "Ghost", mission: "Missing"))
+        ) { error in
+            XCTAssertEqual(error as? SpecialistAgentStoreError, .agentNotFound)
+        }
+        XCTAssertThrowsError(try store.delete(id: UUID())) { error in
+            XCTAssertEqual(error as? SpecialistAgentStoreError, .agentNotFound)
+        }
+    }
+
+    private static func temporaryStoreURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("grokbuild-agents-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("agents.v1.json", isDirectory: false)
+    }
+
+    private static func removeStore(at url: URL) {
+        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
 }

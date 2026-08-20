@@ -162,6 +162,7 @@ flowchart TB
         WS[WorkspaceStore]
         CS[ChatStore per session]
         SL[SessionLayoutStore]
+        SAS[SpecialistAgentStore]
     end
 
     subgraph Process["Process layer"]
@@ -483,6 +484,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `~/Library/Application Support/GrokBuild/cursor-bridge-workspace/` | Scratch cwd for the managed Cursor SDK sidecar |
 | `~/Library/Application Support/GrokBuild/Updates/` | Downloaded app update zips |
 | `~/Library/Application Support/GrokBuild/instance.pid` | Single-instance lock |
+| `~/Library/Application Support/GrokBuild/agents.v1.json` | Specialist-agent roster (`SpecialistAgentStore`) — JSON array of durable identities (name, mission, glyph, color, optional role/model, permission preset, last tab id). Not UserDefaults; not `~/.grok/` |
 
 ---
 
@@ -515,8 +517,11 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Built-in options | `GrokAgentProfiles.builtInOptions` (Default only) — shared by Settings + pill |
 | Selection → launch | `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
 | **Custom subagents (roles)** | `SettingsView` → `.agents` tab "Custom subagents" section (`SubagentRoleEditor`) → `SubagentRoleStore` writes `[subagents.roles.*]` in `~/.grok/config.toml` + prompt files |
+| **Specialist agents (roster identities)** | `SpecialistAgentStore` (`Services/SpecialistAgentStore.swift`) persists `~/Library/Application Support/GrokBuild/agents.v1.json`. Milestone 1 is store + tests only — no sidebar roster, no session launch, no `config.toml` / prompt writes |
 
 The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the composer agent/role pill, which restarts that session's grok.
+
+**Specialist agents** are a durable *identity* layer on top of sessions + roles: display name, mission, glyph, `#RRGGBB` color, optional `roleName` (CLI `--agent` / `SubagentRole.name`), optional `defaultModel`, `permissionProfile` (`.inherit` / `.readOnly` / `.workspaceWrite`), and preference-only browser / Computer Use / skill flags. `lastSessionID` is a GrokBuild tab UUID (`SavedSessionRecord.id`), not a grok session id. The store does **not** enable Browser/Computer Use, write role prompt files, or change `ChatStore` / `SessionLayoutStore` yet. Missing `agents.v1.json` is an empty roster; a malformed file sets `loadError` and is never rewritten on init.
 
 **Custom subagents (roles).** grok owns subagent orchestration (the main agent delegates to subagents that run in parallel, gated by `--no-subagents`). GrokBuild adds a thin CRUD editor for **roles** — `[subagents.roles.<name>]` tables in `~/.grok/config.toml` with `model` (empty = inherit the parent session's model) and a `prompt_file`. `SubagentRole` + `SubagentRoleStore` (`CustomModelSettings.swift`) mirror `CustomModelStore`: minimal targeted TOML edits that preserve every other section and unmanaged role keys (for example `default_capability_mode`), plus the role's instruction written to `~/.grok/prompts/<name>.md`. Relative `prompt_file` values are resolved from the user's home directory to match grok's documented `.grok/prompts/...` examples. Names matching grok's built-in subagents (`general`, `general-purpose`, `explore`, `plan`, `vision`, `verify`, `computer`) are rejected. Roles are a *separate* concept from the read-only discovered agents list (`grok inspect --json` does not report roles), but custom role names are offered under **Run as custom role** in the Settings default-agent picker and the chat agent pill menu; choosing one there runs the whole session as that role rather than spawning a child subagent. grok's `/agents` TUI manager is a pager builtin not exposed over `grok agent stdio`, so editing the config file is how GrokBuild manages them.
 
@@ -971,6 +976,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
 | **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
 | **Custom subagents (roles)** | `SubagentRole` / `SubagentRoleStore` (`CustomModelSettings.swift`), `SubagentRoleEditor` in `SettingsView`, `~/.grok/config.toml` `[subagents.roles.*]` + `~/.grok/prompts/` |
+| **Specialist agents (roster)** | `SpecialistAgent` / `SpecialistAgentStore` (`SpecialistAgentStore.swift`) → `~/Library/Application Support/GrokBuild/agents.v1.json` |
 | **Scheduled tasks** | `ScheduledTaskStore.swift`, `ChatStore.scheduledTasks` + refresh/create/cancel, `ChatView.tasksStatusPill`, `AcpEvent.schedulerActivity` |
 | **Background tasks** | `BackgroundTaskStore.swift`, `ChatStore.backgroundActivities`, `AcpEvent.backgroundActivity` |
 | **Rhai workflows** | `WorkflowsConfigStore`, `WorkflowRunStore`, `SavedWorkflowStore`, `ChatView.workflowsStatusPill`, `.workflowsConfigChanged` |
@@ -1017,7 +1023,7 @@ make test    # Tests/GrokBuildTests/
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, MCP script tool names (`browser_tabs` / snapshot), settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
-| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission) |
+| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission); `SpecialistAgent` validation/normalize/Codable + `SpecialistAgentStore` Application Support CRUD (unique names, reserved role names, malformed JSON, failed-write rollback) |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
 | `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |
 | `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions, Accessibility re-prompt after resign |
