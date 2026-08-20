@@ -48,6 +48,8 @@ struct SessionDashboardEntry: Identifiable, Hashable, Sendable {
     let title: String
     let workspaceName: String
     let roleName: String
+    var specialistName: String = ""
+    var specialistGlyph: String = ""
     let group: Group
     let modelName: String
     let pendingCount: Int
@@ -221,7 +223,14 @@ struct SessionDashboardPanel: View {
                         .lineLimit(1)
                     HStack(spacing: 6) {
                         chip(project, systemImage: "folder")
-                        chip(DashboardTitle.compactRole(entry.roleName), systemImage: "person")
+                        if !entry.specialistName.isEmpty {
+                            chip(
+                                entry.specialistName,
+                                systemImage: entry.specialistGlyph.isEmpty ? "person" : entry.specialistGlyph
+                            )
+                        } else {
+                            chip(DashboardTitle.compactRole(entry.roleName), systemImage: "person")
+                        }
                         if entry.isWorktree {
                             chip("Worktree", systemImage: "square.on.square")
                         }

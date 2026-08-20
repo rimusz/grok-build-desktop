@@ -14,6 +14,10 @@ struct SidebarSession: Identifiable, Hashable {
     var isWorktree: Bool = false
     /// Bound session agent / custom role display name (empty to hide).
     var roleName: String = ""
+    /// Specialist roster display name when this tab is bound (empty to hide).
+    var specialistName: String = ""
+    /// SF Symbol for the specialist badge (empty when unbound).
+    var specialistGlyph: String = ""
     /// Start of the current turn, used for the visible Working duration.
     var workingSince: Date?
 }
@@ -32,7 +36,7 @@ enum SidebarPresentation {
     ) -> Bool {
         matches(
             query,
-            values: [workspaceName] + sessions.flatMap { [$0.title, $0.roleName] }
+            values: [workspaceName] + sessions.flatMap { [$0.title, $0.roleName, $0.specialistName] }
         )
     }
 
@@ -120,6 +124,18 @@ struct SidebarView: View {
     var updateButtonTitle: String = "Update"
     var updateButtonAccessibilityLabel: String = "Updates available"
     var onOpenUpdates: () -> Void = {}
+    var specialistAgents: [SpecialistAgent] = []
+    var agentWorkingIDs: Set<UUID> = []
+    var selectedSpecialistAgentID: UUID?
+    var onSelectSpecialistAgent: (SpecialistAgent) -> Void = { _ in }
+    var onStartSpecialistAgentSession: (SpecialistAgent) -> Void = { _ in }
+    var onNewSpecialistAgent: () -> Void = {}
+    var onEditSpecialistAgent: (SpecialistAgent) -> Void = { _ in }
+    var onDuplicateSpecialistAgent: (SpecialistAgent) -> Void = { _ in }
+    var onDeleteSpecialistAgent: (SpecialistAgent) -> Void = { _ in }
+    var onInstallStarterCrew: () -> Void = {}
+    var openableLastSessionAgentIDs: Set<UUID> = []
+    var onOpenLastSpecialistSession: (SpecialistAgent) -> Void = { _ in }
 
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
@@ -147,6 +163,11 @@ struct SidebarView: View {
         filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var displayedAgents: [SpecialistAgent] {
+        guard !isFilterEmpty else { return specialistAgents }
+        return specialistAgents.filter { SpecialistAgentRoster.matchesFilter(filter, agent: $0) }
+    }
+
     private func activeSessions(for workspaceID: Workspace.ID) -> [SidebarSession] {
         sessions(for: workspaceID).filter {
             !$0.isPinned && !settledSessionIDs.contains($0.id)
@@ -168,7 +189,7 @@ struct SidebarView: View {
             return active
         }
         return active.filter {
-            SidebarPresentation.matches(filter, values: [$0.title, $0.roleName])
+            SidebarPresentation.matches(filter, values: [$0.title, $0.roleName, $0.specialistName])
         }
     }
 
@@ -176,7 +197,7 @@ struct SidebarView: View {
         sessions.filter(\.isPinned).filter { session in
             SidebarPresentation.matches(
                 filter,
-                values: [session.title, session.roleName, workspaceName(for: session.workspaceID)]
+                values: [session.title, session.roleName, session.specialistName, workspaceName(for: session.workspaceID)]
             )
         }.sorted { left, right in
             let leftIndex = pinnedSessionIDs.firstIndex(of: left.id) ?? .max
@@ -189,7 +210,7 @@ struct SidebarView: View {
         sessions.filter { settledSessionIDs.contains($0.id) }.filter { session in
             SidebarPresentation.matches(
                 filter,
-                values: [session.title, session.roleName, workspaceName(for: session.workspaceID)]
+                values: [session.title, session.roleName, session.specialistName, workspaceName(for: session.workspaceID)]
             )
         }
     }
@@ -230,6 +251,41 @@ struct SidebarView: View {
             .padding(.bottom, 6)
 
             List {
+                Section {
+                    if specialistAgents.isEmpty && isFilterEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No agents yet.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Add sample agents", action: onInstallStarterCrew)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .accessibilityLabel("Add sample agents")
+                            Button("New Agent", action: onNewSpecialistAgent)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel("New Agent")
+                        }
+                        .padding(.vertical, 4)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
+                        .listRowBackground(Color.clear)
+                    } else {
+                        ForEach(displayedAgents) { agent in
+                            specialistAgentRow(agent)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Label("Agents", systemImage: "person.2.fill")
+                        Spacer()
+                        Button(action: onNewSpecialistAgent) {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("New Agent")
+                    }
+                }
+
                 if !pinnedSessions.isEmpty {
                     Section {
                         ForEach(pinnedSessions) { session in
@@ -371,7 +427,7 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
-            .searchable(text: $filter, prompt: "Search projects and sessions")
+            .searchable(text: $filter, prompt: "Search agents, projects, and sessions")
 
             Divider()
 
@@ -437,6 +493,30 @@ struct SidebarView: View {
             hiddenSessionWorkspaceIDs.insert(workspaceID)
         }
         onSessionDisclosureChanged()
+    }
+
+    private func specialistAgentRow(_ agent: SpecialistAgent) -> some View {
+        let isWorking = agentWorkingIDs.contains(agent.id)
+        return AgentSidebarRow(
+            agent: agent,
+            isSelected: selectedSpecialistAgentID == agent.id,
+            isWorking: isWorking,
+            onSelect: { onSelectSpecialistAgent(agent) }
+        )
+        .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+        .listRowBackground(Color.clear)
+        .contextMenu {
+            Button("Start session") { onStartSpecialistAgentSession(agent) }
+            if openableLastSessionAgentIDs.contains(agent.id) {
+                Button("Open last session") { onOpenLastSpecialistSession(agent) }
+            }
+            Button("Edit") { onEditSpecialistAgent(agent) }
+            Button("Duplicate") { onDuplicateSpecialistAgent(agent) }
+            Divider()
+            Button("Delete", role: .destructive) { onDeleteSpecialistAgent(agent) }
+        }
+        .accessibilityLabel("\(agent.name), \(SpecialistAgentRoster.statusLabel(isWorking: isWorking))")
+        .accessibilityHint(agent.mission)
     }
 
     private func sessionRow(_ session: SidebarSession, showsProject: Bool = false) -> some View {
@@ -572,6 +652,49 @@ struct SidebarView: View {
     }
 }
 
+private struct AgentSidebarRow: View {
+    let agent: SpecialistAgent
+    let isSelected: Bool
+    let isWorking: Bool
+    var onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 8) {
+                Image(systemName: agent.glyph)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(SpecialistAgentRoster.color(from: agent.color))
+                    .frame(width: 22, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(SpecialistAgentRoster.color(from: agent.color).opacity(0.16))
+                    )
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.name)
+                        .font(.callout.weight(isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .foregroundStyle(isSelected ? .primary : .secondary)
+                    Text(SpecialistAgentRoster.statusLabel(isWorking: isWorking))
+                        .font(.caption2)
+                        .foregroundStyle(isWorking ? Color.blue : Color.secondary.opacity(0.7))
+                        .accessibilityHidden(true)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.primary.opacity(0.10) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
+        .buttonStyle(.plain)
+        .help(agent.mission)
+    }
+}
+
 private struct SessionSidebarRow: View {
     let session: SidebarSession
     let isSelected: Bool
@@ -602,7 +725,19 @@ private struct SessionSidebarRow: View {
                             .font(.callout.weight(isSelected ? .semibold : .regular))
                             .lineLimit(1)
                             .foregroundStyle(isSelected ? .primary : .secondary)
-                        if !session.roleName.isEmpty {
+                        if !session.specialistName.isEmpty {
+                            HStack(spacing: 3) {
+                                if !session.specialistGlyph.isEmpty {
+                                    Image(systemName: session.specialistGlyph)
+                                        .font(.system(size: 8, weight: .semibold))
+                                }
+                                Text(session.specialistName)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .accessibilityLabel("Agent \(session.specialistName)")
+                        } else if !session.roleName.isEmpty {
                             Text(session.roleName)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)

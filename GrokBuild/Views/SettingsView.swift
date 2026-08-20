@@ -1762,6 +1762,11 @@ private struct AgentsSettingsPane: View {
                 }
             }
 
+            Text("Agents are managed from the sidebar Agents section. Custom roles below stay available for the composer pill and subagent spawn.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             discoveredAgentsSection
 
             sessionAgentCard
@@ -1776,6 +1781,9 @@ private struct AgentsSettingsPane: View {
             }
         }
         .task { await refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .subagentRolesChanged)) { _ in
+            roles = SubagentRoleStore.load()
+        }
     }
 
     private var discoveredAgentsSection: some View {

@@ -85,7 +85,8 @@ On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/
 ### Agent Capabilities
 
 - **Main agents** — browse agents discovered by `grok inspect --json`, choose the default agent for new sessions, or override the active tab from the composer agent/role pill (first in the composer row, before mode and model). These choices pass through as `grok --agent` and restart the affected session.
-- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`.
+- **Agents** — a global **Agents** section above Projects in the sidebar. Add sample agents (Chief, Scout, Builder, Verifier, Operator) or create your own with a name, instructions, glyph, and color. Click an Agent to focus its live session in the current project or start a new one; bound sessions keep that identity in the session list, dashboard, and composer pill after restart. Manage Agents from the sidebar (not Settings).
+- **Custom subagents (roles)** — create reusable roles with a name, optional model, and instruction. GrokBuild Desktop App writes them to `[subagents.roles.*]` in `~/.grok/config.toml` and stores instructions in `~/.grok/prompts/<name>.md`. Saving an Agent also updates that linked role prompt.
 - **Using subagents** — keep the main agent as Default and prompt normally; grok delegates to matching subagents automatically, or you can ask for one by name (for example, *"use the researcher subagent to map the auth flow"*). **Run as custom role** in the agent picker runs the whole session as that role instead of spawning a child subagent. To block spawning child subagents, use **Settings → Permissions**.
 - Inspect hooks, plugins, marketplace sources (install/enable/disable), compatibility layers (Cursor/Claude/Codex), skills, MCP servers, and session permissions from Settings.
 

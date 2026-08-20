@@ -10,6 +10,8 @@ struct ContentView: View {
         /// The grok session id to resume, known even before the process is started (lazy
         /// restore). Stays valid across LRU teardown so the session can be re-resumed on reopen.
         var grokSessionID: String?
+        /// Roster identity this tab was started from, if any. Independent of `--agent` / role.
+        var specialistAgentID: UUID? = nil
     }
 
     /// Most-recently-used session ids (front = most recent). Drives the LRU cap on live
@@ -20,6 +22,7 @@ struct ContentView: View {
     private let maxConnectedSessions = 4
 
     @State private var workspaceStore = WorkspaceStore()
+    @State private var specialistAgentStore = SpecialistAgentStore()
     @State private var placeholderStore = ChatStore()
     @State private var liveSessions: [LiveSession] = []
     @State private var selectedSessionID: UUID?
@@ -32,6 +35,11 @@ struct ContentView: View {
     @State private var showSessionDashboard = false
     @State private var showParallelSession = false
     @State private var showNewAutomation = false
+    @State private var showAgentEditor = false
+    @State private var editingSpecialistAgent: SpecialistAgent?
+    @State private var specialistAgentPendingDelete: SpecialistAgent?
+    @State private var showNeedProjectForAgent = false
+    @State private var specialistAgentError: String?
     @State private var dashboardGitByPath: [String: DashboardGitSnapshot] = [:]
     @State private var showDoctor = false
     /// Session tabs with a finished-but-unseen reply (cleared on focus). Drives the sidebar badge.
@@ -153,7 +161,28 @@ struct ContentView: View {
                     appVersion: sidebarUpdateAppVersion,
                     cliVersion: sidebarUpdateCLIVersion
                 ),
-                onOpenUpdates: { openUpdatesPanel() }
+                onOpenUpdates: { openUpdatesPanel() },
+                specialistAgents: specialistAgentStore.agents,
+                agentWorkingIDs: workingSpecialistAgentIDs,
+                selectedSpecialistAgentID: selectedSpecialistAgentID,
+                onSelectSpecialistAgent: { agent in
+                    showSettings = false
+                    activateSpecialistAgent(agent)
+                },
+                onStartSpecialistAgentSession: { agent in
+                    showSettings = false
+                    activateSpecialistAgent(agent, forceNew: true)
+                },
+                onNewSpecialistAgent: { openAgentEditor(nil) },
+                onEditSpecialistAgent: { openAgentEditor($0) },
+                onDuplicateSpecialistAgent: { duplicateSpecialistAgent($0) },
+                onDeleteSpecialistAgent: { specialistAgentPendingDelete = $0 },
+                onInstallStarterCrew: { installStarterCrew() },
+                openableLastSessionAgentIDs: openableLastSessionAgentIDs,
+                onOpenLastSpecialistSession: { agent in
+                    showSettings = false
+                    openLastSpecialistSession(agent)
+                }
             )
             .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
 
@@ -166,6 +195,7 @@ struct ContentView: View {
                 HSplitView {
                     ChatView(
                         store: activeStore,
+                        boundSpecialist: activeBoundSpecialist,
                         reviewFileCount: activeReviewDiffs.count,
                         isReviewVisible: showPreview,
                         onToggleReview: {
@@ -286,6 +316,57 @@ struct ContentView: View {
         .sheet(isPresented: $showDoctor) {
             DoctorSheet()
         }
+        .sheet(isPresented: $showAgentEditor) {
+            AgentEditorSheet(
+                agent: editingSpecialistAgent,
+                existingNames: specialistAgentStore.agents.map(\.name),
+                customRoleNames: SubagentRoleStore.load().map(\.name)
+            ) { draft in
+                saveSpecialistAgent(draft)
+            }
+        }
+        .alert("Choose a project", isPresented: $showNeedProjectForAgent) {
+            if workspaceStore.workspaces.isEmpty {
+                Button("Add Project…") { showPicker = true }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                workspaceStore.workspaces.isEmpty
+                    ? "Agents start a session in the current project. Add a project first."
+                    : "Select a project in the sidebar, then start the Agent."
+            )
+        }
+        .alert(
+            "Delete \(specialistAgentPendingDelete?.name ?? "agent")?",
+            isPresented: Binding(
+                get: { specialistAgentPendingDelete != nil },
+                set: { if !$0 { specialistAgentPendingDelete = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let agent = specialistAgentPendingDelete {
+                    deleteSpecialistAgent(agent)
+                }
+                specialistAgentPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                specialistAgentPendingDelete = nil
+            }
+        } message: {
+            Text("This removes the agent from the roster. Linked grok roles and existing sessions stay.")
+        }
+        .alert(
+            "Could not update agents",
+            isPresented: Binding(
+                get: { specialistAgentError != nil },
+                set: { if !$0 { specialistAgentError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { specialistAgentError = nil }
+        } message: {
+            Text(specialistAgentError ?? "")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openDoctorRequested)) { _ in
             showDoctor = true
         }
@@ -345,6 +426,7 @@ struct ContentView: View {
             onAutoSelectLatestDiff: autoSelectLatestDiffMessage,
             onNewSession: startNewSessionForCurrentProject,
             onPersistSessionLayout: { persistSessionLayout(saveMessages: $0) },
+            onLiveSessionAgentChanged: applySpecialistBinding(from:),
             openSettings: openSettings
         ))
     }
@@ -445,11 +527,17 @@ struct ContentView: View {
                 dirtyCount: git?.dirtyCount ?? 0,
                 scheduledCount: store.scheduledTasks.count
             ))
+            let specialist = SpecialistAgentRoster.identity(
+                for: session.specialistAgentID,
+                specialists: specialistAgentStore.agents
+            )
             return SessionDashboardEntry(
                 id: session.id,
                 title: sessionTitle(for: session),
                 workspaceName: session.workspace.displayName,
                 roleName: store.effectiveAgentDisplayName,
+                specialistName: specialist?.name ?? "",
+                specialistGlyph: specialist?.glyph ?? "",
                 group: group,
                 modelName: store.modelDisplayName(store.currentModel),
                 pendingCount: pending,
@@ -469,7 +557,14 @@ struct ContentView: View {
         let store = ChatStore()
         let title = "Fork of \(sessionTitle(for: source))"
         liveSessions.append(
-            LiveSession(id: id, store: store, workspace: source.workspace, title: title, grokSessionID: nil)
+            LiveSession(
+                id: id,
+                store: store,
+                workspace: source.workspace,
+                title: title,
+                grokSessionID: nil,
+                specialistAgentID: source.specialistAgentID
+            )
         )
         selectedSessionID = id
         selectedWorkspaceID = source.workspace.id
@@ -630,6 +725,10 @@ struct ContentView: View {
             }
             for id in orderedIDs {
                 guard let session = workspaceSessions.first(where: { $0.id == id }) else { continue }
+                let specialist = SpecialistAgentRoster.identity(
+                    for: session.specialistAgentID,
+                    specialists: specialistAgentStore.agents
+                )
                 result.append(
                     SidebarSession(
                         id: session.id,
@@ -648,12 +747,195 @@ struct ContentView: View {
                             || !session.store.effectiveAgentSelection.isEmpty
                             ? session.store.effectiveAgentDisplayName
                             : "",
+                        specialistName: specialist?.name ?? "",
+                        specialistGlyph: specialist?.glyph ?? "",
                         workingSince: session.store.turnStartedAt
                     )
                 )
             }
         }
         return result
+    }
+
+    private var rosterSessionMatches: [SpecialistAgentRoster.LiveSessionMatch] {
+        liveSessions.map { session in
+            let status = session.store.activityStatus(hasUnreadCompletion: false)
+            return SpecialistAgentRoster.LiveSessionMatch(
+                sessionID: session.id,
+                workspaceID: session.workspace.id,
+                agent: session.store.persistedAgentSelection ?? session.store.effectiveAgentSelection.nilIfEmpty,
+                isWorking: status == .working || status == .needsInput,
+                specialistAgentID: session.specialistAgentID,
+                lastAccessed: sessionLayout.records.first { $0.id == session.id }?.lastAccessed
+                    ?? .distantPast
+            )
+        }
+    }
+
+    private var workingSpecialistAgentIDs: Set<UUID> {
+        Set(specialistAgentStore.agents.compactMap { agent in
+            SpecialistAgentRoster.isWorking(
+                for: agent,
+                sessions: rosterSessionMatches,
+                currentWorkspaceID: selectedWorkspaceID
+            ) ? agent.id : nil
+        })
+    }
+
+    private var openableLastSessionAgentIDs: Set<UUID> {
+        Set(specialistAgentStore.agents.compactMap { agent in
+            SpecialistAgentRoster.lastBoundSessionID(for: agent, sessions: rosterSessionMatches) == nil
+                ? nil
+                : agent.id
+        })
+    }
+
+    private var activeBoundSpecialist: SpecialistAgent? {
+        guard let id = activeSession?.specialistAgentID else { return nil }
+        return specialistAgentStore.agent(id: id)
+    }
+
+    private var selectedSpecialistAgentID: UUID? {
+        specialistAgentStore.agents.first { agent in
+            SpecialistAgentRoster.liveBinding(
+                for: agent,
+                sessions: rosterSessionMatches,
+                currentWorkspaceID: selectedWorkspaceID
+            )?.sessionID == selectedSessionID
+        }?.id
+    }
+
+    private func openAgentEditor(_ agent: SpecialistAgent?) {
+        editingSpecialistAgent = agent
+        showAgentEditor = true
+    }
+
+    private func saveSpecialistAgent(_ draft: SpecialistAgent) {
+        do {
+            if specialistAgentStore.agent(id: draft.id) == nil {
+                _ = try specialistAgentStore.create(draft)
+            } else {
+                _ = try specialistAgentStore.update(draft)
+            }
+            try specialistAgentStore.syncLinkedRoles()
+        } catch {
+            specialistAgentError = error.localizedDescription
+        }
+    }
+
+    private func duplicateSpecialistAgent(_ agent: SpecialistAgent) {
+        let copyName = SpecialistAgentRoster.duplicateName(
+            of: agent.name,
+            existing: specialistAgentStore.agents.map(\.name)
+        )
+        let suggestedRole = SubagentRole.suggestedName(from: copyName)
+        let copy = SpecialistAgent(
+            name: copyName,
+            mission: agent.mission,
+            glyph: agent.glyph,
+            color: agent.color,
+            roleName: suggestedRole.isEmpty ? nil : suggestedRole,
+            defaultModel: agent.defaultModel,
+            permissionProfile: agent.permissionProfile,
+            browserEnabled: agent.browserEnabled,
+            computerUseEnabled: agent.computerUseEnabled,
+            preferredSkills: agent.preferredSkills
+        )
+        saveSpecialistAgent(copy)
+    }
+
+    private func deleteSpecialistAgent(_ agent: SpecialistAgent) {
+        do {
+            try specialistAgentStore.delete(id: agent.id)
+            clearSpecialistBinding(agent.id)
+        } catch {
+            specialistAgentError = error.localizedDescription
+        }
+    }
+
+    private func clearSpecialistBinding(_ agentID: UUID) {
+        var changed = false
+        for index in liveSessions.indices {
+            let cleared = SpecialistAgentRoster.clearedSpecialistID(
+                liveSessions[index].specialistAgentID,
+                deleted: agentID
+            )
+            if liveSessions[index].specialistAgentID != cleared {
+                liveSessions[index].specialistAgentID = cleared
+                changed = true
+            }
+        }
+        if changed {
+            persistSessionLayout()
+            sessionListRevision &+= 1
+        }
+    }
+
+    private func applySpecialistBinding(from store: ChatStore) {
+        guard let index = liveSessions.firstIndex(where: { $0.store === store }) else { return }
+        let selection = store.persistedAgentSelection ?? store.effectiveAgentSelection
+        let resolved = SpecialistAgentRoster.specialistID(
+            matchingAgentSelection: selection,
+            in: specialistAgentStore.agents
+        )
+        guard liveSessions[index].specialistAgentID != resolved else { return }
+        liveSessions[index].specialistAgentID = resolved
+        sessionListRevision &+= 1
+    }
+
+    private func rememberLastSession(_ agent: SpecialistAgent, sessionID: UUID) {
+        guard agent.lastSessionID != sessionID else { return }
+        var updated = agent
+        updated.lastSessionID = sessionID
+        do {
+            _ = try specialistAgentStore.update(updated)
+        } catch {
+            specialistAgentError = error.localizedDescription
+        }
+    }
+
+    private func installStarterCrew() {
+        do {
+            try specialistAgentStore.installStarterCrew()
+        } catch {
+            specialistAgentError = error.localizedDescription
+        }
+    }
+
+    private func activateSpecialistAgent(_ agent: SpecialistAgent, forceNew: Bool = false) {
+        guard let workspace = currentWorkspace else {
+            showNeedProjectForAgent = true
+            return
+        }
+        if !forceNew,
+           let binding = SpecialistAgentRoster.liveBinding(
+               for: agent,
+               sessions: rosterSessionMatches,
+               currentWorkspaceID: workspace.id
+           ) {
+            selectSession(binding.sessionID)
+            rememberLastSession(agent, sessionID: binding.sessionID)
+            return
+        }
+        Task {
+            let role = SpecialistAgentRoster.launchAgentSelection(for: agent)
+            let id = await createLiveSession(
+                for: workspace,
+                title: SpecialistAgentRoster.sessionTitle(for: agent),
+                agent: role,
+                specialistAgentID: agent.id
+            )
+            rememberLastSession(agent, sessionID: id)
+        }
+    }
+
+    private func openLastSpecialistSession(_ agent: SpecialistAgent) {
+        guard let sessionID = SpecialistAgentRoster.lastBoundSessionID(
+            for: agent,
+            sessions: rosterSessionMatches
+        ) else { return }
+        selectSession(sessionID)
+        rememberLastSession(agent, sessionID: sessionID)
     }
 
     private func visibleSessionIDs(for workspaceID: Workspace.ID) -> [UUID] {
@@ -726,6 +1008,7 @@ struct ContentView: View {
                     title: sessionTitle(for: session),
                     model: session.store.currentModel,
                     agent: session.store.persistedAgentSelection,
+                    specialistAgentID: session.specialistAgentID,
                     lastAccessed: existing?.lastAccessed ?? Date()
                 )
             )
@@ -843,13 +1126,15 @@ struct ContentView: View {
                 grokSessionID: record.grokSessionID,
                 workspace: workspace
             )
+            let boundID = record.specialistAgentID.flatMap { specialistAgentStore.agent(id: $0)?.id }
             liveSessions.append(
                 LiveSession(
                     id: record.id,
                     store: store,
                     workspace: workspace,
                     title: title,
-                    grokSessionID: record.grokSessionID
+                    grokSessionID: record.grokSessionID,
+                    specialistAgentID: boundID
                 )
             )
             restoredSessionCount += 1
@@ -1245,13 +1530,17 @@ struct ContentView: View {
     private func duplicateSession(_ id: UUID) async {
         guard let session = liveSessions.first(where: { $0.id == id }) else { return }
         let title = sessionTitle(for: session)
-        let newID = await createLiveSession(for: session.workspace)
         let copyTitle: String = {
             let base = title.trimmingCharacters(in: .whitespacesAndNewlines)
             if base.isEmpty { return "Session copy" }
             return base.hasSuffix(" (copy)") ? base : "\(base) (copy)"
         }()
-        renameSession(id: newID, to: copyTitle)
+        _ = await createLiveSession(
+            for: session.workspace,
+            title: copyTitle,
+            agent: session.store.persistedAgentSelection,
+            specialistAgentID: session.specialistAgentID
+        )
     }
 
     @discardableResult
@@ -1259,7 +1548,8 @@ struct ContentView: View {
         for workspace: Workspace,
         resumeSession: GrokSessionInfo? = nil,
         title: String? = nil,
-        agent: String? = nil
+        agent: String? = nil,
+        specialistAgentID: UUID? = nil
     ) async -> UUID {
         purgeEmptySessions(in: workspace.id)
         let id = UUID()
@@ -1271,7 +1561,14 @@ struct ContentView: View {
             }
             ?? SessionTitle.defaultTitle
         liveSessions.append(
-            LiveSession(id: id, store: store, workspace: workspace, title: resolvedTitle, grokSessionID: resumeSession?.id)
+            LiveSession(
+                id: id,
+                store: store,
+                workspace: workspace,
+                title: resolvedTitle,
+                grokSessionID: resumeSession?.id,
+                specialistAgentID: specialistAgentID
+            )
         )
         selectedSessionID = id
         selectedWorkspaceID = workspace.id
@@ -1314,7 +1611,18 @@ struct ContentView: View {
             workspace = project
         }
         let agent = spec.agent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-        let id = await createLiveSession(for: workspace, title: spec.name, agent: agent)
+        let specialistID = agent.flatMap {
+            SpecialistAgentRoster.specialistID(
+                matchingAgentSelection: $0,
+                in: specialistAgentStore.agents
+            )
+        }
+        let id = await createLiveSession(
+            for: workspace,
+            title: spec.name,
+            agent: agent,
+            specialistAgentID: specialistID
+        )
         await refreshDashboardGit()
         return id
     }
@@ -1516,6 +1824,7 @@ extension Notification.Name {
     static let liveSessionAgentChanged = Notification.Name("liveSessionAgentChanged")
     static let workspaceAgentSettingsChanged = Notification.Name("workspaceAgentSettingsChanged")
     static let subagentRolesChanged = Notification.Name("subagentRolesChanged")
+    static let specialistAgentsChanged = Notification.Name("specialistAgentsChanged")
     static let grokBuildUpdateAvailable = Notification.Name("grokBuildUpdateAvailable")
     static let grokBuildUpdateStateChanged = Notification.Name("grokBuildUpdateStateChanged")
     static let grokBuildUpdaterPhaseChanged = Notification.Name("grokBuildUpdaterPhaseChanged")
@@ -1540,6 +1849,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
     let onAutoSelectLatestDiff: () -> Void
     let onNewSession: () -> Void
     let onPersistSessionLayout: (Bool) -> Void
+    let onLiveSessionAgentChanged: (ChatStore) -> Void
     let openSettings: (SettingsTab) -> Void
 
     func body(content: Content) -> some View {
@@ -1582,7 +1892,10 @@ private struct ContentViewNotificationHandlers: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionModelChanged)) { _ in
                 onPersistSessionLayout(true)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .liveSessionAgentChanged)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .liveSessionAgentChanged)) { note in
+                if let store = note.object as? ChatStore {
+                    onLiveSessionAgentChanged(store)
+                }
                 onPersistSessionLayout(true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in

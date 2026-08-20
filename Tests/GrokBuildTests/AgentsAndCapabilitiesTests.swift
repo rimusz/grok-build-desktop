@@ -205,7 +205,7 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         )
         XCTAssertEqual(
             SpecialistAgent(name: "Chief", mission: "   ", glyph: "crown").validationError,
-            "Mission is required."
+            "Instructions are required."
         )
         XCTAssertEqual(
             SpecialistAgent(name: "Chief", mission: "Route work", glyph: " ").validationError,
@@ -475,6 +475,376 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         }
     }
 
+    // MARK: - Specialist agent role linkage + starter crew
+
+    func testRoleSyncUpsertsFromAgentAndPreservesUnmanagedRole() {
+        let existing = [
+            SubagentRole(
+                name: "researcher",
+                model: "grok-build",
+                instruction: "Keep researching.",
+                description: "Keep me",
+                extraFields: ["default_capability_mode": "\"read-only\""]
+            )
+        ]
+        let updated = SpecialistAgentRoleSync.upsertRoles(
+            from: [
+                SpecialistAgent(
+                    name: "Chief",
+                    mission: "Route work, keep scope, synthesize final answer",
+                    roleName: "chief"
+                )
+            ],
+            existing: existing
+        )
+        XCTAssertEqual(updated.count, 2)
+        let researcher = updated.first { $0.name == "researcher" }
+        XCTAssertEqual(researcher?.instruction, "Keep researching.")
+        XCTAssertEqual(researcher?.extraFields["default_capability_mode"], "\"read-only\"")
+        let chief = updated.first { $0.name == "chief" }
+        XCTAssertEqual(chief?.description, "Route work, keep scope, synthesize final answer")
+        XCTAssertTrue(chief?.instruction.contains("Instructions: Route work") == true)
+        XCTAssertTrue(chief?.instruction.contains("You are Chief.") == true)
+    }
+
+    func testRoleSyncUpdatesExistingRoleInstructionAndKeepsExtraFields() {
+        let existing = [
+            SubagentRole(
+                name: "chief",
+                model: "grok-4",
+                instruction: "Old mission.",
+                extraFields: ["default_capability_mode": "\"workspace-write\""]
+            )
+        ]
+        let updated = SpecialistAgentRoleSync.upsertRoles(
+            from: [
+                SpecialistAgent(name: "Chief", mission: "New mission", roleName: "chief")
+            ],
+            existing: existing
+        )
+        XCTAssertEqual(updated.count, 1)
+        XCTAssertEqual(updated[0].model, "grok-4", "inherit/empty defaultModel must not wipe a custom role model")
+        XCTAssertEqual(updated[0].instruction, SpecialistAgentRoleSync.promptInstruction(
+            for: SpecialistAgent(name: "Chief", mission: "New mission", roleName: "chief")
+        ))
+        XCTAssertEqual(updated[0].extraFields["default_capability_mode"], "\"workspace-write\"")
+    }
+
+    func testRoleSyncAppliesDefaultModelWhenSet() {
+        let updated = SpecialistAgentRoleSync.upsertRoles(
+            from: [
+                SpecialistAgent(
+                    name: "Builder",
+                    mission: "Implement",
+                    roleName: "builder",
+                    defaultModel: "grok-build"
+                )
+            ],
+            existing: [SubagentRole(name: "builder", model: "", instruction: "old")]
+        )
+        XCTAssertEqual(updated.first?.model, "grok-build")
+    }
+
+    func testRoleSyncSkipsReservedRoleNames() {
+        let updated = SpecialistAgentRoleSync.upsertRoles(
+            from: [SpecialistAgent(name: "Explorer", mission: "Look around", roleName: "explore")],
+            existing: []
+        )
+        XCTAssertTrue(updated.isEmpty)
+    }
+
+    func testStarterCrewTemplatesCoverTheFiveNamedAgents() {
+        XCTAssertEqual(SpecialistAgentStarterCrew.names, ["Chief", "Scout", "Builder", "Verifier", "Operator"])
+        XCTAssertEqual(SpecialistAgentStarterCrew.templates.count, 5)
+        XCTAssertTrue(SpecialistAgentStarterCrew.templates.allSatisfy { $0.validationError == nil })
+        XCTAssertEqual(SpecialistAgentStarterCrew.templates.first { $0.name == "Scout" }?.permissionProfile, .readOnly)
+        XCTAssertEqual(SpecialistAgentStarterCrew.templates.first { $0.name == "Chief" }?.permissionProfile, .workspaceWrite)
+        XCTAssertEqual(SpecialistAgentStarterCrew.templates.first { $0.name == "Operator" }?.computerUseEnabled, true)
+    }
+
+    @MainActor
+    func testInstallStarterCrewWritesAgentsAndRoleFilesWithoutClobberingTOML() throws {
+        let urls = Self.temporaryRoleHarness()
+        defer { Self.removeStore(at: urls.agents); Self.removeRoleHarness(urls) }
+
+        try FileManager.default.createDirectory(at: urls.prompts, withIntermediateDirectories: true)
+        try "Keep researching.".write(
+            to: urls.prompts.appendingPathComponent("researcher.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let existing = """
+        [models]
+        default = "grok-build"
+
+        [subagents.roles.researcher]
+        description = "Keep me"
+        model = "grok-build"
+        default_capability_mode = "read-only"
+        prompt_file = "\(urls.prompts.appendingPathComponent("researcher.md").path)"
+        """
+        try existing.write(to: urls.config, atomically: true, encoding: .utf8)
+
+        let store = SpecialistAgentStore(storageURL: urls.agents)
+        let created = try store.installStarterCrew(configURL: urls.config, promptsDirectory: urls.prompts)
+        XCTAssertEqual(created.map(\.name), SpecialistAgentStarterCrew.names)
+        XCTAssertTrue(store.hasStarterCrew)
+
+        let toml = try String(contentsOf: urls.config, encoding: .utf8)
+        XCTAssertTrue(toml.contains("[models]"))
+        XCTAssertTrue(toml.contains("default = \"grok-build\""))
+        XCTAssertTrue(toml.contains("[subagents.roles.researcher]"))
+        XCTAssertTrue(toml.contains("default_capability_mode = \"read-only\""))
+        XCTAssertTrue(toml.contains("[subagents.roles.chief]"))
+        XCTAssertTrue(toml.contains("[subagents.roles.scout]"))
+        XCTAssertTrue(toml.contains("[subagents.roles.builder]"))
+        XCTAssertTrue(toml.contains("[subagents.roles.verifier]"))
+        XCTAssertTrue(toml.contains("[subagents.roles.operator]"))
+
+        let roles = SubagentRoleStore.parse(toml)
+        XCTAssertEqual(roles.first { $0.name == "researcher" }?.instruction, "Keep researching.")
+        let chief = try XCTUnwrap(roles.first { $0.name == "chief" })
+        XCTAssertTrue(chief.instruction.contains("Instructions: Route work, keep scope, synthesize final answer"))
+        XCTAssertEqual(
+            try String(contentsOf: urls.prompts.appendingPathComponent("chief.md"), encoding: .utf8),
+            chief.instruction
+        )
+    }
+
+    @MainActor
+    func testInstallStarterCrewIsIdempotent() throws {
+        let urls = Self.temporaryRoleHarness()
+        defer { Self.removeStore(at: urls.agents); Self.removeRoleHarness(urls) }
+
+        let store = SpecialistAgentStore(storageURL: urls.agents)
+        let first = try store.installStarterCrew(configURL: urls.config, promptsDirectory: urls.prompts)
+        let second = try store.installStarterCrew(configURL: urls.config, promptsDirectory: urls.prompts)
+        XCTAssertEqual(first.count, 5)
+        XCTAssertTrue(second.isEmpty)
+        XCTAssertEqual(store.agents.count, 5)
+        XCTAssertEqual(SpecialistAgentStore(storageURL: urls.agents).agents.count, 5)
+    }
+
+    @MainActor
+    func testInstallStarterCrewRollsBackAgentsWhenRoleWriteFails() throws {
+        let urls = Self.temporaryRoleHarness()
+        defer { Self.removeStore(at: urls.agents); Self.removeRoleHarness(urls) }
+
+        try FileManager.default.createDirectory(
+            at: urls.root.appendingPathComponent("blocked-parent", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let blockedConfigParent = urls.root.appendingPathComponent("blocked-config", isDirectory: false)
+        try Data("not-a-directory".utf8).write(to: blockedConfigParent)
+        let blockedConfig = blockedConfigParent.appendingPathComponent("config.toml")
+
+        let store = SpecialistAgentStore(storageURL: urls.agents)
+        XCTAssertThrowsError(
+            try store.installStarterCrew(configURL: blockedConfig, promptsDirectory: urls.prompts)
+        )
+        XCTAssertTrue(store.agents.isEmpty)
+        XCTAssertTrue(SpecialistAgentStore(storageURL: urls.agents).agents.isEmpty)
+    }
+
+    // MARK: - Specialist agent roster matching
+
+    func testRosterSessionTitleAndLaunchSelection() {
+        let agent = SpecialistAgent(name: "  Chief  ", mission: "Route work", roleName: "chief")
+        XCTAssertEqual(SpecialistAgentRoster.sessionTitle(for: agent), "Chief")
+        XCTAssertEqual(SpecialistAgentRoster.launchAgentSelection(for: agent), "chief")
+        XCTAssertEqual(
+            SpecialistAgentRoster.launchAgentSelection(
+                for: SpecialistAgent(name: "Night Watch", mission: "Watch")
+            ),
+            "night-watch"
+        )
+    }
+
+    func testRosterLiveBindingPrefersLastSessionInCurrentProject() {
+        let last = UUID()
+        let other = UUID()
+        let workspace = UUID()
+        let agent = SpecialistAgent(name: "Chief", mission: "Route", roleName: "chief", lastSessionID: last)
+        let binding = SpecialistAgentRoster.liveBinding(
+            for: agent,
+            sessions: [
+                .init(sessionID: last, workspaceID: workspace, agent: "chief", isWorking: true),
+                .init(sessionID: other, workspaceID: workspace, agent: "chief", isWorking: false)
+            ],
+            currentWorkspaceID: workspace
+        )
+        XCTAssertEqual(binding?.sessionID, last)
+        XCTAssertEqual(binding?.isWorking, true)
+        XCTAssertNil(
+            SpecialistAgentRoster.liveBinding(
+                for: agent,
+                sessions: [
+                    .init(sessionID: last, workspaceID: UUID(), agent: "chief", isWorking: true)
+                ],
+                currentWorkspaceID: workspace
+            )
+        )
+    }
+
+    func testRosterLiveBindingFallsBackToRoleMatch() {
+        let sessionID = UUID()
+        let workspace = UUID()
+        let agent = SpecialistAgent(name: "Scout", mission: "Research", roleName: "scout")
+        let binding = SpecialistAgentRoster.liveBinding(
+            for: agent,
+            sessions: [
+                .init(sessionID: sessionID, workspaceID: workspace, agent: "scout", isWorking: false)
+            ],
+            currentWorkspaceID: workspace
+        )
+        XCTAssertEqual(binding?.sessionID, sessionID)
+        XCTAssertEqual(SpecialistAgentRoster.statusLabel(isWorking: false), "Idle")
+        XCTAssertEqual(SpecialistAgentRoster.statusLabel(isWorking: true), "Working")
+    }
+
+    func testRosterLiveBindingPrefersMostRecentlyAccessedExplicitBinding() {
+        let older = UUID()
+        let newer = UUID()
+        let workspace = UUID()
+        let agent = SpecialistAgent(name: "Scout", mission: "Research", roleName: "scout")
+        let binding = SpecialistAgentRoster.liveBinding(
+            for: agent,
+            sessions: [
+                .init(
+                    sessionID: older,
+                    workspaceID: workspace,
+                    agent: "scout",
+                    isWorking: true,
+                    specialistAgentID: agent.id,
+                    lastAccessed: Date(timeIntervalSince1970: 10)
+                ),
+                .init(
+                    sessionID: newer,
+                    workspaceID: workspace,
+                    agent: "scout",
+                    isWorking: false,
+                    specialistAgentID: agent.id,
+                    lastAccessed: Date(timeIntervalSince1970: 20)
+                )
+            ],
+            currentWorkspaceID: workspace
+        )
+        XCTAssertEqual(binding?.sessionID, newer)
+        XCTAssertEqual(binding?.isWorking, true)
+        XCTAssertTrue(
+            SpecialistAgentRoster.isWorking(
+                for: agent,
+                sessions: [
+                    .init(
+                        sessionID: older,
+                        workspaceID: workspace,
+                        agent: "scout",
+                        isWorking: true,
+                        specialistAgentID: agent.id,
+                        lastAccessed: Date(timeIntervalSince1970: 10)
+                    ),
+                    .init(
+                        sessionID: newer,
+                        workspaceID: workspace,
+                        agent: "scout",
+                        isWorking: false,
+                        specialistAgentID: agent.id,
+                        lastAccessed: Date(timeIntervalSince1970: 20)
+                    )
+                ],
+                currentWorkspaceID: workspace
+            )
+        )
+    }
+
+    func testRosterLastBoundSessionFallsBackToMostRecentExplicitBinding() {
+        let older = UUID()
+        let newer = UUID()
+        let agent = SpecialistAgent(name: "Scout", mission: "Research", roleName: "scout")
+        XCTAssertEqual(
+            SpecialistAgentRoster.lastBoundSessionID(
+                for: agent,
+                sessions: [
+                    .init(
+                        sessionID: older,
+                        workspaceID: UUID(),
+                        agent: "scout",
+                        isWorking: false,
+                        specialistAgentID: agent.id,
+                        lastAccessed: Date(timeIntervalSince1970: 1)
+                    ),
+                    .init(
+                        sessionID: newer,
+                        workspaceID: UUID(),
+                        agent: "scout",
+                        isWorking: false,
+                        specialistAgentID: agent.id,
+                        lastAccessed: Date(timeIntervalSince1970: 2)
+                    )
+                ]
+            ),
+            newer
+        )
+        var remembered = agent
+        remembered.lastSessionID = older
+        XCTAssertEqual(
+            SpecialistAgentRoster.lastBoundSessionID(
+                for: remembered,
+                sessions: [
+                    .init(sessionID: older, workspaceID: UUID(), agent: "scout", isWorking: false),
+                    .init(sessionID: newer, workspaceID: UUID(), agent: "scout", isWorking: false)
+                ]
+            ),
+            older
+        )
+    }
+
+    func testRosterSpecialistBindingFromAgentSelectionAndDelete() {
+        let scout = SpecialistAgent(name: "Scout", mission: "Research", roleName: "scout")
+        let builder = SpecialistAgent(name: "Builder", mission: "Ship", roleName: "builder")
+        XCTAssertEqual(
+            SpecialistAgentRoster.specialistID(matchingAgentSelection: "scout", in: [scout, builder]),
+            scout.id
+        )
+        XCTAssertEqual(
+            SpecialistAgentRoster.specialistID(matchingAgentSelection: "builder", in: [scout, builder]),
+            builder.id
+        )
+        XCTAssertNil(SpecialistAgentRoster.specialistID(matchingAgentSelection: "explore", in: [scout, builder]))
+        XCTAssertNil(SpecialistAgentRoster.specialistID(matchingAgentSelection: "", in: [scout, builder]))
+
+        XCTAssertEqual(
+            SpecialistAgentRoster.identity(for: scout.id, specialists: [scout, builder])?.name,
+            "Scout"
+        )
+        XCTAssertNil(SpecialistAgentRoster.identity(for: scout.id, specialists: [builder]))
+        XCTAssertNil(
+            SpecialistAgentRoster.clearedSpecialistID(scout.id, deleted: scout.id)
+        )
+        XCTAssertEqual(
+            SpecialistAgentRoster.clearedSpecialistID(builder.id, deleted: scout.id),
+            builder.id
+        )
+    }
+
+    func testRosterDuplicateNameAvoidsCollisions() {
+        XCTAssertEqual(
+            SpecialistAgentRoster.duplicateName(of: "Chief", existing: ["Chief"]),
+            "Chief (copy)"
+        )
+        XCTAssertEqual(
+            SpecialistAgentRoster.duplicateName(of: "Chief", existing: ["Chief", "Chief (copy)"]),
+            "Chief (copy) 2"
+        )
+    }
+
+    func testRosterFilterMatchesNameMissionAndRole() {
+        let agent = SpecialistAgent(name: "Scout", mission: "Research briefs", roleName: "scout")
+        XCTAssertTrue(SpecialistAgentRoster.matchesFilter("brief", agent: agent))
+        XCTAssertTrue(SpecialistAgentRoster.matchesFilter("SCOUT", agent: agent))
+        XCTAssertFalse(SpecialistAgentRoster.matchesFilter("builder", agent: agent))
+    }
+
     private static func temporaryStoreURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("grokbuild-agents-\(UUID().uuidString)", isDirectory: true)
@@ -483,5 +853,18 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
 
     private static func removeStore(at url: URL) {
         try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    }
+
+    private static func temporaryRoleHarness() -> (root: URL, agents: URL, config: URL, prompts: URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grokbuild-roles-\(UUID().uuidString)", isDirectory: true)
+        let agents = root.appendingPathComponent("agents.v1.json")
+        let config = root.appendingPathComponent("config.toml")
+        let prompts = root.appendingPathComponent("prompts", isDirectory: true)
+        return (root, agents, config, prompts)
+    }
+
+    private static func removeRoleHarness(_ urls: (root: URL, agents: URL, config: URL, prompts: URL)) {
+        try? FileManager.default.removeItem(at: urls.root)
     }
 }

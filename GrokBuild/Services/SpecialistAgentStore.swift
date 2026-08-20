@@ -19,6 +19,7 @@ enum SpecialistAgentStoreError: Error, Equatable, LocalizedError {
     case agentNotFound
     case loadFailed
     case persistFailed
+    case roleSyncFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -31,19 +32,21 @@ enum SpecialistAgentStoreError: Error, Equatable, LocalizedError {
         case .agentNotFound:
             return "Agent not found."
         case .loadFailed:
-            return "Could not read specialist agents. The file exists but is not valid JSON."
+            return "Could not read agents. The file exists but is not valid JSON."
         case .persistFailed:
-            return "Could not save specialist agents."
+            return "Could not save agents."
+        case .roleSyncFailed(let message):
+            return message
         }
     }
 }
 
 /// A durable named specialist-agent identity.
 ///
-/// GrokBuild owns the roster; the `grok` CLI still owns execution. `roleName`,
-/// `defaultModel`, `permissionProfile`, browser/Computer Use flags, and
-/// `preferredSkills` are persisted preferences — they are not written to
-/// `~/.grok/config.toml` by this store.
+/// GrokBuild owns the roster; the `grok` CLI still owns execution. Role linkage
+/// writes `[subagents.roles.*]` + prompt files through `SubagentRoleStore` when
+/// asked (`syncLinkedRoles` / `installStarterCrew`). Browser/Computer Use flags
+/// remain preference-only.
 struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
@@ -145,7 +148,7 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
     var validationError: String? {
         let agent = normalized()
         if agent.name.isEmpty { return "Name is required." }
-        if agent.mission.isEmpty { return "Mission is required." }
+        if agent.mission.isEmpty { return "Instructions are required." }
         if agent.glyph.isEmpty { return "Glyph is required." }
         if Self.canonicalizeColor(agent.color) == nil {
             return "Color must be a hex value such as #RRGGBB."
@@ -194,6 +197,115 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
             result.append(trimmed)
         }
         return result
+    }
+}
+
+/// Default named crew installed by `SpecialistAgentStore.installStarterCrew`.
+enum SpecialistAgentStarterCrew {
+    static let templates: [SpecialistAgent] = [
+        SpecialistAgent(
+            name: "Chief",
+            mission: "Route work, keep scope, synthesize final answer",
+            glyph: "crown.fill",
+            color: "#5E5CE6",
+            roleName: "chief",
+            permissionProfile: .workspaceWrite
+        ),
+        SpecialistAgent(
+            name: "Scout",
+            mission: "Research and source-backed briefs",
+            glyph: "binoculars",
+            color: "#0A84FF",
+            roleName: "scout",
+            permissionProfile: .readOnly,
+            browserEnabled: true
+        ),
+        SpecialistAgent(
+            name: "Builder",
+            mission: "Implement code, scripts, integrations",
+            glyph: "hammer.fill",
+            color: "#FF9F0A",
+            roleName: "builder",
+            permissionProfile: .workspaceWrite
+        ),
+        SpecialistAgent(
+            name: "Verifier",
+            mission: "Independent review, tests, claim checking",
+            glyph: "checkmark.shield.fill",
+            color: "#30D158",
+            roleName: "verifier",
+            permissionProfile: .readOnly
+        ),
+        SpecialistAgent(
+            name: "Operator",
+            mission: "Browser / SaaS / desktop workflows",
+            glyph: "desktopcomputer",
+            color: "#FF375F",
+            roleName: "operator",
+            permissionProfile: .workspaceWrite,
+            browserEnabled: true,
+            computerUseEnabled: true
+        )
+    ]
+
+    static var names: [String] { templates.map(\.name) }
+
+    static func missingNames(in agents: [SpecialistAgent]) -> [String] {
+        names.filter { name in
+            !agents.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        }
+    }
+}
+
+/// Maps specialist-agent identities onto existing `SubagentRole` records.
+enum SpecialistAgentRoleSync {
+    /// CLI-facing role id: explicit `roleName`, else a slug from the display name.
+    static func roleName(for agent: SpecialistAgent) -> String? {
+        let agent = agent.normalized()
+        if let roleName = agent.roleName { return roleName }
+        let suggested = SubagentRole.suggestedName(from: agent.name)
+        return suggested.isEmpty ? nil : suggested
+    }
+
+    /// Instruction written to `~/.grok/prompts/<role>.md`.
+    static func promptInstruction(for agent: SpecialistAgent) -> String {
+        let agent = agent.normalized()
+        return """
+        You are \(agent.name).
+
+        Instructions: \(agent.mission)
+        """
+    }
+
+    /// Upsert roles for the given agents. Unrelated roles and unmanaged keys stay intact.
+    static func upsertRoles(from agents: [SpecialistAgent], existing: [SubagentRole]) -> [SubagentRole] {
+        var roles = existing
+        for agent in agents {
+            guard let name = roleName(for: agent),
+                  !SubagentRole.reservedNames.contains(name.lowercased()) else {
+                continue
+            }
+            let instruction = promptInstruction(for: agent)
+            let description = agent.normalized().mission
+            let model = agent.normalized().defaultModel ?? ""
+            if let index = roles.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                var role = roles[index]
+                role.instruction = instruction
+                role.description = description
+                if !model.isEmpty {
+                    role.model = model
+                }
+                roles[index] = role
+            } else {
+                roles.append(SubagentRole(
+                    name: name,
+                    model: model,
+                    instruction: instruction,
+                    description: description
+                ))
+            }
+        }
+        return roles
     }
 }
 
@@ -285,6 +397,83 @@ final class SpecialistAgentStore {
         try persistMutating { $0.removeAll { $0.id == id } }
     }
 
+    /// True when every starter-crew display name is already on the roster.
+    var hasStarterCrew: Bool {
+        SpecialistAgentStarterCrew.missingNames(in: agents).isEmpty
+    }
+
+    /// Install any missing starter-crew agents, then create/update matching roles.
+    @discardableResult
+    func installStarterCrew(
+        configURL: URL = SubagentRoleStore.configURL,
+        promptsDirectory: URL = SubagentRoleStore.promptsDirectory
+    ) throws -> [SpecialistAgent] {
+        let previous = agents
+        let timestamp = now()
+        var created: [SpecialistAgent] = []
+        var next = agents
+        for template in SpecialistAgentStarterCrew.templates {
+            if next.contains(where: { $0.name.caseInsensitiveCompare(template.name) == .orderedSame }) {
+                continue
+            }
+            guard next.count < Self.maxAgents else {
+                throw SpecialistAgentStoreError.invalidAgent(
+                    "The roster can hold at most \(Self.maxAgents) agents."
+                )
+            }
+            let candidate = try validatedForRoster(
+                template.normalized().replacingTimestamps(createdAt: timestamp, updatedAt: timestamp),
+                roster: next,
+                excludingID: nil
+            )
+            next.append(candidate)
+            created.append(candidate)
+        }
+        do {
+            try persist(next)
+            agents = next
+            try syncLinkedRoles(configURL: configURL, promptsDirectory: promptsDirectory)
+            notifyAgentsChanged()
+        } catch {
+            agents = previous
+            try? persist(previous)
+            throw error
+        }
+        return created
+    }
+
+    /// Create or update `[subagents.roles.*]` + prompt files for roster agents.
+    func syncLinkedRoles(
+        configURL: URL = SubagentRoleStore.configURL,
+        promptsDirectory: URL = SubagentRoleStore.promptsDirectory
+    ) throws {
+        let existingContents = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        let existing = SubagentRoleStore.parse(
+            existingContents,
+            relativePromptBaseURL: URL(fileURLWithPath: NSHomeDirectory())
+        )
+        let updated = SpecialistAgentRoleSync.upsertRoles(from: agents, existing: existing)
+        if updated.count > SubagentRoleStore.maxRoles {
+            throw SpecialistAgentStoreError.roleSyncFailed(
+                "The role list can hold at most \(SubagentRoleStore.maxRoles) roles."
+            )
+        }
+        do {
+            try SubagentRoleStore.save(
+                updated,
+                configURL: configURL,
+                promptsDirectory: promptsDirectory
+            )
+        } catch let error as SpecialistAgentStoreError {
+            throw error
+        } catch {
+            throw SpecialistAgentStoreError.roleSyncFailed(
+                "Could not write linked subagent roles: \(error.localizedDescription)"
+            )
+        }
+        NotificationCenter.default.post(name: .subagentRolesChanged, object: nil)
+    }
+
     // MARK: - Persistence
 
     nonisolated static func encode(_ agents: [SpecialistAgent]) throws -> Data {
@@ -325,6 +514,7 @@ final class SpecialistAgentStore {
             try mutate(&next)
             try persist(next)
             agents = next
+            notifyAgentsChanged()
         } catch let error as SpecialistAgentStoreError {
             agents = previous
             throw error
@@ -332,6 +522,10 @@ final class SpecialistAgentStore {
             agents = previous
             throw SpecialistAgentStoreError.persistFailed
         }
+    }
+
+    private func notifyAgentsChanged() {
+        NotificationCenter.default.post(name: .specialistAgentsChanged, object: nil)
     }
 
     private func persist(_ agents: [SpecialistAgent]) throws {
@@ -348,20 +542,24 @@ final class SpecialistAgentStore {
     }
 
     private func validated(_ agent: SpecialistAgent, excludingID: UUID?) throws -> SpecialistAgent {
+        try validatedForRoster(agent, roster: agents, excludingID: excludingID)
+    }
+
+    private func validatedForRoster(
+        _ agent: SpecialistAgent,
+        roster: [SpecialistAgent],
+        excludingID: UUID?
+    ) throws -> SpecialistAgent {
         if let message = agent.validationError {
             throw SpecialistAgentStoreError.invalidAgent(message)
         }
-        if isDuplicateName(agent.name, excludingID: excludingID) {
+        if roster.contains(where: { existing in
+            if existing.id == excludingID { return false }
+            return existing.name.caseInsensitiveCompare(agent.name) == .orderedSame
+        }) {
             throw SpecialistAgentStoreError.duplicateName(agent.name)
         }
         return agent
-    }
-
-    private func isDuplicateName(_ name: String, excludingID: UUID?) -> Bool {
-        agents.contains { existing in
-            if existing.id == excludingID { return false }
-            return existing.name.caseInsensitiveCompare(name) == .orderedSame
-        }
     }
 }
 

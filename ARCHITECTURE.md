@@ -177,6 +177,7 @@ flowchart TB
     CV --> WS
     CV --> CS
     CV --> SL
+    CV --> SAS
     CHV --> CS
     CS --> GP
     GP --> CLI
@@ -444,7 +445,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Key | Store | Contents |
 |-----|-------|----------|
 | `GrokBuild.projects.v1` | `WorkspaceStore` | `[Workspace]` JSON |
-| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records, order, selection, expanded/hidden, **`pinnedSessionIDs`** (global sidebar pins; max `SessionLayoutStore.maxPinnedSessions`), and **`settledSessionIDs`** (restorable sessions parked in the Settled shelf) |
+| `GrokBuild.sessionLayout.v2` | `SessionLayoutStore` | Session records (`id`, workspace, grok session, title, per-tab model/agent, optional **`specialistAgentID`**, lastAccessed), order, selection, expanded/hidden, **`pinnedSessionIDs`** (global sidebar pins; max `SessionLayoutStore.maxPinnedSessions`), and **`settledSessionIDs`** (restorable sessions parked in the Settled shelf) |
 | `GrokBuild.sessionMessages.v1` | `SessionMessageStore` | Per live-session-tab chat transcript (`[Message]` JSON by session UUID); saved on `.liveSessionMessagesChanged` (user send + turn complete) and during full `persistSessionLayout(saveMessages: true)` passes such as app quit via `.grokBuildPrepareForShutdown` |
 | `GrokBuild.workspaceLayout.v1` | `SessionLayoutStore` | Pin order, workspace order, **`agentSettingsByWorkspace`** |
 | `grokbuild.sessionSelections.v1` | `ChatStore` | Per grok session id: mode |
@@ -484,7 +485,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `~/Library/Application Support/GrokBuild/cursor-bridge-workspace/` | Scratch cwd for the managed Cursor SDK sidecar |
 | `~/Library/Application Support/GrokBuild/Updates/` | Downloaded app update zips |
 | `~/Library/Application Support/GrokBuild/instance.pid` | Single-instance lock |
-| `~/Library/Application Support/GrokBuild/agents.v1.json` | Specialist-agent roster (`SpecialistAgentStore`) — JSON array of durable identities (name, mission, glyph, color, optional role/model, permission preset, last tab id). Not UserDefaults; not `~/.grok/` |
+| `~/Library/Application Support/GrokBuild/agents.v1.json` | Agents roster (`SpecialistAgentStore`) — JSON array of durable identities (name, instructions/`mission`, glyph, color, optional role/model, permission preset, last tab id). Not UserDefaults; not `~/.grok/` |
 
 ---
 
@@ -512,16 +513,22 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | Piece | Location |
 |-------|----------|
 | Default (new sessions) | `SettingsView` → `.agents` tab (viewer + "Default agent for new sessions" picker → `grokbuild.selectedAgent`) |
-| Per-session override | `ChatView.agentStatusPill` → `ChatStore.setSessionAgent` (persisted in `SavedSessionRecord.agent`) |
+| Per-session override | `ChatView.agentStatusPill` → `ChatStore.setSessionAgent` (persisted in `SavedSessionRecord.agent`); also updates or clears Agent binding (`SavedSessionRecord.specialistAgentID`) |
 | Discovery | `GrokCLIService.listAgents(cwd:)` → `GrokAgentInfo` (parses `agents` from `grok inspect --json`); loaded lazily by `ChatStore.loadDiscoveredAgentsIfNeeded` for the pill |
 | Built-in options | `GrokAgentProfiles.builtInOptions` (Default only) — shared by Settings + pill |
 | Selection → launch | `ChatStore.effectiveAgentSelection` → `GrokAgentProfiles.launchArgument(for:)` → `--agent` |
 | **Custom subagents (roles)** | `SettingsView` → `.agents` tab "Custom subagents" section (`SubagentRoleEditor`) → `SubagentRoleStore` writes `[subagents.roles.*]` in `~/.grok/config.toml` + prompt files |
-| **Specialist agents (roster identities)** | `SpecialistAgentStore` (`Services/SpecialistAgentStore.swift`) persists `~/Library/Application Support/GrokBuild/agents.v1.json`. Milestone 1 is store + tests only — no sidebar roster, no session launch, no `config.toml` / prompt writes |
+| **Agents (roster identities)** | Sidebar **Agents** section (`SidebarView` + `AgentEditorSheet`) above Projects, then Projects, then Sessions; `SpecialistAgentStore` persists `agents.v1.json`; start-session writes `SavedSessionRecord.specialistAgentID` (Agent binding) via `ContentView.createLiveSession` |
 
 The app stays thin: grok owns agents/personas. GrokBuild surfaces discovered agents and lets the user pick one by name; `""` = grok's default agent (no `--agent`). Agent is **per session tab** (see *Per-tab model + session agent*): the global setting is the default for **new** sessions; each open session can override it from the composer agent/role pill, which restarts that session's grok.
 
-**Specialist agents** are a durable *identity* layer on top of sessions + roles: display name, mission, glyph, `#RRGGBB` color, optional `roleName` (CLI `--agent` / `SubagentRole.name`), optional `defaultModel`, `permissionProfile` (`.inherit` / `.readOnly` / `.workspaceWrite`), and preference-only browser / Computer Use / skill flags. `lastSessionID` is a GrokBuild tab UUID (`SavedSessionRecord.id`), not a grok session id. The store does **not** enable Browser/Computer Use, write role prompt files, or change `ChatStore` / `SessionLayoutStore` yet. Missing `agents.v1.json` is an empty roster; a malformed file sets `loadError` and is never rewritten on init.
+**Agents** are a durable *identity* layer on top of sessions + roles: display name, **Instructions** (stored as `mission`), glyph, `#RRGGBB` color, optional `roleName` (CLI `--agent` / `SubagentRole.name`), optional `defaultModel`, `permissionProfile` (`.inherit` / `.readOnly` / `.workspaceWrite`), and preference-only browser / Computer Use / skill flags. `lastSessionID` is a GrokBuild tab UUID (`SavedSessionRecord.id`), not a grok session id. Missing `agents.v1.json` is an empty roster; a malformed file sets `loadError` and is never rewritten on init.
+
+**Sample agents + role linkage.** `SpecialistAgentStarterCrew.templates` is Chief / Scout / Builder / Verifier / Operator. **Add sample agents** (`installStarterCrew`) adds any missing names (idempotent) then `syncLinkedRoles` upserts matching `[subagents.roles.*]` via `SubagentRoleStore` and writes `~/.grok/prompts/<role>.md` with `SpecialistAgentRoleSync.promptInstruction` (`You are {name}.` + `Instructions: {text}`). Existing unrelated roles and unmanaged keys (for example `default_capability_mode`) are preserved. Injected `configURL` / `promptsDirectory` keep tests off the live `~/.grok` tree. A failed role write rolls the roster file back.
+
+**Sidebar roster.** `SidebarView` shows a global **Agents** section above Projects (then Sessions). Empty state offers **Add sample agents** and **New Agent**. Click focuses a live session in the current project (`SpecialistAgentRoster.liveBinding`: explicit `specialistAgentID` matches, most recently accessed when several; else `lastSessionID`; else matching `--agent` / role not bound to another Agent) or starts a new tab via `createLiveSession` with the Agent’s title, linked role, and `specialistAgentID`. No selected project presents an Add/select-project alert. Context menu: Start session, Open last session (when a bound tab still exists), Edit, Duplicate, Delete. Roster Working vs Idle is true when any bound session in the current project is streaming or needs input. `AgentEditorSheet` writes the store then `syncLinkedRoles`. `.specialistAgentsChanged` is posted on roster persist.
+
+**Session binding.** `SavedSessionRecord.specialistAgentID` is the Agent binding (`agentID` equivalent). It is written when a session starts from Agents, restored with the tab, and kept on Duplicate session. Deleting an Agent clears that id on remaining sessions (sessions stay). The composer agent/role pill shows the Agent name + glyph while bound. **Pill rule:** changing the pill maps the new `--agent` / role onto another Agent when one matches; otherwise it clears the binding. Stale ids after an Agent is deleted decode as unbound (badge hidden, tab still usable).
 
 **Custom subagents (roles).** grok owns subagent orchestration (the main agent delegates to subagents that run in parallel, gated by `--no-subagents`). GrokBuild adds a thin CRUD editor for **roles** — `[subagents.roles.<name>]` tables in `~/.grok/config.toml` with `model` (empty = inherit the parent session's model) and a `prompt_file`. `SubagentRole` + `SubagentRoleStore` (`CustomModelSettings.swift`) mirror `CustomModelStore`: minimal targeted TOML edits that preserve every other section and unmanaged role keys (for example `default_capability_mode`), plus the role's instruction written to `~/.grok/prompts/<name>.md`. Relative `prompt_file` values are resolved from the user's home directory to match grok's documented `.grok/prompts/...` examples. Names matching grok's built-in subagents (`general`, `general-purpose`, `explore`, `plan`, `vision`, `verify`, `computer`) are rejected. Roles are a *separate* concept from the read-only discovered agents list (`grok inspect --json` does not report roles), but custom role names are offered under **Run as custom role** in the Settings default-agent picker and the chat agent pill menu; choosing one there runs the whole session as that role rather than spawning a child subagent. grok's `/agents` TUI manager is a pager builtin not exposed over `grok agent stdio`, so editing the config file is how GrokBuild manages them.
 
@@ -826,8 +833,9 @@ Minimum size **1100×720** and default **1200×800** (`MainWindowLayout` via `Ap
 │ UpdatesBanner (optional)                        │
 ├──────────────┬──────────────────────────────────┤
 │ SidebarView  │  ChatView  │  PreviewPane (opt)  │
-│ - projects   │  composer  │  diff review        │
-│ - sessions   │  messages  │  commit / PR        │
+│ - agents     │  composer  │  diff review        │
+│ - projects   │  messages  │  commit / PR        │
+│ - sessions   │            │                     │
 │ - Settings + update btn   │                     │
 ├──────────────┴──────────────────────────────────┤
 │ SettingsView (replaces chat when open)          │
@@ -840,7 +848,7 @@ Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) k
 
 | File | Role |
 |------|------|
-| `SidebarView.swift` | Searchable project/session list, global Pinned and Settled sections, visible attention/elapsed status, settings entry; blue update button in the footer when an upgrade is waiting; git branch caption on the selected project; project path is a tooltip, not a subtitle |
+| `SidebarView.swift` | Searchable agent/project/session list; global **Agents** roster above Projects; global Pinned and Settled sections; visible attention/elapsed status; settings entry; blue update button in the footer when an upgrade is waiting; git branch caption on the selected project; project path is a tooltip, not a subtitle |
 | `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
@@ -881,9 +889,10 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`). Dismisses Sessions History / Dashboard; same-project sidebar `onChange` does not leave Settings (`SettingsPaneNavigation`). |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
 | `.liveSessionModelChanged` | Tab model changed in composer | `persistSessionLayout()` |
-| `.liveSessionAgentChanged` | Tab session agent changed via pill | `persistSessionLayout()` |
+| `.liveSessionAgentChanged` | Tab session agent changed via pill | Update or clear Agent binding (`specialistAgentID`), then `persistSessionLayout()` |
 | `.liveSessionMessagesChanged` | Messages updated | Sidebar title refresh |
-| `.subagentRolesChanged` | Custom subagent roles saved in Settings | `ChatView` refreshes `cachedCustomSubagentNames` in the agent pill |
+| `.subagentRolesChanged` | Custom subagent roles saved in Settings or Agent role sync | `ChatView` refreshes `cachedCustomSubagentNames` in the agent pill; Settings → Agents reloads roles |
+| `.specialistAgentsChanged` | Agents roster persisted (`SpecialistAgentStore`) | Reserved for roster/settings observers |
 | `.openDoctorRequested` | Settings → App → Open Doctor… | `ContentView` presents `DoctorSheet` |
 
 `GrokProcess.notifyStatus()` posts `.grokStatusChanged` **asynchronously on the main queue** so background CLI/IO threads never block waiting for the menu-bar observer (which is registered on `queue: .main`). `ChatStore.postStatusUpdate` runs on `@MainActor` and posts inline.
@@ -962,6 +971,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Model / effort picker** | `ChatView`, `ChatStore.setModel`, `applyReasoningEffort` |
 | **Per-tab model** | `SavedSessionRecord.model`, `ChatStore.bindTabSession`, `.liveSessionModelChanged` |
 | **Per-tab session agent** | `SavedSessionRecord.agent`, `ChatStore.setSessionAgent` / `effectiveAgentSelection`, `ChatView.agentStatusPill`, `.liveSessionAgentChanged` |
+| **Agent session binding** | `SavedSessionRecord.specialistAgentID`, `ContentView.activateSpecialistAgent` / `applySpecialistBinding`, `SpecialistAgentRoster.liveBinding` |
 | **Per-project reasoning effort** | `SessionLayoutStore.saveAgentSettings`, `ChatStore.loadWorkspaceReasoningEffort` |
 | **New / resume session** | `ChatStore.startNewSession`, `resumeSession`, `GrokProcess.loadSession` |
 | **Sidebar sessions** | `ContentView` (`selectSession`, `persistSessionLayout`, LRU, pin/unread/duplicate/clear) |
@@ -976,7 +986,8 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
 | **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
 | **Custom subagents (roles)** | `SubagentRole` / `SubagentRoleStore` (`CustomModelSettings.swift`), `SubagentRoleEditor` in `SettingsView`, `~/.grok/config.toml` `[subagents.roles.*]` + `~/.grok/prompts/` |
-| **Specialist agents (roster)** | `SpecialistAgent` / `SpecialistAgentStore` (`SpecialistAgentStore.swift`) → `~/Library/Application Support/GrokBuild/agents.v1.json` |
+| **Agents (roster)** | `SpecialistAgentStore` + `SpecialistAgentRoster` + `AgentEditorSheet` + `SidebarView` Agents section; start/focus via `ContentView.activateSpecialistAgent`; last session via `openLastSpecialistSession` |
+| **Agent badges** | `SidebarSession.specialistName` / `specialistGlyph`, `SessionDashboardEntry` Agent chip, `ChatView.boundSpecialist` |
 | **Scheduled tasks** | `ScheduledTaskStore.swift`, `ChatStore.scheduledTasks` + refresh/create/cancel, `ChatView.tasksStatusPill`, `AcpEvent.schedulerActivity` |
 | **Background tasks** | `BackgroundTaskStore.swift`, `ChatStore.backgroundActivities`, `AcpEvent.backgroundActivity` |
 | **Rhai workflows** | `WorkflowsConfigStore`, `WorkflowRunStore`, `SavedWorkflowStore`, `ChatView.workflowsStatusPill`, `.workflowsConfigChanged` |
@@ -1018,12 +1029,12 @@ make test    # Tests/GrokBuildTests/
 
 | File | Covers |
 |------|--------|
-| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent (record round-trip, default-follow vs explicit override), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
+| `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent + specialist binding (record round-trip, default-follow vs explicit override, legacy decode without `specialistAgentID`), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete, strip `ToolCallUpdate` protocol JSON from imported assistants |
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
 | `BrowserIntegrationTests.swift` | Browser MCP config, skill install, MCP script tool names (`browser_tabs` / snapshot), settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
-| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission); `SpecialistAgent` validation/normalize/Codable + `SpecialistAgentStore` Application Support CRUD (unique names, reserved role names, malformed JSON, failed-write rollback) |
+| `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission); `SpecialistAgent` validation/normalize/Codable + `SpecialistAgentStore` Application Support CRUD (unique names, reserved role names, malformed JSON, failed-write rollback); sample-agent install + `SpecialistAgentRoleSync` upsert (preserve unmanaged TOML keys, idempotent install, role-write rollback); roster live-session binding (most-recent explicit, last session, pill mapping, delete clears identity), duplicate names, filter |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
 | `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |
 | `ComputerUseIntegrationTests.swift` | Computer use MCP, Cursor installer, permissions, Accessibility re-prompt after resign |

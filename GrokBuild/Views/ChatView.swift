@@ -13,6 +13,7 @@ enum ProjectOpenTarget {
 
 struct ChatView: View {
     @Bindable var store: ChatStore
+    var boundSpecialist: SpecialistAgent? = nil
     var reviewFileCount: Int = 0
     var isReviewVisible: Bool = false
     var onToggleReview: () -> Void = {}
@@ -805,9 +806,11 @@ struct ChatView: View {
 
     private var agentStatusPill: some View {
         let effective = store.effectiveAgentSelection
-        let title = store.effectiveAgentDisplayName
-        let overriding = store.hasExplicitAgent
-        let tint: Color = overriding ? .teal : .secondary
+        let title = boundSpecialist?.name ?? store.effectiveAgentDisplayName
+        let glyph = boundSpecialist?.glyph ?? "person.2.badge.gearshape"
+        let overriding = store.hasExplicitAgent || boundSpecialist != nil
+        let tint: Color = boundSpecialist.map { SpecialistAgentRoster.color(from: $0.color) }
+            ?? (overriding ? .teal : .secondary)
 
         return Menu {
             Section("This session's agent") {
@@ -856,7 +859,7 @@ struct ChatView: View {
                 Label("Open Agent Settings", systemImage: "gearshape")
             }
         } label: {
-            Label(DashboardTitle.compactRole(title), systemImage: "person.2.badge.gearshape")
+            Label(DashboardTitle.compactRole(title), systemImage: glyph)
                 .font(.caption2.weight(.semibold))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
@@ -866,9 +869,11 @@ struct ChatView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .disabled(store.currentWorkspace == nil)
-        .help(overriding
-            ? "Session agent (overrides the default). Changing it restarts this session's grok."
-            : "Session agent (follows the Settings default). Changing it restarts this session's grok.")
+        .help(boundSpecialist != nil
+            ? "Agent \(title). Changing the role here updates or clears that Agent binding and restarts this session's grok."
+            : (overriding
+                ? "Session agent (overrides the default). Changing it restarts this session's grok."
+                : "Session agent (follows the Settings default). Changing it restarts this session's grok."))
     }
 
     private var showWorkflowsPill: Bool {
