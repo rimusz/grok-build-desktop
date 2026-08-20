@@ -83,6 +83,11 @@ enum SidebarUpdateButtonAppearance {
     static let foreground = Color.white
 }
 
+enum SidebarSectionActions {
+    static let newAgent = "New Agent"
+    static let addProject = "Add Project"
+}
+
 struct SidebarView: View {
     @Binding var workspaces: [Workspace]
     var orderedWorkspaces: [Workspace]
@@ -136,7 +141,10 @@ struct SidebarView: View {
     var onInstallStarterCrew: () -> Void = {}
     var openableLastSessionAgentIDs: Set<UUID> = []
     var onOpenLastSpecialistSession: (SpecialistAgent) -> Void = { _ in }
+    var liveBoundAgentIDs: Set<UUID> = []
+    var onToggleSpecialistAgentPin: (SpecialistAgent) -> Void = { _ in }
 
+    @AppStorage(GrokSettingsKeys.showAllAgents) private var showAllAgents = false
     @State private var filter = ""
     @State private var renamingSessionID: UUID?
     @State private var renameText = ""
@@ -164,8 +172,21 @@ struct SidebarView: View {
     }
 
     private var displayedAgents: [SpecialistAgent] {
-        guard !isFilterEmpty else { return specialistAgents }
-        return specialistAgents.filter { SpecialistAgentRoster.matchesFilter(filter, agent: $0) }
+        SpecialistAgentRoster.displayed(
+            agents: specialistAgents,
+            showAll: showAllAgents,
+            liveBoundIDs: liveBoundAgentIDs,
+            query: filter
+        )
+    }
+
+    private var showsEmptyActiveAgents: Bool {
+        isFilterEmpty
+            && SpecialistAgentRoster.showsEmptyActiveState(
+                agents: specialistAgents,
+                showAll: showAllAgents,
+                liveBoundIDs: liveBoundAgentIDs
+            )
     }
 
     private func activeSessions(for workspaceID: Workspace.ID) -> [SidebarSession] {
@@ -237,19 +258,6 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button(action: onAddWorkspace) {
-                    Label("Add Project", systemImage: "plus")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-
             List {
                 Section {
                     if specialistAgents.isEmpty && isFilterEmpty {
@@ -269,7 +277,35 @@ struct SidebarView: View {
                         .padding(.vertical, 4)
                         .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
                         .listRowBackground(Color.clear)
+                    } else if showsEmptyActiveAgents {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("No active agents.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Show all") { showAllAgents = true }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .accessibilityLabel("Show all agents")
+                            Button("New Agent", action: onNewSpecialistAgent)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel("New Agent")
+                        }
+                        .padding(.vertical, 4)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 8, trailing: 8))
+                        .listRowBackground(Color.clear)
                     } else {
+                        if !specialistAgents.isEmpty {
+                            Toggle("Show all agents", isOn: $showAllAgents)
+                                .toggleStyle(.checkbox)
+                                .controlSize(.small)
+                                .font(.caption)
+                                .padding(.vertical, 2)
+                                .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8))
+                                .listRowBackground(Color.clear)
+                                .accessibilityLabel("Show all agents")
+                                .accessibilityValue(showAllAgents ? "On" : "Off")
+                        }
                         ForEach(displayedAgents) { agent in
                             specialistAgentRow(agent)
                         }
@@ -282,7 +318,7 @@ struct SidebarView: View {
                             Image(systemName: "plus")
                         }
                         .buttonStyle(.borderless)
-                        .accessibilityLabel("New Agent")
+                        .accessibilityLabel(SidebarSectionActions.newAgent)
                     }
                 }
 
@@ -398,7 +434,15 @@ struct SidebarView: View {
                     }
 
                 } header: {
-                    Label("Projects", systemImage: "folder")
+                    HStack {
+                        Label("Projects", systemImage: "folder")
+                        Spacer()
+                        Button(action: onAddWorkspace) {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel(SidebarSectionActions.addProject)
+                    }
                 }
 
                 if !settledSessions.isEmpty {
@@ -510,12 +554,17 @@ struct SidebarView: View {
             if openableLastSessionAgentIDs.contains(agent.id) {
                 Button("Open last session") { onOpenLastSpecialistSession(agent) }
             }
+            if agent.isPinned {
+                Button("Unpin Agent") { onToggleSpecialistAgentPin(agent) }
+            } else {
+                Button("Pin Agent") { onToggleSpecialistAgentPin(agent) }
+            }
             Button("Edit") { onEditSpecialistAgent(agent) }
             Button("Duplicate") { onDuplicateSpecialistAgent(agent) }
             Divider()
             Button("Delete", role: .destructive) { onDeleteSpecialistAgent(agent) }
         }
-        .accessibilityLabel("\(agent.name), \(SpecialistAgentRoster.statusLabel(isWorking: isWorking))")
+        .accessibilityLabel(agentRowAccessibilityLabel(agent, isWorking: isWorking))
         .accessibilityHint(agent.mission)
     }
 
@@ -650,6 +699,11 @@ struct SidebarView: View {
         let configuration = NSWorkspace.OpenConfiguration()
         NSWorkspace.shared.open([url], withApplicationAt: applicationURL, configuration: configuration)
     }
+
+    private func agentRowAccessibilityLabel(_ agent: SpecialistAgent, isWorking: Bool) -> String {
+        let status = SpecialistAgentRoster.statusLabel(isWorking: isWorking)
+        return agent.isPinned ? "\(agent.name), \(status), Pinned" : "\(agent.name), \(status)"
+    }
 }
 
 private struct AgentSidebarRow: View {
@@ -681,6 +735,12 @@ private struct AgentSidebarRow: View {
                         .accessibilityHidden(true)
                 }
                 Spacer()
+                if agent.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

@@ -182,7 +182,9 @@ struct ContentView: View {
                 onOpenLastSpecialistSession: { agent in
                     showSettings = false
                     openLastSpecialistSession(agent)
-                }
+                },
+                liveBoundAgentIDs: liveBoundSpecialistAgentIDs,
+                onToggleSpecialistAgentPin: { toggleSpecialistAgentPin($0) }
             )
             .frame(minWidth: 240, idealWidth: 260, maxWidth: 300)
 
@@ -196,6 +198,7 @@ struct ContentView: View {
                     ChatView(
                         store: activeStore,
                         boundSpecialist: activeBoundSpecialist,
+                        specialistAgents: specialistAgentStore.agents,
                         reviewFileCount: activeReviewDiffs.count,
                         isReviewVisible: showPreview,
                         onToggleReview: {
@@ -782,6 +785,16 @@ struct ContentView: View {
         })
     }
 
+    private var liveBoundSpecialistAgentIDs: Set<UUID> {
+        Set(specialistAgentStore.agents.compactMap { agent in
+            SpecialistAgentRoster.hasLiveSession(
+                for: agent,
+                sessions: rosterSessionMatches,
+                currentWorkspaceID: selectedWorkspaceID
+            ) ? agent.id : nil
+        })
+    }
+
     private var openableLastSessionAgentIDs: Set<UUID> {
         Set(specialistAgentStore.agents.compactMap { agent in
             SpecialistAgentRoster.lastBoundSessionID(for: agent, sessions: rosterSessionMatches) == nil
@@ -881,6 +894,16 @@ struct ContentView: View {
         guard liveSessions[index].specialistAgentID != resolved else { return }
         liveSessions[index].specialistAgentID = resolved
         sessionListRevision &+= 1
+    }
+
+    private func toggleSpecialistAgentPin(_ agent: SpecialistAgent) {
+        var updated = agent
+        updated.isPinned.toggle()
+        do {
+            _ = try specialistAgentStore.update(updated)
+        } catch {
+            specialistAgentError = error.localizedDescription
+        }
     }
 
     private func rememberLastSession(_ agent: SpecialistAgent, sessionID: UUID) {

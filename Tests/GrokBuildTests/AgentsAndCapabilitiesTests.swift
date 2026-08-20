@@ -101,6 +101,15 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         XCTAssertEqual(SubagentRole.suggestedName(from: "  test_writer  "), "test_writer")
     }
 
+    func testSubagentDeleteConfirmationCopy() {
+        XCTAssertEqual(SubagentDeleteCopy.title(for: "scout"), "Delete scout?")
+        XCTAssertEqual(SubagentDeleteCopy.title(for: "  "), "Delete subagent?")
+        XCTAssertEqual(
+            SubagentDeleteCopy.message,
+            "This removes the custom subagent role and its instruction file. Existing sessions stay."
+        )
+    }
+
     // MARK: - SubagentRoleStore parsing
 
     func testRoleStoreParsesFieldsAndReadsInstructionFromPromptFile() throws {
@@ -277,7 +286,8 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
             preferredSkills: ["/review"],
             createdAt: created,
             updatedAt: created,
-            lastSessionID: sessionID
+            lastSessionID: sessionID,
+            isPinned: true
         )
         let data = try SpecialistAgentStore.encode([original])
         let decoded = try SpecialistAgentStore.decode(data)
@@ -308,6 +318,7 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         XCTAssertFalse(agent.computerUseEnabled)
         XCTAssertEqual(agent.preferredSkills, [])
         XCTAssertNil(agent.lastSessionID)
+        XCTAssertFalse(agent.isPinned)
     }
 
     func testSpecialistAgentDefaultStorageURLIsVersionedApplicationSupportFile() {
@@ -843,6 +854,96 @@ final class AgentsAndCapabilitiesTests: XCTestCase {
         XCTAssertTrue(SpecialistAgentRoster.matchesFilter("brief", agent: agent))
         XCTAssertTrue(SpecialistAgentRoster.matchesFilter("SCOUT", agent: agent))
         XCTAssertFalse(SpecialistAgentRoster.matchesFilter("builder", agent: agent))
+    }
+
+    func testSessionRoleMenuCopyDistinguishesRolesFromSpawnedSubagents() {
+        XCTAssertEqual(SessionRoleMenu.header, "Run this session as")
+        XCTAssertEqual(SessionRoleMenu.customRolesHeader, "Custom roles")
+        XCTAssertEqual(
+            SessionRoleMenu.customRolesExplanation,
+            "Runs the whole session; does not spawn a subagent"
+        )
+        XCTAssertEqual(SessionRoleMenu.manageCustomRoles, "Manage custom roles…")
+    }
+
+    func testSessionRoleMenuResolvesRosterLinkedRoleIdentity() {
+        let operatorAgent = SpecialistAgent(
+            name: "Operator",
+            mission: "Operate tools",
+            glyph: "desktopcomputer",
+            roleName: "operator"
+        )
+        let scout = SpecialistAgent(name: "Scout", mission: "Research", roleName: "scout")
+
+        XCTAssertEqual(
+            SessionRoleMenu.specialist(forRole: "operator", in: [scout, operatorAgent]),
+            operatorAgent
+        )
+        XCTAssertNil(SessionRoleMenu.specialist(forRole: "reviewer", in: [scout, operatorAgent]))
+    }
+
+    func testRosterActiveIsPinnedOrLiveBound() {
+        let pinned = SpecialistAgent(name: "Chief", mission: "Route", isPinned: true)
+        let idle = SpecialistAgent(name: "Scout", mission: "Research")
+        XCTAssertTrue(SpecialistAgentRoster.isActive(pinned, hasLiveSession: false))
+        XCTAssertTrue(SpecialistAgentRoster.isActive(idle, hasLiveSession: true))
+        XCTAssertFalse(SpecialistAgentRoster.isActive(idle, hasLiveSession: false))
+    }
+
+    func testRosterDisplayedDefaultsToActiveAndShowAllRevealsTheRest() {
+        let pinned = SpecialistAgent(name: "Chief", mission: "Route", isPinned: true)
+        let live = SpecialistAgent(name: "Scout", mission: "Research")
+        let idle = SpecialistAgent(name: "Builder", mission: "Implement")
+        let liveBoundIDs: Set<UUID> = [live.id]
+
+        XCTAssertEqual(
+            SpecialistAgentRoster.displayed(
+                agents: [pinned, live, idle],
+                showAll: false,
+                liveBoundIDs: liveBoundIDs,
+                query: ""
+            ).map(\.name),
+            ["Chief", "Scout"]
+        )
+        XCTAssertEqual(
+            SpecialistAgentRoster.displayed(
+                agents: [pinned, live, idle],
+                showAll: true,
+                liveBoundIDs: liveBoundIDs,
+                query: ""
+            ).map(\.name),
+            ["Chief", "Scout", "Builder"]
+        )
+        XCTAssertEqual(
+            SpecialistAgentRoster.displayed(
+                agents: [pinned, live, idle],
+                showAll: true,
+                liveBoundIDs: liveBoundIDs,
+                query: "build"
+            ).map(\.name),
+            ["Builder"]
+        )
+        XCTAssertTrue(
+            SpecialistAgentRoster.showsEmptyActiveState(
+                agents: [idle],
+                showAll: false,
+                liveBoundIDs: []
+            )
+        )
+        XCTAssertFalse(
+            SpecialistAgentRoster.showsEmptyActiveState(
+                agents: [idle],
+                showAll: true,
+                liveBoundIDs: []
+            )
+        )
+        XCTAssertFalse(
+            SpecialistAgentRoster.showsEmptyActiveState(
+                agents: [],
+                showAll: false,
+                liveBoundIDs: []
+            )
+        )
     }
 
     private static func temporaryStoreURL() -> URL {

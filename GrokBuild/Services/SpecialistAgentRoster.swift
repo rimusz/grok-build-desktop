@@ -195,4 +195,42 @@ enum SpecialistAgentRoster {
             values: [agent.name, agent.mission, agent.roleName ?? ""]
         )
     }
+
+    /// Active = pinned, or a live session in the current project is bound to this agent.
+    static func isActive(_ agent: SpecialistAgent, hasLiveSession: Bool) -> Bool {
+        agent.isPinned || hasLiveSession
+    }
+
+    static func hasLiveSession(
+        for agent: SpecialistAgent,
+        sessions: [LiveSessionMatch],
+        currentWorkspaceID: UUID?
+    ) -> Bool {
+        liveBinding(for: agent, sessions: sessions, currentWorkspaceID: currentWorkspaceID) != nil
+    }
+
+    /// Sidebar roster after the active-only / show-all preference and search query.
+    static func displayed(
+        agents: [SpecialistAgent],
+        showAll: Bool,
+        liveBoundIDs: Set<UUID>,
+        query: String
+    ) -> [SpecialistAgent] {
+        let scoped = showAll
+            ? agents
+            : agents.filter { isActive($0, hasLiveSession: liveBoundIDs.contains($0.id)) }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return scoped }
+        return scoped.filter { matchesFilter(trimmed, agent: $0) }
+    }
+
+    /// Roster exists, but the Active view has nothing to show.
+    static func showsEmptyActiveState(
+        agents: [SpecialistAgent],
+        showAll: Bool,
+        liveBoundIDs: Set<UUID>
+    ) -> Bool {
+        !agents.isEmpty
+            && displayed(agents: agents, showAll: showAll, liveBoundIDs: liveBoundIDs, query: "").isEmpty
+    }
 }

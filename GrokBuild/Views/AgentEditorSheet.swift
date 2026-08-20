@@ -58,7 +58,8 @@ struct AgentEditorSheet: View {
             preferredSkills: agent?.preferredSkills ?? [],
             createdAt: agent?.createdAt ?? Date(),
             updatedAt: agent?.updatedAt ?? Date(),
-            lastSessionID: agent?.lastSessionID
+            lastSessionID: agent?.lastSessionID,
+            isPinned: agent?.isPinned ?? false
         )
     }
 

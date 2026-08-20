@@ -2,6 +2,22 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+enum SessionRoleMenu {
+    static let header = "Run this session as"
+    static let customRolesHeader = "Custom roles"
+    static let customRolesExplanation = "Runs the whole session; does not spawn a subagent"
+    static let manageCustomRoles = "Manage custom roles…"
+
+    static func specialist(
+        forRole role: String,
+        in specialists: [SpecialistAgent]
+    ) -> SpecialistAgent? {
+        specialists.first {
+            SpecialistAgentRoster.launchAgentSelection(for: $0) == role
+        }
+    }
+}
+
 enum ProjectOpenTarget {
     case finder
     case cursor
@@ -14,6 +30,7 @@ enum ProjectOpenTarget {
 struct ChatView: View {
     @Bindable var store: ChatStore
     var boundSpecialist: SpecialistAgent? = nil
+    var specialistAgents: [SpecialistAgent] = []
     var reviewFileCount: Int = 0
     var isReviewVisible: Bool = false
     var onToggleReview: () -> Void = {}
@@ -813,7 +830,7 @@ struct ChatView: View {
             ?? (overriding ? .teal : .secondary)
 
         return Menu {
-            Section("This session's agent") {
+            Section(SessionRoleMenu.header) {
                 ForEach(GrokAgentProfiles.builtInOptions) { option in
                     Button {
                         Task { await store.setSessionAgent(option.id) }
@@ -840,12 +857,19 @@ struct ChatView: View {
             let excluded = Set(GrokAgentProfiles.builtInOptions.map(\.id) + store.discoveredAgents.map(\.name))
             let customSubagents = cachedCustomSubagentNames.filter { !excluded.contains($0) }
             if !customSubagents.isEmpty {
-                Section("Run as custom role") {
+                Section(SessionRoleMenu.customRolesHeader) {
+                    Text(SessionRoleMenu.customRolesExplanation)
                     ForEach(customSubagents, id: \.self) { name in
+                        let specialist = SessionRoleMenu.specialist(forRole: name, in: specialistAgents)
                         Button {
                             Task { await store.setSessionAgent(name) }
                         } label: {
-                            Label(name, systemImage: effective == name ? "checkmark" : "person.2")
+                            Label(
+                                specialist?.name ?? name,
+                                systemImage: effective == name
+                                    ? "checkmark"
+                                    : (specialist?.glyph ?? "person.2")
+                            )
                         }
                     }
                 }
@@ -856,7 +880,7 @@ struct ChatView: View {
             Button {
                 onOpenAgentSettings()
             } label: {
-                Label("Open Agent Settings", systemImage: "gearshape")
+                Label(SessionRoleMenu.manageCustomRoles, systemImage: "gearshape")
             }
         } label: {
             Label(DashboardTitle.compactRole(title), systemImage: glyph)
@@ -870,10 +894,10 @@ struct ChatView: View {
         .fixedSize()
         .disabled(store.currentWorkspace == nil)
         .help(boundSpecialist != nil
-            ? "Agent \(title). Changing the role here updates or clears that Agent binding and restarts this session's grok."
+            ? "Agent \(title). Changing this session role updates or clears that Agent binding and restarts grok."
             : (overriding
-                ? "Session agent (overrides the default). Changing it restarts this session's grok."
-                : "Session agent (follows the Settings default). Changing it restarts this session's grok."))
+                ? "Session role (overrides the default). Changing it restarts grok."
+                : "Session role (follows the Settings default). Changing it restarts grok."))
     }
 
     private var showWorkflowsPill: Bool {

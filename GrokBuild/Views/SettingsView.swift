@@ -81,7 +81,9 @@ struct SettingsView: View {
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
-            .padding()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
 
             Divider()
 
@@ -92,6 +94,7 @@ struct SettingsView: View {
             settingsContent
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipped()
         }
         .frame(minWidth: 860, minHeight: 620)
         .onAppear {
@@ -103,46 +106,36 @@ struct SettingsView: View {
     }
 
     private var settingsTabBar: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: true) {
-                HStack(spacing: 4) {
-                    ForEach(SettingsTab.allCases) { tab in
-                        Button {
-                            selectedTab = tab
-                        } label: {
-                            Label(tab.title, systemImage: tab.systemImage)
-                                .labelStyle(.titleAndIcon)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selectedTab == tab ? Color.accentColor.opacity(0.16) : Color.clear)
-                        )
-                        .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
-                        .accessibilityLabel(tab.title)
-                        .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
-                        .id(tab)
-                    }
+        SettingsTabFlowLayout(spacing: 4) {
+            ForEach(SettingsTab.allCases) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    Label(tab.title, systemImage: tab.systemImage)
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Settings tabs")
-            .onAppear {
-                proxy.scrollTo(selectedTab, anchor: .center)
-            }
-            .onChange(of: selectedTab) { _, tab in
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo(tab, anchor: .center)
-                }
+                .buttonStyle(.plain)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(selectedTab == tab ? Color.accentColor.opacity(0.16) : Color.clear)
+                )
+                .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(selectedTab == tab ? [.isSelected] : [])
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Settings tabs")
     }
 
     /// Keeps visited panes in the hierarchy (hidden when inactive) so state is not reset on tab change.
@@ -304,6 +297,69 @@ private struct SettingsPaneHeader: View {
 
 private func settingsPaneHeader(_ title: String, subtitle: String, systemImage: String, color: Color) -> SettingsPaneHeader {
     SettingsPaneHeader(title: title, subtitle: subtitle, systemImage: systemImage, color: color)
+}
+
+/// Wrap math for the Settings tab bar so every tab stays visible instead of
+/// sliding off-screen under a horizontal scroller.
+enum SettingsTabFlow {
+    struct Cell: Equatable {
+        var x: CGFloat
+        var y: CGFloat
+        var width: CGFloat
+        var height: CGFloat
+    }
+
+    static func cells(
+        sizes: [CGSize],
+        containerWidth: CGFloat,
+        spacing: CGFloat
+    ) -> [Cell] {
+        var result: [Cell] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        let width = max(containerWidth, 0)
+        for size in sizes {
+            if x > 0, width > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            result.append(Cell(x: x, y: y, width: size.width, height: size.height))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return result
+    }
+
+    static func size(of cells: [Cell], containerWidth: CGFloat) -> CGSize {
+        let contentWidth = cells.map { $0.x + $0.width }.max() ?? 0
+        let height = cells.map { $0.y + $0.height }.max() ?? 0
+        return CGSize(width: max(containerWidth, contentWidth), height: height)
+    }
+}
+
+private struct SettingsTabFlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let fallbackWidth = sizes.reduce(CGFloat(0)) { $0 + $1.width + spacing } - spacing
+        let width = proposal.width ?? max(fallbackWidth, 0)
+        let cells = SettingsTabFlow.cells(sizes: sizes, containerWidth: width, spacing: spacing)
+        return SettingsTabFlow.size(of: cells, containerWidth: width)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let cells = SettingsTabFlow.cells(sizes: sizes, containerWidth: bounds.width, spacing: spacing)
+        for (subview, cell) in zip(subviews, cells) {
+            subview.place(
+                at: CGPoint(x: bounds.minX + cell.x, y: bounds.minY + cell.y),
+                proposal: ProposedViewSize(width: cell.width, height: cell.height)
+            )
+        }
+    }
 }
 
 private extension View {
@@ -1729,6 +1785,15 @@ private struct SkillsSettingsPane: View {
     }
 }
 
+enum SubagentDeleteCopy {
+    static func title(for name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Delete \(trimmed.isEmpty ? "subagent" : trimmed)?"
+    }
+
+    static let message = "This removes the custom subagent role and its instruction file. Existing sessions stay."
+}
+
 private struct AgentsSettingsPane: View {
     let workspace: Workspace?
     let onConfigurationChanged: () -> Void
@@ -1745,44 +1810,67 @@ private struct AgentsSettingsPane: View {
     @State private var editingRole: SubagentRole?
     @State private var isAddingRole = false
     @State private var roleError: String?
+    @State private var pendingDeleteRole: SubagentRole?
 
     private var hasPendingChanges: Bool { selectedAgent != appliedAgent }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                settingsPaneHeader(
-                    "Agents",
-                    subtitle: "Pick the agent grok uses for new sessions and browse the agents discovered for this project.",
-                    systemImage: "person.2.badge.gearshape",
-                    color: .teal
-                )
-                Button("Refresh") {
-                    Task { await refresh() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    settingsPaneHeader(
+                        "Agents",
+                        subtitle: "Pick the agent grok uses for new sessions and browse the agents discovered for this project.",
+                        systemImage: "person.2.badge.gearshape",
+                        color: .teal
+                    )
+                    Button("Refresh") {
+                        Task { await refresh() }
+                    }
+                }
+
+                Text("Agents are managed from the sidebar Agents section. Custom roles below stay available for the composer pill and subagent spawn.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                discoveredAgentsSection
+
+                sessionAgentCard
+
+                customSubagentsSection
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
                 }
             }
-
-            Text("Agents are managed from the sidebar Agents section. Custom roles below stay available for the composer pill and subagent spawn.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            discoveredAgentsSection
-
-            sessionAgentCard
-
-            customSubagentsSection
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            }
         }
+        .scrollContentBackground(.hidden)
         .task { await refresh() }
         .onReceive(NotificationCenter.default.publisher(for: .subagentRolesChanged)) { _ in
             roles = SubagentRoleStore.load()
+        }
+        .alert(
+            SubagentDeleteCopy.title(for: pendingDeleteRole?.name ?? "subagent"),
+            isPresented: Binding(
+                get: { pendingDeleteRole != nil },
+                set: { if !$0 { pendingDeleteRole = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let role = pendingDeleteRole {
+                    removeRole(role)
+                }
+                pendingDeleteRole = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteRole = nil
+            }
+        } message: {
+            Text(SubagentDeleteCopy.message)
         }
     }
 
@@ -1992,12 +2080,13 @@ private struct AgentsSettingsPane: View {
             .buttonStyle(.borderless)
             .help("Edit subagent")
             Button(role: .destructive) {
-                removeRole(role)
+                pendingDeleteRole = role
             } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
             .help("Remove subagent")
+            .accessibilityLabel("Remove \(role.name)")
         }
         .padding(12)
     }

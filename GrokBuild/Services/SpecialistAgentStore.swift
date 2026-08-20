@@ -70,6 +70,8 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
     var updatedAt: Date
     /// Last GrokBuild tab / `SavedSessionRecord.id` launched for this agent.
     var lastSessionID: UUID?
+    /// When true, the sidebar Active view always includes this agent.
+    var isPinned: Bool
 
     init(
         id: UUID = UUID(),
@@ -85,7 +87,8 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
         preferredSkills: [String] = [],
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        lastSessionID: UUID? = nil
+        lastSessionID: UUID? = nil,
+        isPinned: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -101,6 +104,7 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastSessionID = lastSessionID
+        self.isPinned = isPinned
     }
 
     init(from decoder: Decoder) throws {
@@ -122,6 +126,7 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         lastSessionID = try container.decodeIfPresent(UUID.self, forKey: .lastSessionID)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 
     /// Trimmed, canonical copy used before validation and persist.
@@ -140,7 +145,8 @@ struct SpecialistAgent: Codable, Identifiable, Hashable, Sendable {
             preferredSkills: Self.normalizedSkills(preferredSkills),
             createdAt: createdAt,
             updatedAt: updatedAt,
-            lastSessionID: lastSessionID
+            lastSessionID: lastSessionID,
+            isPinned: isPinned
         )
     }
 
@@ -579,7 +585,8 @@ private extension SpecialistAgent {
             preferredSkills: preferredSkills,
             createdAt: createdAt,
             updatedAt: updatedAt,
-            lastSessionID: lastSessionID
+            lastSessionID: lastSessionID,
+            isPinned: isPinned
         )
     }
 }

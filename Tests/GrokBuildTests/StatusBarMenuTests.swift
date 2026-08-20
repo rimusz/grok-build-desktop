@@ -116,4 +116,16 @@ final class StatusBarMenuTests: XCTestCase {
             ["Sessions Dashboard", "Sessions History"]
         )
     }
+
+    func testHelpMenuTopicsAndAgentConcepts() {
+        XCTAssertEqual(
+            HelpTopic.allCases.map(\.title),
+            ["GrokBuild Help", "Getting Started", "Settings Guide", "Agents, Roles & Subagents"]
+        )
+        XCTAssertEqual(HelpMenuCopy.help, "GrokBuild Help")
+        XCTAssertEqual(HelpMenuCopy.settingsGuide, "Settings Guide")
+        XCTAssertTrue(HelpMenuCopy.agentDefinition.contains("saved GrokBuild identity"))
+        XCTAssertTrue(HelpMenuCopy.sessionRoleDefinition.contains("entire current session"))
+        XCTAssertTrue(HelpMenuCopy.subagentDefinition.contains("child worker"))
+    }
 }

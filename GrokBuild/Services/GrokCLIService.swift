@@ -380,6 +380,8 @@ enum GrokSettingsKeys {
     static let soundOnUnfocusedFinish = "grokbuild.soundOnUnfocusedFinish"
     /// When true, redact project paths/names and session titles in the UI (screenshots).
     static let privacyMode = "grokbuild.privacyMode"
+    /// When true, the sidebar Agents section lists every agent (default: active only).
+    static let showAllAgents = "grokbuild.showAllAgents"
 }
 
 /// Whether a mid-turn prompt should steer the running turn or be queued for after it.

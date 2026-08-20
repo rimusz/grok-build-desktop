@@ -104,4 +104,28 @@ final class SettingsTabTests: XCTestCase {
         XCTAssertFalse(showSessions)
         XCTAssertFalse(showDashboard)
     }
+
+    func testTabFlowKeepsSingleRowWhenWideEnough() {
+        let sizes = Array(repeating: CGSize(width: 60, height: 20), count: 3)
+        let cells = SettingsTabFlow.cells(sizes: sizes, containerWidth: 400, spacing: 4)
+        XCTAssertEqual(cells.map(\.y), [0, 0, 0])
+        XCTAssertEqual(cells[1].x, 64)
+        XCTAssertEqual(cells[2].x, 128)
+    }
+
+    func testTabFlowWrapsOntoNextRowWhenContainerIsNarrow() {
+        let sizes = [
+            CGSize(width: 80, height: 28),
+            CGSize(width: 80, height: 28),
+            CGSize(width: 80, height: 28),
+        ]
+        let cells = SettingsTabFlow.cells(sizes: sizes, containerWidth: 170, spacing: 4)
+        XCTAssertEqual(cells[0].x, 0)
+        XCTAssertEqual(cells[0].y, 0)
+        XCTAssertEqual(cells[1].x, 84)
+        XCTAssertEqual(cells[1].y, 0)
+        XCTAssertEqual(cells[2].x, 0)
+        XCTAssertEqual(cells[2].y, 32)
+        XCTAssertEqual(SettingsTabFlow.size(of: cells, containerWidth: 170).height, 60)
+    }
 }
