@@ -756,7 +756,7 @@ Each settings pane puts its own "Refresh"/action buttons **inline in the pane he
 
 ## In-app updates
 
-Two parallel updaters — **GrokBuild app** (GitHub) and **grok CLI** (`grok update`). Same UI surfaces: menu bar, main-window banner, sidebar footer button, `UpdatePanel`.
+Two parallel updaters — **GrokBuild app** (GitHub) and **grok CLI** (`grok update`). Same UI surfaces: menu bar, main-window banner, `UpdatePanel`.
 
 | Service | Role |
 |---------|------|
@@ -816,13 +816,12 @@ sequenceDiagram
 ### UI surfaces
 
 - **Menu:** **Upgrade Available…** / **Check for Updates…** — refresh checks, then open `UpdatePanel` directly (whether or not updates are available)
-- **Banner:** `UpdatesBanner` in `ContentView` — **Updates Available** opens `UpdatePanel`
-- **Sidebar footer:** a blue button next to **Settings** (`SidebarUpdateButtonCopy`) when `UpdateScheduler.hasAnyActionableUpdate` — app-only shows `v{version}` (never a bare `0.2.9`), CLI-only **CLI**, both **Updates**. Dismissing the banner does not hide this button. Opens `UpdatePanel` (cached check).
+- **Banner:** `UpdatesBanner` in `ContentView` — the whole bar except dismiss opens `UpdatePanel`
 - **Panel:** dual sections; mutual busy lock during install
 
 ### DEBUG simulate updates
 
-Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make run`): fake `99.0.0` pending updates and show the main-window banner **and** the sidebar footer button. Same discovery flow as real updates — open the update panel from the banner or the blue footer button. Simulated app install relaunches GrokBuild without replacing the binary; simulated CLI updates never run `grok update`. **Clear Simulation** runs real checks.
+Menu **Simulate Updates** (`#if DEBUG` only — use `make run-debug`, not `make run`): fake `99.0.0` pending updates and show the main-window banner. Same discovery flow as real updates — open the update panel from the banner. Simulated app install relaunches GrokBuild without replacing the binary; simulated CLI updates never run `grok update`. **Clear Simulation** runs real checks.
 
 ---
 
@@ -852,7 +851,7 @@ Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) k
 
 | File | Role |
 |------|------|
-| `SidebarView.swift` | Searchable agent/project/session list; global **Agents** roster above Projects; matching section-header plus actions for **New Agent** / **Add Project** (no separate top Add Project button); global Pinned and Settled sections; visible attention/elapsed status; settings entry; blue update button in the footer when an upgrade is waiting; git branch caption on the selected project; project path is a tooltip, not a subtitle |
+| `SidebarView.swift` | Searchable agent/project/session list; global **Agents** roster above Projects; matching section-header plus actions for **New Agent** / **Add Project** (no separate top Add Project button); global Pinned and Settled sections; visible attention/elapsed status; settings entry; git branch caption on the selected project; project path is a tooltip, not a subtitle |
 | `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
@@ -1017,7 +1016,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Diff review / apply** | `PreviewPane`, `ChatStore` diff detection on `Message.hasDiff` |
 | **Menu bar / auth** | `StatusBarController`, `GrokAuthProbe`, `ChatStore.authRequiredMessage` |
 | **Main window / single instance** | `AppDelegate` |
-| **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel`, sidebar `SidebarUpdateButtonCopy` |
+| **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel` |
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
 | **Help menu / in-app guides** | `AppDelegate.setupMainMenu()`, `Views/HelpPanel.swift` (`HelpTopic`, `HelpMenuCopy`) |
@@ -1046,7 +1045,7 @@ make test    # Tests/GrokBuildTests/
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
-| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, sidebar update-button copy, Sessions History / Sessions Dashboard copy, native Help topics (Models / Sessions / Browser & Computer Use) + Agent/role/subagent definitions |
+| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, Updates banner copy, Sessions History / Sessions Dashboard copy, native Help topics (Models / Sessions / Browser & Computer Use) + Agent/role/subagent definitions |
 | `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; wrapping tab-flow layout; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables (including smashed one-line tables), fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |

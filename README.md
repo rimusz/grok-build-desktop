@@ -124,7 +124,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 
 - Native **Help** menu with **GrokBuild Help**, **Getting Started**, **Settings Guide**, **Models** (custom providers, Fetch then Add, Cursor sidecar), **Agents, Roles & Subagents**, **Sessions** (Dashboard vs History), and **Browser & Computer Use** guides.
 - Menu bar item plus main window with status-dot icon, quick actions, settings, update checks, and sign-in recovery.
-- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, a blue version button next to **Settings** (for example **v0.2.9**) opens that panel. App updates are offered only for signed and notarized releases.
+- In-app update panels for both GrokBuild Desktop App and the `grok` CLI. When an upgrade is waiting, click the main-window **Updates Available** banner or **Upgrade Available…** in the menu bar to open that panel. App updates are offered only for signed and notarized releases.
 - Dark-mode-first SwiftUI design with accessibility labels for interactive status controls.
 
 ## Permissions & Privacy
