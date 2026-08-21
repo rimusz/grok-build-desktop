@@ -260,6 +260,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         settingsGuide.target = self
         helpMenu.addItem(settingsGuide)
+        let modelsHelp = NSMenuItem(
+            title: HelpMenuCopy.models,
+            action: #selector(showModelsHelp),
+            keyEquivalent: ""
+        )
+        modelsHelp.target = self
+        helpMenu.addItem(modelsHelp)
         let agentsHelp = NSMenuItem(
             title: HelpMenuCopy.agentsRolesAndSubagents,
             action: #selector(showAgentsHelp),
@@ -267,6 +274,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         agentsHelp.target = self
         helpMenu.addItem(agentsHelp)
+        let sessionsHelp = NSMenuItem(
+            title: HelpMenuCopy.sessions,
+            action: #selector(showSessionsHelp),
+            keyEquivalent: ""
+        )
+        sessionsHelp.target = self
+        helpMenu.addItem(sessionsHelp)
+        let browserHelp = NSMenuItem(
+            title: HelpMenuCopy.browserAndComputerUse,
+            action: #selector(showBrowserAndComputerUseHelp),
+            keyEquivalent: ""
+        )
+        browserHelp.target = self
+        helpMenu.addItem(browserHelp)
         NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
@@ -292,8 +313,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Task { @MainActor in HelpPanel.show(topic: .settings) }
     }
 
+    @objc private func showModelsHelp() {
+        Task { @MainActor in HelpPanel.show(topic: .models) }
+    }
+
     @objc private func showAgentsHelp() {
         Task { @MainActor in HelpPanel.show(topic: .agents) }
+    }
+
+    @objc private func showSessionsHelp() {
+        Task { @MainActor in HelpPanel.show(topic: .sessions) }
+    }
+
+    @objc private func showBrowserAndComputerUseHelp() {
+        Task { @MainActor in HelpPanel.show(topic: .browserAndComputerUse) }
     }
 
     @objc private func openSettings() {

@@ -120,12 +120,30 @@ final class StatusBarMenuTests: XCTestCase {
     func testHelpMenuTopicsAndAgentConcepts() {
         XCTAssertEqual(
             HelpTopic.allCases.map(\.title),
-            ["GrokBuild Help", "Getting Started", "Settings Guide", "Agents, Roles & Subagents"]
+            [
+                "GrokBuild Help",
+                "Getting Started",
+                "Settings Guide",
+                "Models",
+                "Agents, Roles & Subagents",
+                "Sessions",
+                "Browser & Computer Use",
+            ]
         )
         XCTAssertEqual(HelpMenuCopy.help, "GrokBuild Help")
         XCTAssertEqual(HelpMenuCopy.settingsGuide, "Settings Guide")
+        XCTAssertEqual(HelpMenuCopy.models, "Models")
+        XCTAssertEqual(HelpMenuCopy.sessions, "Sessions")
+        XCTAssertEqual(HelpMenuCopy.browserAndComputerUse, "Browser & Computer Use")
         XCTAssertTrue(HelpMenuCopy.agentDefinition.contains("saved GrokBuild identity"))
         XCTAssertTrue(HelpMenuCopy.sessionRoleDefinition.contains("entire current session"))
         XCTAssertTrue(HelpMenuCopy.subagentDefinition.contains("child worker"))
+        XCTAssertTrue(HelpMenuCopy.modelsSharedConfig.contains("~/.grok/config.toml"))
+        XCTAssertTrue(HelpMenuCopy.modelsSharedConfig.contains("/model"))
+        XCTAssertTrue(HelpMenuCopy.modelsFetchBeforeAdd.contains("dummy key"))
+        XCTAssertTrue(HelpMenuCopy.modelsFetchBeforeAdd.contains("host.docker.internal"))
+        XCTAssertTrue(HelpMenuCopy.sessionsDashboardDefinition.contains("live named sessions"))
+        XCTAssertTrue(HelpMenuCopy.sessionsHistoryDefinition.contains("archived grok sessions"))
+        XCTAssertTrue(HelpMenuCopy.browserEnableDefinition.contains("apply immediately"))
     }
 }

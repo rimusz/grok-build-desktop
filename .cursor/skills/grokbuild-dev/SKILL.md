@@ -57,7 +57,7 @@ App requires `grok` on PATH or at `~/.grok/bin/grok`. User must run `grok login`
 - Agents roster: `SpecialistAgentStore` + `SpecialistAgentRoster` + `AgentEditorSheet`; per-tab identity binding is `SavedSessionRecord.specialistAgentID`
 - Agents sidebar/start/focus flow: `SidebarView` + `ContentView.activateSpecialistAgent`; session-role picker: `SessionRoleMenu` + `ChatView.agentStatusPill`
 - Settings chrome/tab flow: `SettingsView.swift` (`SettingsTabFlow`, `SettingsTabKeepAlive`, `SettingsPaneNavigation`); preserve the wrapping tab bar and scroll tall panes
-- Native Help menu/guides: `AppDelegate.setupMainMenu()` + `Views/HelpPanel.swift`
+- Native Help menu/guides: `AppDelegate.setupMainMenu()` + `Views/HelpPanel.swift` (`HelpTopic`, `HelpMenuCopy`)
 - Menu bar: `StatusBarController` + `AppDelegate`
 - Full map: `ARCHITECTURE.md`
 - Do not commit unless the user asks.

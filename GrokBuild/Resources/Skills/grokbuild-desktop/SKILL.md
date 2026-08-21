@@ -28,7 +28,7 @@ SwiftPM target `GrokBuild`, macOS 26+. No Xcode project required.
 | Agents roster / session binding | `SpecialistAgentStore.swift`, `SpecialistAgentRoster.swift`, `AgentEditorSheet.swift`, `SidebarView.swift`, `ContentView.swift` (`specialistAgentID`, `activateSpecialistAgent`) |
 | Session role picker / Agent identity | `ChatView.swift` (`SessionRoleMenu`, `agentStatusPill`, `boundSpecialist`) |
 | Settings chrome / tab flow | `SettingsView.swift` (`SettingsTabFlow`, `SettingsTabKeepAlive`, `SettingsPaneNavigation`) |
-| Help menu / in-app guides | `AppDelegate.setupMainMenu()`, `Views/HelpPanel.swift` (`HelpTopic`, `HelpMenuCopy`) |
+| Help menu / in-app guides | `AppDelegate.setupMainMenu()`, `Views/HelpPanel.swift` (`HelpTopic`: overview, getting started, settings, models, agents, sessions, browser & computer use; `HelpMenuCopy`) |
 | Menu bar / About | `StatusBarController.swift`, `AboutPanel.swift` |
 | Updates | `UpdateChecker.swift`, `UpdatePanel.swift` |
 | Version bump | `VERSION` |

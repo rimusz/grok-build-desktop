@@ -99,7 +99,7 @@ grok-deck2/
 │   │   ├── Assets.xcassets/      # Menu bar icon, app icon
 │   │   └── Skills/               # Bundled grok skills (copied at build)
 │   ├── AboutPanel.swift          # AppKit About panel
-│   ├── Views/HelpPanel.swift     # Native Help window + Getting Started / Agents guides
+│   ├── Views/HelpPanel.swift     # Native Help window + Getting Started / Models / Agents / Sessions / Browser guides
 │   └── UpdatePanel.swift         # AppKit Updates panel
 ├── GrokBuildComputerUseMCP/      # Separate SPM target: stdio MCP bridge → agent-desktop
 ├── Tests/GrokBuildTests/         # Unit/integration tests
@@ -144,7 +144,7 @@ grok-deck2/
 
 Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles. Status-item actions that front the window are deferred to the next main-queue turn so the menu click is not delivered into the newly keyed window.
 
-**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, and `Agents, Roles & Subagents` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
+**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, `Models`, `Agents, Roles & Subagents`, `Sessions`, and `Browser & Computer Use` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, walks through adding custom providers and models (`~/.grok/config.toml`, Fetch-then-Add, dummy keys, Cursor sidecar), distinguishes Sessions Dashboard from Sessions History, covers Browser/`agent-browser` and Computer Use/Accessibility, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
 
 **Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
@@ -1020,6 +1020,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel`, sidebar `SidebarUpdateButtonCopy` |
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
+| **Help menu / in-app guides** | `AppDelegate.setupMainMenu()`, `Views/HelpPanel.swift` (`HelpTopic`, `HelpMenuCopy`) |
 | **Git branch/worktree** | `GitCheckoutSheet`, `GitService`, `ParallelSessionSheet` (named session + optional worktree) |
 | **Release / notarize** | `.cursor/skills/grokbuild-release/SKILL.md` (clean main → version check → `make release`), `scripts/release.sh`, `BUILDING.md` |
 
@@ -1045,7 +1046,7 @@ make test    # Tests/GrokBuildTests/
 | `QuickStartPromptTests.swift` | Empty-state quick-start prompt catalog (`QuickStartPrompt.defaults`) |
 | `UpdateCheckerTests.swift` | Version compare, GitHub asset selection, CLI JSON parse, notarized filter |
 | `GrokCLIUpdaterTests.swift` | Updater helpers / phase reset |
-| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, sidebar update-button copy, Sessions History / Sessions Dashboard copy, native Help topics + Agent/role/subagent definitions |
+| `StatusBarMenuTests.swift` | `GrokStatus` string mapping, auth menu copy, update menu title helpers, sidebar update-button copy, Sessions History / Sessions Dashboard copy, native Help topics (Models / Sessions / Browser & Computer Use) + Agent/role/subagent definitions |
 | `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; wrapping tab-flow layout; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables (including smashed one-line tables), fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
