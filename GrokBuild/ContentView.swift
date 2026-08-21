@@ -65,9 +65,6 @@ struct ContentView: View {
     @State private var showUpgradeBanner = false
     @State private var bannerAppVersion: String?
     @State private var bannerCLIVersion: String?
-    @State private var showSidebarUpdateButton = false
-    @State private var sidebarUpdateAppVersion: String?
-    @State private var sidebarUpdateCLIVersion: String?
 
     private var gitErrorAlertPresented: Binding<Bool> {
         Binding(
@@ -152,16 +149,6 @@ struct ContentView: View {
                 onSessionDisclosureChanged: { persistSessionLayout() },
                 onOpenSettings: { openSettings(tab: .agents) },
                 isSettingsSelected: showSettings,
-                hasActionableUpdate: showSidebarUpdateButton,
-                updateButtonTitle: SidebarUpdateButtonCopy.title(
-                    appVersion: sidebarUpdateAppVersion,
-                    cliVersion: sidebarUpdateCLIVersion
-                ),
-                updateButtonAccessibilityLabel: SidebarUpdateButtonCopy.accessibilityLabel(
-                    appVersion: sidebarUpdateAppVersion,
-                    cliVersion: sidebarUpdateCLIVersion
-                ),
-                onOpenUpdates: { openUpdatesPanel() },
                 specialistAgents: specialistAgentStore.agents,
                 agentWorkingIDs: workingSpecialistAgentIDs,
                 selectedSpecialistAgentID: selectedSpecialistAgentID,
@@ -1755,9 +1742,6 @@ struct ContentView: View {
     private func refreshUpgradeBannerState() {
         let appAvailable = UpdateScheduler.hasActionableAppUpdate
         let cliAvailable = UpdateScheduler.hasActionableCLIUpdate
-        sidebarUpdateAppVersion = appAvailable ? UpdateScheduler.cachedAppRelease?.latestVersion : nil
-        sidebarUpdateCLIVersion = cliAvailable ? UpdateScheduler.cachedCLIStatus?.latestVersion : nil
-        showSidebarUpdateButton = appAvailable || cliAvailable
 
         guard !isUpgradeBannerDismissed else {
             showUpgradeBanner = false
@@ -1773,19 +1757,17 @@ struct ContentView: View {
             return
         }
 
-        bannerAppVersion = sidebarUpdateAppVersion
-        bannerCLIVersion = sidebarUpdateCLIVersion
+        bannerAppVersion = appAvailable ? UpdateScheduler.cachedAppRelease?.latestVersion : nil
+        bannerCLIVersion = cliAvailable ? UpdateScheduler.cachedCLIStatus?.latestVersion : nil
         showUpgradeBanner = true
     }
 }
 
-private struct UpdatesBanner: View {
-    let appVersion: String?
-    let cliVersion: String?
-    let onAction: () -> Void
-    let onDismiss: () -> Void
+enum UpdatesBannerCopy {
+    static let title = "Updates Available"
+    static let dismissHelp = "Dismiss until next launch"
 
-    private var subtitle: String {
+    static func subtitle(appVersion: String?, cliVersion: String?) -> String {
         switch (appVersion, cliVersion) {
         case let (app?, nil):
             return "GrokBuild \(app) is ready to download and install."
@@ -1798,35 +1780,57 @@ private struct UpdatesBanner: View {
         }
     }
 
+    static func accessibilityLabel(appVersion: String?, cliVersion: String?) -> String {
+        "\(title). \(subtitle(appVersion: appVersion, cliVersion: cliVersion))"
+    }
+}
+
+private struct UpdatesBanner: View {
+    let appVersion: String?
+    let cliVersion: String?
+    let onAction: () -> Void
+    let onDismiss: () -> Void
+
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.title3)
-                .foregroundStyle(.blue)
+        HStack(spacing: 0) {
+            Button(action: onAction) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                        .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Button(action: onAction) {
-                    Text("Updates Available")
-                        .font(.callout.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(UpdatesBannerCopy.title)
+                            .font(.callout.weight(.semibold))
+
+                        Text(UpdatesBannerCopy.subtitle(appVersion: appVersion, cliVersion: cliVersion))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
                 }
-                .buttonStyle(.plain)
-
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .padding(.leading, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-
-            Spacer(minLength: 8)
+            .buttonStyle(.plain)
+            .accessibilityLabel(UpdatesBannerCopy.accessibilityLabel(appVersion: appVersion, cliVersion: cliVersion))
+            .help(UpdatesBannerCopy.title)
 
             Button(action: onDismiss) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Dismiss until next launch")
+            .help(UpdatesBannerCopy.dismissHelp)
+            .accessibilityLabel("Dismiss")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) {
             Divider()

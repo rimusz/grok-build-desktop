@@ -78,11 +78,6 @@ enum SidebarPresentation {
     }
 }
 
-enum SidebarUpdateButtonAppearance {
-    static let background = Color.blue
-    static let foreground = Color.white
-}
-
 enum SidebarSectionActions {
     static let newAgent = "New Agent"
     static let addProject = "Add Project"
@@ -125,10 +120,6 @@ struct SidebarView: View {
     var onSessionDisclosureChanged: () -> Void = {}
     var onOpenSettings: () -> Void
     var isSettingsSelected: Bool = false
-    var hasActionableUpdate: Bool = false
-    var updateButtonTitle: String = "Update"
-    var updateButtonAccessibilityLabel: String = "Updates available"
-    var onOpenUpdates: () -> Void = {}
     var specialistAgents: [SpecialistAgent] = []
     var agentWorkingIDs: Set<UUID> = []
     var selectedSpecialistAgentID: UUID?
@@ -486,24 +477,6 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-
-                if hasActionableUpdate {
-                    Button(action: onOpenUpdates) {
-                        Text(updateButtonTitle)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(SidebarUpdateButtonAppearance.foreground)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                SidebarUpdateButtonAppearance.background,
-                                in: RoundedRectangle(cornerRadius: 6)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .controlSize(.small)
-                    .accessibilityLabel(updateButtonAccessibilityLabel)
-                    .help(updateButtonAccessibilityLabel)
-                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 8)

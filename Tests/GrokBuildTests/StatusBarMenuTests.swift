@@ -59,38 +59,40 @@ final class StatusBarMenuTests: XCTestCase {
         )
     }
 
-    func testSidebarUpdateButtonTitleAndAccessibility() {
-        XCTAssertEqual(SidebarUpdateButtonAppearance.background, Color.blue)
-        XCTAssertEqual(SidebarUpdateButtonAppearance.foreground, Color.white)
-        XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("0.2.9"), "v0.2.9")
-        XCTAssertEqual(SidebarUpdateButtonCopy.versionTitle("v0.2.9"), "v0.2.9")
+    func testUpdatesBannerCopyAndAccessibility() {
+        XCTAssertEqual(UpdatesBannerCopy.title, "Updates Available")
+        XCTAssertEqual(UpdatesBannerCopy.dismissHelp, "Dismiss until next launch")
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.title(appVersion: "0.2.8", cliVersion: nil),
-            "v0.2.8"
+            UpdatesBannerCopy.subtitle(appVersion: "0.3.1", cliVersion: nil),
+            "GrokBuild 0.3.1 is ready to download and install."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.title(appVersion: nil, cliVersion: "1.0.6"),
-            "CLI"
+            UpdatesBannerCopy.subtitle(appVersion: nil, cliVersion: "1.0.6"),
+            "grok CLI 1.0.6 is ready to update."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.title(appVersion: "0.2.8", cliVersion: "1.0.6"),
-            "Updates"
+            UpdatesBannerCopy.subtitle(appVersion: "0.3.1", cliVersion: "1.0.6"),
+            "GrokBuild 0.3.1 and grok CLI 1.0.6 have updates ready."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.title(appVersion: nil, cliVersion: nil),
-            "Update"
+            UpdatesBannerCopy.subtitle(appVersion: nil, cliVersion: nil),
+            "Review available updates."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: "0.2.8", cliVersion: nil),
-            "GrokBuild 0.2.8 available"
+            UpdatesBannerCopy.accessibilityLabel(appVersion: "0.3.1", cliVersion: nil),
+            "Updates Available. GrokBuild 0.3.1 is ready to download and install."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: nil, cliVersion: "1.0.6"),
-            "grok CLI 1.0.6 available"
+            UpdatesBannerCopy.accessibilityLabel(appVersion: nil, cliVersion: "1.0.6"),
+            "Updates Available. grok CLI 1.0.6 is ready to update."
         )
         XCTAssertEqual(
-            SidebarUpdateButtonCopy.accessibilityLabel(appVersion: "0.2.8", cliVersion: "1.0.6"),
-            "GrokBuild 0.2.8 and grok CLI 1.0.6 available"
+            UpdatesBannerCopy.accessibilityLabel(appVersion: "0.3.1", cliVersion: "1.0.6"),
+            "Updates Available. GrokBuild 0.3.1 and grok CLI 1.0.6 have updates ready."
+        )
+        XCTAssertEqual(
+            UpdatesBannerCopy.accessibilityLabel(appVersion: nil, cliVersion: nil),
+            "Updates Available. Review available updates."
         )
     }
 
