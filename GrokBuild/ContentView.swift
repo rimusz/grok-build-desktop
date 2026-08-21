@@ -1792,7 +1792,7 @@ private struct UpdatesBanner: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             Button(action: onAction) {
                 HStack(spacing: 12) {
                     Image(systemName: "arrow.triangle.2.circlepath")
@@ -1811,6 +1811,9 @@ private struct UpdatesBanner: View {
 
                     Spacer(minLength: 8)
                 }
+                .padding(.leading, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1820,13 +1823,14 @@ private struct UpdatesBanner: View {
             Button(action: onDismiss) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(UpdatesBannerCopy.dismissHelp)
             .accessibilityLabel("Dismiss")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) {
             Divider()

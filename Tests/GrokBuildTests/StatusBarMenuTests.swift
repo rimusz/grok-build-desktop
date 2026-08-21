@@ -82,6 +82,18 @@ final class StatusBarMenuTests: XCTestCase {
             UpdatesBannerCopy.accessibilityLabel(appVersion: "0.3.1", cliVersion: nil),
             "Updates Available. GrokBuild 0.3.1 is ready to download and install."
         )
+        XCTAssertEqual(
+            UpdatesBannerCopy.accessibilityLabel(appVersion: nil, cliVersion: "1.0.6"),
+            "Updates Available. grok CLI 1.0.6 is ready to update."
+        )
+        XCTAssertEqual(
+            UpdatesBannerCopy.accessibilityLabel(appVersion: "0.3.1", cliVersion: "1.0.6"),
+            "Updates Available. GrokBuild 0.3.1 and grok CLI 1.0.6 have updates ready."
+        )
+        XCTAssertEqual(
+            UpdatesBannerCopy.accessibilityLabel(appVersion: nil, cliVersion: nil),
+            "Updates Available. Review available updates."
+        )
     }
 
     func testSessionsHistoryCopyIsDistinctFromDashboard() {
