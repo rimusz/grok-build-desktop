@@ -82,7 +82,7 @@ enum BrowserUsePlugin {
             return "Found — required to run the official browser-use plugin (`uvx`)."
         }
         if pluginBackendSelected || pluginActive {
-            return "Not found — install uv so grok can start `uvx browser-use --cli-mcp`."
+            return "Not found — install uv so grok can start `uvx browser-use@latest --cli-mcp`."
         }
         return "Not found — needed only for the official browser-use plugin."
     }

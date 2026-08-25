@@ -493,6 +493,7 @@ final class CompetitiveUXTests: XCTestCase {
         let uv = DoctorReport.checks(from: inputs).first { $0.key == "uv" }
         XCTAssertEqual(uv?.status, .warning)
         XCTAssertTrue(uv?.detail.contains("Not found") ?? false)
+        XCTAssertTrue(uv?.detail.contains("uvx browser-use@latest --cli-mcp") ?? false)
 
         let found = DoctorReport.checks(from: DoctorInputs(
             cliFound: true,
