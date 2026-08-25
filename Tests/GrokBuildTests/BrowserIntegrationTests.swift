@@ -10,6 +10,7 @@ final class BrowserIntegrationTests: XCTestCase {
     private var savedExternalBrowserAppID: Any?
     private var savedExternalBrowserAppPath: Any?
     private var savedAutoStartExternalBrowser: Any?
+    private var savedBackend: Any?
     private var savedAppliedEnabled: Any?
     private var savedAppliedRuntimeMode: Any?
     private var savedAppliedCDPURL: Any?
@@ -18,6 +19,7 @@ final class BrowserIntegrationTests: XCTestCase {
     private var savedAppliedExternalBrowserAppID: Any?
     private var savedAppliedExternalBrowserAppPath: Any?
     private var savedAppliedAutoStartExternalBrowser: Any?
+    private var savedAppliedBackend: Any?
 
     override func setUp() {
         super.setUp()
@@ -30,6 +32,7 @@ final class BrowserIntegrationTests: XCTestCase {
         savedExternalBrowserAppID = defaults.object(forKey: BrowserSettingsKeys.externalBrowserAppID)
         savedExternalBrowserAppPath = defaults.object(forKey: BrowserSettingsKeys.externalBrowserAppPath)
         savedAutoStartExternalBrowser = defaults.object(forKey: BrowserSettingsKeys.autoStartExternalBrowser)
+        savedBackend = defaults.object(forKey: BrowserSettingsKeys.backend)
         savedAppliedEnabled = defaults.object(forKey: BrowserSettingsKeys.appliedEnabled)
         savedAppliedRuntimeMode = defaults.object(forKey: BrowserSettingsKeys.appliedRuntimeMode)
         savedAppliedCDPURL = defaults.object(forKey: BrowserSettingsKeys.appliedCDPURL)
@@ -38,6 +41,7 @@ final class BrowserIntegrationTests: XCTestCase {
         savedAppliedExternalBrowserAppID = defaults.object(forKey: BrowserSettingsKeys.appliedExternalBrowserAppID)
         savedAppliedExternalBrowserAppPath = defaults.object(forKey: BrowserSettingsKeys.appliedExternalBrowserAppPath)
         savedAppliedAutoStartExternalBrowser = defaults.object(forKey: BrowserSettingsKeys.appliedAutoStartExternalBrowser)
+        savedAppliedBackend = defaults.object(forKey: BrowserSettingsKeys.appliedBackend)
     }
 
     override func tearDown() {
@@ -49,6 +53,7 @@ final class BrowserIntegrationTests: XCTestCase {
         restore(savedExternalBrowserAppID, forKey: BrowserSettingsKeys.externalBrowserAppID)
         restore(savedExternalBrowserAppPath, forKey: BrowserSettingsKeys.externalBrowserAppPath)
         restore(savedAutoStartExternalBrowser, forKey: BrowserSettingsKeys.autoStartExternalBrowser)
+        restore(savedBackend, forKey: BrowserSettingsKeys.backend)
         restore(savedAppliedEnabled, forKey: BrowserSettingsKeys.appliedEnabled)
         restore(savedAppliedRuntimeMode, forKey: BrowserSettingsKeys.appliedRuntimeMode)
         restore(savedAppliedCDPURL, forKey: BrowserSettingsKeys.appliedCDPURL)
@@ -57,6 +62,7 @@ final class BrowserIntegrationTests: XCTestCase {
         restore(savedAppliedExternalBrowserAppID, forKey: BrowserSettingsKeys.appliedExternalBrowserAppID)
         restore(savedAppliedExternalBrowserAppPath, forKey: BrowserSettingsKeys.appliedExternalBrowserAppPath)
         restore(savedAppliedAutoStartExternalBrowser, forKey: BrowserSettingsKeys.appliedAutoStartExternalBrowser)
+        restore(savedAppliedBackend, forKey: BrowserSettingsKeys.appliedBackend)
         super.tearDown()
     }
 
@@ -69,7 +75,8 @@ final class BrowserIntegrationTests: XCTestCase {
             showBrowserWindow: true,
             externalBrowserAppID: .brave,
             externalBrowserAppPath: "/Applications/Brave Browser.app",
-            autoStartExternalBrowser: false
+            autoStartExternalBrowser: false,
+            backend: .browserUsePlugin
         )
 
         BrowserSettingsStore.save(settings)
@@ -388,8 +395,125 @@ final class BrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(applied.profileName, "grok-com")
         XCTAssertTrue(applied.showBrowserWindow)
         XCTAssertTrue(applied.autoStartExternalBrowser)
-        // Preset must not flip the user's enable toggle.
+        // Preset must not flip the user's enable toggle or backend.
         XCTAssertEqual(applied.enabled, settings.enabled)
+        XCTAssertEqual(applied.backend, settings.backend)
+    }
+
+    func testPluginStatusParsesInstalledEnabledAndDisabled() {
+        let enabled = GrokPluginInfo(dictionary: [
+            "name": "browser-use",
+            "status": "installed",
+            "enabled": true
+        ])
+        let disabled = GrokPluginInfo(dictionary: [
+            "name": "browser-use",
+            "status": "installed",
+            "enabled": false
+        ])
+        let other = GrokPluginInfo(dictionary: [
+            "name": "superpowers",
+            "status": "installed",
+            "enabled": true
+        ])
+
+        XCTAssertEqual(
+            BrowserUsePlugin.status(from: [enabled]),
+            BrowserUsePlugin.Status(isInstalled: true, isEnabled: true)
+        )
+        XCTAssertTrue(BrowserUsePlugin.status(from: [enabled]).blocksGrokBuildMCP)
+        XCTAssertEqual(
+            BrowserUsePlugin.status(from: [disabled]),
+            BrowserUsePlugin.Status(isInstalled: true, isEnabled: false)
+        )
+        XCTAssertFalse(BrowserUsePlugin.status(from: [disabled]).blocksGrokBuildMCP)
+        XCTAssertEqual(BrowserUsePlugin.status(from: [other]), .inactive)
+        XCTAssertEqual(BrowserUsePlugin.status(from: []), .inactive)
+    }
+
+    func testGrokBuildBrowserStackSkippedWhenPluginLoadedOrSelected() {
+        let enabledIsolated = BrowserSettings(
+            enabled: true,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .grokbuild
+        )
+        let enabledPluginBackend = BrowserSettings(
+            enabled: true,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .browserUsePlugin
+        )
+        let pluginActive = BrowserUsePlugin.Status(isInstalled: true, isEnabled: true)
+
+        XCTAssertTrue(
+            BrowserUsePlugin.shouldUseGrokBuildBrowserStack(settings: enabledIsolated, plugin: .inactive)
+        )
+        XCTAssertFalse(
+            BrowserUsePlugin.shouldUseGrokBuildBrowserStack(settings: enabledIsolated, plugin: pluginActive)
+        )
+        XCTAssertFalse(
+            BrowserUsePlugin.shouldUseGrokBuildBrowserStack(settings: enabledPluginBackend, plugin: .inactive)
+        )
+        XCTAssertFalse(
+            BrowserUsePlugin.shouldUseGrokBuildBrowserStack(
+                settings: BrowserSettings.defaults,
+                plugin: pluginActive
+            )
+        )
+    }
+
+    func testBrowserMCPConfigNilWhenPluginBackendSelected() {
+        let settings = BrowserSettings(
+            enabled: true,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .browserUsePlugin
+        )
+        XCTAssertNil(AgentBrowserService.browserMCPConfig(settings: settings, pluginStatus: .inactive))
+    }
+
+    func testBrowserMCPConfigNilWhenPluginBlocksEvenIfIsolatedSelected() {
+        let settings = BrowserSettings(
+            enabled: true,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .grokbuild
+        )
+        let pluginActive = BrowserUsePlugin.Status(isInstalled: true, isEnabled: true)
+        XCTAssertNil(AgentBrowserService.browserMCPConfig(settings: settings, pluginStatus: pluginActive))
+    }
+
+    func testPluginBackendEnableDoesNotRequireAgentBrowser() {
+        let settings = BrowserSettings(
+            enabled: false,
+            runtimeMode: .managed,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .browserUsePlugin
+        )
+        XCTAssertNil(AgentBrowserService.browserToolsConfigurationIssue(settings: settings))
+    }
+
+    func testBrowserSkillInstallerSkipsPluginBackend() throws {
+        let skillsRoot = temporarySkillsRootURL()
+        defer { try? FileManager.default.removeItem(at: skillsRoot) }
+
+        let settings = BrowserSettings(
+            enabled: true,
+            cdpURL: "",
+            profileName: "",
+            showBrowserWindow: false,
+            backend: .browserUsePlugin
+        )
+
+        try BrowserSkillInstaller.installIfNeeded(settings: settings, skillsRoot: skillsRoot)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: BrowserSkillInstaller.skillURL(inSkillsRoot: skillsRoot).path))
     }
 
     private func restore(_ value: Any?, forKey key: String) {

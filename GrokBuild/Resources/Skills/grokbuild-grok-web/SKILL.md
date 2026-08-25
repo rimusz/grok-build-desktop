@@ -17,13 +17,18 @@ For ordinary chat with grok, prefer the native GrokBuild session (the CLI alread
 
 ## Prerequisites
 
-- Browser Tools enabled in Settings → Browser (see `grokbuild-browser-control`).
-- A Chromium browser reachable by `agent-browser`:
+- Browser Tools enabled in Settings → Browser.
+- **If the official browser-use plugin is the active backend:** use `browser_exec` / `browser_screenshot` (or the plugin skill). Drive grok.com in the user's Chrome or a cloud browser. Do not call `browser_open_url` / `browser_snapshot`.
+- **If GrokBuild isolated is the active backend:** a Chromium browser reachable by `agent-browser`:
   - **Managed runtime** — log into grok.com once in the managed browser profile.
   - **Existing Chrome** — point GrokBuild at a Chromium instance you start with remote debugging, using a separate profile so you can log into grok.com there.
 - The agent must be logged into grok.com in the driven browser before automating it. Ask the user to log in if needed; do not automate the login, password, or MFA.
 
 ## Safe Workflow
+
+Use the tools that match the active backend.
+
+**GrokBuild isolated**
 
 1. `browser_open_url` → `https://grok.com`.
 2. `browser_wait_for_load`, then `browser_snapshot` to read the current surface and get refs.
@@ -33,14 +38,20 @@ For ordinary chat with grok, prefer the native GrokBuild session (the CLI alread
 6. For **Imagine**: navigate to the Imagine surface, type the prompt, trigger generate, then `browser_screenshot` to capture the result.
 7. For **skills/connectors**: snapshot the relevant UI, use refs to trigger them, then read the result.
 
-Do not guess refs. Re-snapshot when anything looks stale.
+**Official browser-use plugin**
+
+1. Screenshot first, then `browser_exec` to `new_tab("https://grok.com")` (not `goto_url` on first navigation).
+2. Wait for load, screenshot or inspect, then click/type through the plugin helpers.
+3. For Imagine: open the Imagine surface, submit the prompt, screenshot the result.
+
+Do not guess refs. Re-snapshot (isolated) or re-screenshot (plugin) when anything looks stale.
 
 ## Combining with local work
 
 This skill pairs with `grokbuild-computer-use` and local file/git tools. Typical orchestration:
 
 - Ask grok.com web for something only it can do (e.g. generate an image with Imagine).
-- Read/screenshot the result with `browser_*` tools.
+- Read/screenshot the result with the active backend's browser tools.
 - Continue locally: save the file, open it in Finder, edit code, run `git`, or drive a Mac app with `computer_*` tools.
 
 Example: "Use Imagine on grok.com to make a hero image, save it to `~/Downloads/hero.png`, then open Finder there."

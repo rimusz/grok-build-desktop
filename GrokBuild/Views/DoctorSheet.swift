@@ -4,9 +4,9 @@ import AppKit
 /// In-app diagnostics + broken-auth recovery, inspired by Grok-UI's `doctor` panel.
 ///
 /// Collects environment facts (CLI path, version, auth, config.toml, Browser/Computer Use
-/// readiness, Node.js for the Cursor bridge, Cursor bridge reachability) via `DoctorInputs`,
+/// readiness, Node.js for the Cursor bridge, uv for the browser-use plugin, Cursor bridge reachability) via `DoctorInputs`,
 /// maps them to rows with the pure `DoctorReport`, and offers remediations: install the grok CLI,
-/// run `grok login`, and install Node.js when missing/too old.
+/// run `grok login`, install Node.js when missing/too old, and install uv when the plugin backend needs it.
 struct DoctorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -117,6 +117,17 @@ struct DoctorSheet: View {
                         .controlSize(.small)
                     }
                 }
+                if check.key == "uv", check.status == .warning {
+                    HStack(spacing: 10) {
+                        Button("Install with Homebrew…") { openUvBrewInstallInTerminal() }
+                            .controlSize(.small)
+                        Button("uv docs…") {
+                            NSWorkspace.shared.open(BrowserUsePlugin.uvInstallURL)
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                    }
+                }
             }
             Spacer()
         }
@@ -142,9 +153,10 @@ struct DoctorSheet: View {
         let version = cliURL == nil ? "" : await GrokCLIService.versionDisplayLine()
         let authed = GrokAuthProbe.isLikelyAuthenticated()
         let configPresent = FileManager.default.fileExists(atPath: CustomModelStore.configURL.path)
-        let browserEnabled = UserDefaults.standard.bool(forKey: BrowserSettingsKeys.appliedEnabled)
+        let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseEnabled = UserDefaults.standard.bool(forKey: "grokbuild.computerUse.applied.enabled")
         let node = CursorBridgeRuntime.probeNode()
+        let plugin = await BrowserUsePlugin.loadStatus()
 
         var bridgeCount: Int? = nil
         if probeBridges {
@@ -157,12 +169,15 @@ struct DoctorSheet: View {
             versionDisplay: version.replacingOccurrences(of: "grok CLI: ", with: ""),
             authenticated: authed,
             configPresent: configPresent,
-            browserEnabled: browserEnabled,
+            browserEnabled: browserSettings.enabled,
+            browserBackendIsPlugin: browserSettings.backend == .browserUsePlugin,
+            browserUsePluginActive: plugin.blocksGrokBuildMCP,
             computerUseEnabled: computerUseEnabled,
             reachableBridgeCount: bridgeCount,
             nodeFound: node.isFound,
             nodeVersionDisplay: node.versionDisplay,
-            nodeMeetsMinimum: node.meetsMinimum
+            nodeMeetsMinimum: node.meetsMinimum,
+            uvFound: BrowserUsePlugin.uvToolIsAvailable()
         )
     }
 
@@ -176,6 +191,16 @@ struct DoctorSheet: View {
 
     private func openNodeBrewInstallInTerminal() {
         let command = CursorBridge.NodeRequirement.brewInstallCommand
+        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "tell application \"Terminal\" to do script \"\(escaped)\"\ntell application \"Terminal\" to activate"
+        if let apple = NSAppleScript(source: script) {
+            var err: NSDictionary?
+            apple.executeAndReturnError(&err)
+        }
+    }
+
+    private func openUvBrewInstallInTerminal() {
+        let command = BrowserUsePlugin.brewInstallCommand
         let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let script = "tell application \"Terminal\" to do script \"\(escaped)\"\ntell application \"Terminal\" to activate"
         if let apple = NSAppleScript(source: script) {

@@ -7,15 +7,15 @@ description: Guides GrokBuild browser automation through agent-browser MCP tools
 
 ## Default Choice
 
-Prefer the managed browser runtime unless the user explicitly asks to use an existing browser.
+Prefer the GrokBuild isolated backend (managed agent-browser) unless Settings → Browser is set to the official browser-use plugin, or the user explicitly asks to use their logged-in Chrome via that plugin.
 
-- Managed runtime means `agent-browser install` provides a separate automation Chrome/Chromium runtime.
-- Existing Chrome means the user starts a Chromium-based browser with remote debugging and provides a CDP URL.
-- Do not require a CDP URL for the managed runtime.
+- Isolated GrokBuild backend: `agent-browser` MCP tools listed below. A separate automation Chrome/Chromium profile. Do not search the workspace for browser implementations.
+- Official plugin backend: grok loads `browser-use` MCP (`browser_exec`, `browser_screenshot`). Use those tools instead of `browser_open_url` / `browser_snapshot`. First navigation is typically `new_tab(url)`. Ask the user to allow Chrome remote debugging if the daemon cannot connect.
+- Never mix the two stacks in one session. If both appear, prefer the plugin tools and tell the user to pick one backend in Settings → Browser.
 
-## Browser Tool Workflow
+## Browser Tool Workflow (GrokBuild isolated)
 
-Use the `grokbuild-browser` MCP tools. Do not search the workspace for browser implementations.
+Use the `grokbuild-browser` MCP tools only when that backend is active.
 
 Available tools: `browser_open_url`, `browser_snapshot`, `browser_tabs`, `browser_click_ref`, `browser_type_ref`, `browser_wait_for_load`, `browser_screenshot`, `browser_eval_js`.
 

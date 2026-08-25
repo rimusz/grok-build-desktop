@@ -144,7 +144,7 @@ grok-deck2/
 
 Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles. Status-item actions that front the window are deferred to the next main-queue turn so the menu click is not delivered into the newly keyed window.
 
-**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, `Models`, `Agents, Roles & Subagents`, `Sessions`, and `Browser & Computer Use` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, walks through adding custom providers and models (`~/.grok/config.toml`, Fetch-then-Add, dummy keys, Cursor sidecar), distinguishes Sessions Dashboard from Sessions History, covers Browser/`agent-browser` and Computer Use/Accessibility, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
+**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, `Models`, `Agents, Roles & Subagents`, `Sessions`, and `Browser & Computer Use` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, walks through adding custom providers and models (`~/.grok/config.toml`, Fetch-then-Add, dummy keys, Cursor sidecar), distinguishes Sessions Dashboard from Sessions History, covers Browser backends (`agent-browser` isolated vs official `browser-use` plugin) and Computer Use/Accessibility, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
 
 **Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
@@ -327,10 +327,10 @@ On every (re)start, `ChatStore`:
 
 1. Loads **permission settings** from `GrokSettingsKeys` (UserDefaults).
 2. Loads **applied** browser + computer use settings.
-3. Installs bundled **skills** to `~/.grok/skills/` if features enabled.
-4. Starts external browser if browser tools enabled (CDP mode).
+3. Installs bundled **skills** to `~/.grok/skills/` if the **GrokBuild isolated** browser stack will be used (`BrowserUsePlugin.shouldUseGrokBuildBrowserStack`).
+4. Starts external browser if that isolated stack is enabled (CDP mode).
 5. Builds MCP list:
-   - `AgentBrowserService.browserMCPConfig(settings:)` → `grokbuild-browser`
+   - `AgentBrowserService.browserMCPConfig(settings:pluginStatus:)` → `grokbuild-browser` only when the isolated stack is active (skipped if the `browser-use` plugin is loaded or Settings backend is the plugin)
    - `ComputerUseService.computerUseMCPConfig(settings:)` → `grokbuild-computer-use`
 6. Resolves the **session agent** via `GrokAgentProfiles.launchArgument(for:)` → `GrokLaunchOptions.agent` (`--agent`).
 7. Passes model from the **active tab** (`SavedSessionRecord.model`), with grok-session and project-default fallbacks.
@@ -465,8 +465,8 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.privacyMode` | `GrokSettingsKeys` | Display-only Privacy Mode (Settings → App). Redacts project paths/names and session titles in the UI; never mutates persisted data |
 | `grokbuild.showAllAgents` | `GrokSettingsKeys` | Sidebar Agents section lists every agent when true (default false = **active only**: pinned or a live session in the current project) |
 | `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
-| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (agent-browser CLI: runtime mode, CDP URL, profile, external app) |
-| `grokbuild.browser.applied.*` | | **Applied** settings used at process start. The Browser Tools toggle writes both draft and applied immediately (`AgentBrowserService.applyEnabled`) |
+| `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (backend, agent-browser CLI: runtime mode, CDP URL, profile, external app) |
+| `grokbuild.browser.applied.*` | | **Applied** settings used at process start. The Browser Tools toggle and backend picker write both draft and applied immediately (`AgentBrowserService.applyEnabled` / Settings backend change) |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
 | `grokbuild.computerUse.applied.*` | | **Applied** settings used at process start |
 | `grokbuild.computerUse.promptedAccessibilityCDHash` | | Last app signature that triggered an Accessibility re-prompt after a rebuild |
@@ -499,18 +499,22 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 
 | Piece | Location |
 |-------|----------|
-| Settings | `SettingsView` → `.browser` tab; keys in `BrowserSettings.swift` |
-| Service | `AgentBrowserService.swift` — agent-browser CLI, CDP, external browser launch |
-| MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` |
-| Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when browser tools enabled) |
-| Presets | `BrowserPreset` (e.g. `.grokCom`) — one-click runtime/session-name setup in `BrowserSettings.swift`, applied from the Browser pane |
-| Chat UI | Settings → **Browser** (`SettingsView` `.browser`). The enable switch applies immediately (same as Computer Use) and restarts grok so `grokbuild-browser` is injected. Runtime/CDP edits still need **Apply**. No in-chat toggle — app-wide |
+| Settings | `SettingsView` → `.browser` tab; keys in `BrowserSettings.swift` (`backend`: `.grokbuild` / `.browserUsePlugin`) |
+| Isolated service | `AgentBrowserService.swift` — agent-browser CLI, CDP, external browser launch |
+| Plugin | `BrowserUsePlugin.swift` — parse `grok plugin list`, skip `grokbuild-browser` while `browser-use` is enabled, locate `uv`/`uvx` |
+| MCP | Name: `grokbuild-browser`; config from `browserMCPConfig` **only** when `shouldUseGrokBuildBrowserStack` is true |
+| Skill | `Resources/Skills/grokbuild-browser-control/` + `grokbuild-grok-web/` → `BrowserSkillInstaller` (installs both when the **isolated** backend is enabled) |
+| Presets | `BrowserPreset` (e.g. `.grokCom`) — isolated-backend one-click runtime/session-name setup |
+| Chat UI | Settings → **Browser**. Enable switch applies immediately. Backend picker applies immediately (install plugin with `--trust`, or disable plugin when returning to isolated). Runtime/CDP edits still need **Apply**. No in-chat toggle — app-wide |
 
-**Backend:** the bundled `agent-browser` CLI exposed to grok as an stdio MCP server (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL.
+**Backends (exclusive):**
 
-**agent-browser tools (via MCP, `scripts/grokbuild-browser-mcp`):** `browser_open_url`, `browser_snapshot` (prefixes title/URL; `about:blank` is a blank tab, not a failure), `browser_tabs` (`agent-browser tab list` / `new` / `close` / index), `browser_click_ref`, `browser_type_ref`, `browser_screenshot`, `browser_eval_js`, `browser_wait_for_load`. There is no grok-native `browser_tab` in the session.
+1. **GrokBuild isolated** — bundled `agent-browser` CLI as stdio MCP (`grokbuild-browser`). Managed Chromium vs external browser (Chrome/Brave/Edge/Arc) via CDP URL. Tools: `browser_open_url`, `browser_snapshot` (prefixes title/URL; `about:blank` is a blank tab, not a failure), `browser_tabs`, `browser_click_ref`, `browser_type_ref`, `browser_screenshot`, `browser_eval_js`, `browser_wait_for_load`.
+2. **Official `browser-use` plugin** — `grok plugin install browser-use --trust` (xAI marketplace). grok runs `uvx browser-use@latest --cli-mcp`. Tools: `browser_exec`, `browser_screenshot` (logged-in Chrome or Browser Use Cloud). Not the composer `--agent browser-use` persona.
 
-**grok.com web:** drive grok.com via browser tools to reach web-only features (Imagine, skills, connectors), then continue locally with Computer Use — see `grokbuild-grok-web` skill.
+If the plugin is installed and enabled, GrokBuild never injects `grokbuild-browser`, even when the Settings picker still says isolated.
+
+**grok.com web:** follow the active backend — isolated `browser_*` tools or plugin `browser_exec` — see `grokbuild-grok-web`.
 
 ### Agents
 
@@ -613,7 +617,7 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 
 ### Doctor + onboarding
 
-`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), and Node.js install (Homebrew Terminal command or nodejs.org) when the Node check warns. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**). Closes with `WindowTrafficLights` like Sessions History.
+`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, browser backend / `browser-use` plugin, uv/uvx, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `BrowserUsePlugin.loadStatus`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), Node.js install (Homebrew or nodejs.org) when the Node check warns, and uv install when the browser-use plugin needs it. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**). Closes with `WindowTrafficLights` like Sessions History.
 
 ### `/btw` aside
 
@@ -741,7 +745,7 @@ The settings chrome uses a wrapping tab bar (`SettingsView.settingsTabBar` + `Se
 
 | Feature | Draft keys | Applied keys | When applied |
 |---------|------------|--------------|--------------|
-| Browser | `grokbuild.browser.*` | `grokbuild.browser.applied.*` | **Enable toggle** applies immediately; other fields via **Apply and Restart** |
+| Browser | `grokbuild.browser.*` | `grokbuild.browser.applied.*` | **Enable toggle** and **backend picker** apply immediately; runtime/CDP via **Apply and Restart** |
 | Computer Use | `grokbuild.computerUse.*` | `grokbuild.computerUse.applied.*` | Same pattern |
 
 **Live Grok sessions read applied settings only** in `ChatStore.restartProcess` → `BrowserSettingsStore.loadApplied()` / `ComputerUseSettingsStore.loadApplied()`.
@@ -986,7 +990,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **CLI working lines** | `GrokActivitySummary`, `GrokActivityBuilder`, `GrokActivityLog`, `GrokActivityLineView`, `Message.parts` |
 | **Transcript protocol-noise filter** | `AssistantTranscriptSanitizer.swift` (live chunks, raw stdout, import, restore, align) |
 | **Add/remove project** | `WorkspaceStore`, `WorkspacePicker` |
-| **Browser tools** | `AgentBrowserService`, `BrowserSettingsStore`, settings `.browser` (agent-browser CLI over MCP) |
+| **Browser tools** | `AgentBrowserService`, `BrowserUsePlugin`, `BrowserSettingsStore`, settings `.browser` (isolated agent-browser MCP **or** official `browser-use` plugin) |
 | **Session agent** | `GrokAgentProfiles`, `GrokCLIService.listAgents`, settings `.agents` |
 | **Custom subagents (roles)** | `SubagentRole` / `SubagentRoleStore` (`CustomModelSettings.swift`), `SubagentRoleEditor` in `SettingsView`, `~/.grok/config.toml` `[subagents.roles.*]` + `~/.grok/prompts/` |
 | **Agents (roster)** | `SpecialistAgentStore` + `SpecialistAgentRoster` + `AgentEditorSheet` + `SidebarView` Agents section; start/focus via `ContentView.activateSpecialistAgent`; last session via `openLastSpecialistSession` |
@@ -1037,7 +1041,7 @@ make test    # Tests/GrokBuildTests/
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete, strip `ToolCallUpdate` protocol JSON from imported assistants |
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
-| `BrowserIntegrationTests.swift` | Browser MCP config, skill install, MCP script tool names (`browser_tabs` / snapshot), settings round-trip, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
+| `BrowserIntegrationTests.swift` | Browser MCP config, plugin mutual exclusion, skill install (isolated only), MCP script tool names (`browser_tabs` / snapshot), settings round-trip including backend, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission); `SubagentDeleteCopy` confirmation title/message; `SessionRoleMenu` copy + roster-linked role identity; `SpecialistAgent` validation/normalize/Codable + `SpecialistAgentStore` Application Support CRUD (unique names, reserved role names, malformed JSON, failed-write rollback); sample-agent install + `SpecialistAgentRoleSync` upsert (preserve unmanaged TOML keys, idempotent install, role-write rollback); roster live-session binding (most-recent explicit, last session, pill mapping, delete clears identity), duplicate names, filter, pin + active-only / show-all display |
 | `ScheduledTaskTests.swift` | Scheduler tool detection + `ScheduledTaskTracker` (list authoritative, create prompt-correlation, delete, casing tolerance) |
 | `MemoryStoreTests.swift` | `MemoryStore` enumeration/grouping (global/workspace/session, newest-first), session-only delete guard, note appending; `GrokMemoryFlag` mapping + memory-enabled default in `AgentsAndCapabilitiesTests` |

@@ -85,8 +85,11 @@ enum AgentBrowserService {
         return nil
     }
 
-    static func browserMCPConfig(settings: BrowserSettings = BrowserSettingsStore.load()) -> MCPServerConfig? {
-        guard settings.enabled,
+    static func browserMCPConfig(
+        settings: BrowserSettings = BrowserSettingsStore.load(),
+        pluginStatus: BrowserUsePlugin.Status = .inactive
+    ) -> MCPServerConfig? {
+        guard BrowserUsePlugin.shouldUseGrokBuildBrowserStack(settings: settings, plugin: pluginStatus),
               let bridgeScript = bridgeScriptURL() else {
             return nil
         }
@@ -159,6 +162,9 @@ enum AgentBrowserService {
     }
 
     static func browserToolsConfigurationIssue(settings: BrowserSettings = BrowserSettingsStore.load()) -> String? {
+        if settings.backend == .browserUsePlugin {
+            return nil
+        }
         guard bridgeScriptURL() != nil else {
             return "Browser bridge script is missing."
         }

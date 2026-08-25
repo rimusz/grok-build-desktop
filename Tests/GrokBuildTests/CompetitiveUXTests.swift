@@ -470,6 +470,38 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertTrue(node?.detail.contains("v22.14.0") ?? false)
     }
 
+    func testDoctorBrowserDetailNamesPluginWhenActive() {
+        let inputs = DoctorInputs(
+            cliFound: true,
+            authenticated: true,
+            browserEnabled: true,
+            browserUsePluginActive: true
+        )
+        let browser = DoctorReport.checks(from: inputs).first { $0.key == "browser" }
+        XCTAssertTrue(browser?.detail.contains("browser-use plugin") ?? false)
+        XCTAssertTrue(browser?.detail.contains("not injecting grokbuild-browser") ?? false)
+    }
+
+    func testDoctorUvWarnsWhenPluginBackendAndMissing() {
+        let inputs = DoctorInputs(
+            cliFound: true,
+            authenticated: true,
+            browserEnabled: true,
+            browserBackendIsPlugin: true,
+            uvFound: false
+        )
+        let uv = DoctorReport.checks(from: inputs).first { $0.key == "uv" }
+        XCTAssertEqual(uv?.status, .warning)
+        XCTAssertTrue(uv?.detail.contains("Not found") ?? false)
+
+        let found = DoctorReport.checks(from: DoctorInputs(
+            cliFound: true,
+            authenticated: true,
+            uvFound: true
+        )).first { $0.key == "uv" }
+        XCTAssertEqual(found?.status, .ok)
+    }
+
     func testCursorAPIKeyLooksLikeAndValidationResult() {
         XCTAssertFalse(CursorBridge.looksLikeAPIKey(""))
         XCTAssertFalse(CursorBridge.looksLikeAPIKey("short"))

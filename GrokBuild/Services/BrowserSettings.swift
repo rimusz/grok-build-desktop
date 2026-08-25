@@ -53,6 +53,22 @@ enum BrowserRuntimeMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Which browser stack grok should use. The marketplace plugin is grok-owned; GrokBuild only
+/// installs/enables it and skips `grokbuild-browser` while it is loaded.
+enum BrowserBackendKind: String, CaseIterable, Identifiable {
+    case grokbuild
+    case browserUsePlugin
+
+    var id: String { rawValue }
+
+    var pickerLabel: String {
+        switch self {
+        case .grokbuild: return "GrokBuild isolated"
+        case .browserUsePlugin: return "Official plugin"
+        }
+    }
+}
+
 /// Quick-setup presets for common browser-automation targets. Each preset returns
 /// settings tuned for that target (runtime mode, app, CDP URL, session name, visibility),
 /// leaving `enabled` untouched so the toggle stays under user control.
@@ -106,6 +122,7 @@ struct BrowserSettings: Sendable, Equatable {
     var externalBrowserAppID: ExternalBrowserAppID
     var externalBrowserAppPath: String
     var autoStartExternalBrowser: Bool
+    var backend: BrowserBackendKind
 
     init(
         enabled: Bool,
@@ -115,7 +132,8 @@ struct BrowserSettings: Sendable, Equatable {
         showBrowserWindow: Bool,
         externalBrowserAppID: ExternalBrowserAppID = .chrome,
         externalBrowserAppPath: String = "",
-        autoStartExternalBrowser: Bool = true
+        autoStartExternalBrowser: Bool = true,
+        backend: BrowserBackendKind = .grokbuild
     ) {
         self.enabled = enabled
         self.runtimeMode = runtimeMode
@@ -125,6 +143,7 @@ struct BrowserSettings: Sendable, Equatable {
         self.externalBrowserAppID = externalBrowserAppID
         self.externalBrowserAppPath = externalBrowserAppPath
         self.autoStartExternalBrowser = autoStartExternalBrowser
+        self.backend = backend
     }
 
     static let defaults = BrowserSettings(
@@ -135,7 +154,8 @@ struct BrowserSettings: Sendable, Equatable {
         showBrowserWindow: false,
         externalBrowserAppID: .chrome,
         externalBrowserAppPath: "",
-        autoStartExternalBrowser: true
+        autoStartExternalBrowser: true,
+        backend: .grokbuild
     )
 }
 
@@ -148,6 +168,7 @@ enum BrowserSettingsKeys {
     static let externalBrowserAppID = "grokbuild.browser.externalBrowserAppID"
     static let externalBrowserAppPath = "grokbuild.browser.externalBrowserAppPath"
     static let autoStartExternalBrowser = "grokbuild.browser.autoStartExternalBrowser"
+    static let backend = "grokbuild.browser.backend"
     static let appliedEnabled = "grokbuild.browser.applied.enabled"
     static let appliedRuntimeMode = "grokbuild.browser.applied.runtimeMode"
     static let appliedCDPURL = "grokbuild.browser.applied.cdpURL"
@@ -156,6 +177,7 @@ enum BrowserSettingsKeys {
     static let appliedExternalBrowserAppID = "grokbuild.browser.applied.externalBrowserAppID"
     static let appliedExternalBrowserAppPath = "grokbuild.browser.applied.externalBrowserAppPath"
     static let appliedAutoStartExternalBrowser = "grokbuild.browser.applied.autoStartExternalBrowser"
+    static let appliedBackend = "grokbuild.browser.applied.backend"
 }
 
 enum BrowserSettingsStore {
@@ -165,6 +187,8 @@ enum BrowserSettingsStore {
             ?? BrowserSettings.defaults.runtimeMode.rawValue
         let externalBrowserRaw = defaults.string(forKey: BrowserSettingsKeys.externalBrowserAppID)
             ?? BrowserSettings.defaults.externalBrowserAppID.rawValue
+        let backendRaw = defaults.string(forKey: BrowserSettingsKeys.backend)
+            ?? BrowserSettings.defaults.backend.rawValue
 
         return BrowserSettings(
             enabled: defaults.object(forKey: BrowserSettingsKeys.enabled) as? Bool
@@ -181,7 +205,8 @@ enum BrowserSettingsStore {
             externalBrowserAppPath: defaults.string(forKey: BrowserSettingsKeys.externalBrowserAppPath)
                 ?? BrowserSettings.defaults.externalBrowserAppPath,
             autoStartExternalBrowser: defaults.object(forKey: BrowserSettingsKeys.autoStartExternalBrowser) as? Bool
-                ?? BrowserSettings.defaults.autoStartExternalBrowser
+                ?? BrowserSettings.defaults.autoStartExternalBrowser,
+            backend: BrowserBackendKind(rawValue: backendRaw) ?? BrowserSettings.defaults.backend
         )
     }
 
@@ -195,6 +220,7 @@ enum BrowserSettingsStore {
         defaults.set(settings.externalBrowserAppID.rawValue, forKey: BrowserSettingsKeys.externalBrowserAppID)
         defaults.set(settings.externalBrowserAppPath, forKey: BrowserSettingsKeys.externalBrowserAppPath)
         defaults.set(settings.autoStartExternalBrowser, forKey: BrowserSettingsKeys.autoStartExternalBrowser)
+        defaults.set(settings.backend.rawValue, forKey: BrowserSettingsKeys.backend)
     }
 
     static func loadApplied() -> BrowserSettings {
@@ -207,6 +233,8 @@ enum BrowserSettingsStore {
             ?? BrowserSettings.defaults.runtimeMode.rawValue
         let externalBrowserRaw = defaults.string(forKey: BrowserSettingsKeys.appliedExternalBrowserAppID)
             ?? BrowserSettings.defaults.externalBrowserAppID.rawValue
+        let backendRaw = defaults.string(forKey: BrowserSettingsKeys.appliedBackend)
+            ?? BrowserSettings.defaults.backend.rawValue
 
         return BrowserSettings(
             enabled: defaults.object(forKey: BrowserSettingsKeys.appliedEnabled) as? Bool
@@ -223,7 +251,8 @@ enum BrowserSettingsStore {
             externalBrowserAppPath: defaults.string(forKey: BrowserSettingsKeys.appliedExternalBrowserAppPath)
                 ?? BrowserSettings.defaults.externalBrowserAppPath,
             autoStartExternalBrowser: defaults.object(forKey: BrowserSettingsKeys.appliedAutoStartExternalBrowser) as? Bool
-                ?? BrowserSettings.defaults.autoStartExternalBrowser
+                ?? BrowserSettings.defaults.autoStartExternalBrowser,
+            backend: BrowserBackendKind(rawValue: backendRaw) ?? BrowserSettings.defaults.backend
         )
     }
 
@@ -237,5 +266,6 @@ enum BrowserSettingsStore {
         defaults.set(settings.externalBrowserAppID.rawValue, forKey: BrowserSettingsKeys.appliedExternalBrowserAppID)
         defaults.set(settings.externalBrowserAppPath, forKey: BrowserSettingsKeys.appliedExternalBrowserAppPath)
         defaults.set(settings.autoStartExternalBrowser, forKey: BrowserSettingsKeys.appliedAutoStartExternalBrowser)
+        defaults.set(settings.backend.rawValue, forKey: BrowserSettingsKeys.appliedBackend)
     }
 }

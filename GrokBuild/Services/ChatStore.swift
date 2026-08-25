@@ -519,7 +519,12 @@ final class ChatStore {
         let reasoningEffortForLaunch = modelSupportsReasoningEffort(modelForLaunch) ? workspaceReasoningEffort : ""
         let browserSettings = BrowserSettingsStore.loadApplied()
         let computerUseSettings = ComputerUseSettingsStore.loadApplied()
-        if browserSettings.enabled {
+        let browserUsePlugin = await BrowserUsePlugin.loadStatus()
+        let useGrokBuildBrowser = BrowserUsePlugin.shouldUseGrokBuildBrowserStack(
+            settings: browserSettings,
+            plugin: browserUsePlugin
+        )
+        if useGrokBuildBrowser {
             do {
                 try BrowserSkillInstaller.installIfNeeded(settings: browserSettings)
             } catch {
@@ -539,7 +544,7 @@ final class ChatStore {
             }
         }
         let mcpServers = [
-            AgentBrowserService.browserMCPConfig(settings: browserSettings),
+            AgentBrowserService.browserMCPConfig(settings: browserSettings, pluginStatus: browserUsePlugin),
             ComputerUseService.computerUseMCPConfig(settings: computerUseSettings)
         ].compactMap { $0 }
         let opts = GrokLaunchOptions(

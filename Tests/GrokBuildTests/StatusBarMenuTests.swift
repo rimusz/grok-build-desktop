@@ -147,5 +147,10 @@ final class StatusBarMenuTests: XCTestCase {
         XCTAssertTrue(HelpMenuCopy.sessionsDashboardDefinition.contains("live named sessions"))
         XCTAssertTrue(HelpMenuCopy.sessionsHistoryDefinition.contains("archived grok sessions"))
         XCTAssertTrue(HelpMenuCopy.browserEnableDefinition.contains("apply immediately"))
+        XCTAssertTrue(HelpMenuCopy.browserBackendsDefinition.contains("never injects grokbuild-browser"))
+        XCTAssertTrue(HelpMenuCopy.browserPluginInstallDefinition.contains("browser-use --trust"))
+        XCTAssertTrue(HelpMenuCopy.browserPluginInstallDefinition.contains("uv"))
+        XCTAssertTrue(HelpMenuCopy.browserGrokComDefinition.contains("Imagine"))
+        XCTAssertTrue(HelpMenuCopy.browserGrokComDefinition.contains("browser_exec"))
     }
 }

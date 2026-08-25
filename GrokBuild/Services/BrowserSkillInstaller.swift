@@ -14,7 +14,7 @@ enum BrowserSkillInstaller {
         settings: BrowserSettings = BrowserSettingsStore.load(),
         skillsRoot: URL = userSkillsRoot
     ) throws {
-        guard settings.enabled else { return }
+        guard settings.enabled, settings.backend == .grokbuild else { return }
         try install(to: skillsRoot)
     }
 

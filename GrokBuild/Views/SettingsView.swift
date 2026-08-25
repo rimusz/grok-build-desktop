@@ -388,14 +388,19 @@ private struct BrowserSettingsPane: View {
     @AppStorage(BrowserSettingsKeys.externalBrowserAppID) private var externalBrowserAppID = BrowserSettings.defaults.externalBrowserAppID.rawValue
     @AppStorage(BrowserSettingsKeys.externalBrowserAppPath) private var externalBrowserAppPath = BrowserSettings.defaults.externalBrowserAppPath
     @AppStorage(BrowserSettingsKeys.autoStartExternalBrowser) private var autoStartExternalBrowser = BrowserSettings.defaults.autoStartExternalBrowser
+    @AppStorage(BrowserSettingsKeys.backend) private var backend = BrowserSettings.defaults.backend.rawValue
 
     @State private var status = BrowserBackendStatus.unavailable
     @State private var externalStatus = ExternalBrowserStatus.unavailable(endpoint: "http://127.0.0.1:9222")
+    @State private var pluginStatus = BrowserUsePlugin.Status.inactive
+    @State private var uvAvailable = false
     @State private var isChecking = false
     @State private var isInstallingRuntime = false
     @State private var isStartingExternalBrowser = false
+    @State private var isManagingPlugin = false
     @State private var installOutput: String?
     @State private var externalBrowserOutput: String?
+    @State private var pluginOutput: String?
     @State private var showBrowserSessionOptions = false
     @State private var showDiagnosticsLog = false
     @State private var showRuntimeUninstallConfirmation = false
@@ -406,9 +411,12 @@ private struct BrowserSettingsPane: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 browserToolsCard
-                statusCard
-                browserPresetsCard
-                browserRuntimeCard
+                backendCard
+                if selectedBackend == .grokbuild {
+                    statusCard
+                    browserPresetsCard
+                    browserRuntimeCard
+                }
                 applyCard
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -442,7 +450,7 @@ private struct BrowserSettingsPane: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Browser Control")
                     .font(.title3.weight(.semibold))
-                Text("Expose Chrome/Chromium browser tools to Grok sessions through the app-managed MCP bridge.")
+                Text("Pick one browser stack: GrokBuild’s isolated agent-browser tools, or the official grok browser-use plugin. Never both.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -458,7 +466,7 @@ private struct BrowserSettingsPane: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Enable browser tools for Grok sessions")
                             .font(.headline)
-                        Text("When enabled, GrokBuild injects browser MCP tools into new and resumed Grok sessions.")
+                        Text("When enabled, Grok sessions get browser tools from the backend below. Switching backends unloads the other stack.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -471,15 +479,144 @@ private struct BrowserSettingsPane: View {
 
                 Divider()
 
-                Text("Turn on the switch to inject browser MCP tools now. Install the agent-browser CLI (step 2) and pick a runtime (step 3) first if the switch snaps back off. Other runtime edits still need Apply. GrokBuild also installs a small browser-control skill into your Grok skills folder.")
+                Text("Turn on the switch after the chosen backend is ready. Isolated GrokBuild needs agent-browser; the official plugin needs `uv` plus Install plugin. Other runtime edits still need Apply. GrokBuild installs browser-control skills only for the isolated backend.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
+    private var backendCard: some View {
+        settingsCard(title: "2. Choose Browser Backend", systemImage: "rectangle.split.2x1") {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("GrokBuild isolated uses a separate automation profile and `browser_*` tools. The official plugin drives your logged-in Chrome (or Browser Use Cloud) via `browser_exec`. grok.com / Imagine follow whichever backend is active.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Picker("Browser backend", selection: $backend) {
+                    ForEach(BrowserBackendKind.allCases) { kind in
+                        Text(kind.pickerLabel).tag(kind.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityLabel("Browser backend")
+                .onChange(of: backend) { _, newValue in
+                    Task { await applyBackendChange(to: newValue) }
+                }
+
+                Text("This is not the composer session role named browser-use. That persona is separate from this plugin.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if selectedBackend == .browserUsePlugin {
+                    pluginBackendStatus
+                } else if pluginStatus.blocksGrokBuildMCP {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("The browser-use plugin is enabled in grok, so GrokBuild will not inject grokbuild-browser. Disable the plugin to use the isolated profile.")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Disable browser-use plugin") {
+                            Task { await setBrowserUsePluginEnabled(false) }
+                        }
+                        .disabled(isManagingPlugin)
+                        .accessibilityLabel("Disable browser-use plugin")
+                    }
+                }
+
+                if let pluginOutput, !pluginOutput.isEmpty {
+                    Text(pluginOutput)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .textBackgroundColor)))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var pluginBackendStatus: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(pluginStatusTitle, systemImage: pluginStatusIcon)
+                .font(.headline)
+                .foregroundStyle(pluginStatus.blocksGrokBuildMCP ? .green : .secondary)
+                .accessibilityLabel(pluginStatusTitle)
+
+            Text(uvAvailable
+                 ? "uv / uvx is available. The plugin MCP runs `uvx browser-use@latest --cli-mcp`."
+                 : "Install uv (Homebrew: brew install uv) so grok can start the plugin MCP.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !uvAvailable {
+                HStack {
+                    Button("Copy uv install") {
+                        copyToPasteboard(BrowserUsePlugin.brewInstallCommand)
+                    }
+                    Button("Open uv docs") {
+                        NSWorkspace.shared.open(BrowserUsePlugin.uvInstallURL)
+                    }
+                }
+            }
+
+            Text("Local Chrome: enable remote debugging at chrome://inspect/#remote-debugging, then Allow the connection popup. Cloud browsers need `browser-use auth login`.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                if pluginStatus.isInstalled {
+                    Button(pluginStatus.isEnabled ? "Plugin enabled" : "Enable plugin") {
+                        Task { await setBrowserUsePluginEnabled(true) }
+                    }
+                    .disabled(isManagingPlugin || pluginStatus.isEnabled)
+                    .accessibilityLabel(pluginStatus.isEnabled ? "Plugin enabled" : "Enable browser-use plugin")
+
+                    if pluginStatus.isEnabled {
+                        Button("Disable plugin") {
+                            Task { await setBrowserUsePluginEnabled(false) }
+                        }
+                        .disabled(isManagingPlugin)
+                        .accessibilityLabel("Disable browser-use plugin")
+                    }
+                } else {
+                    Button(isManagingPlugin ? "Installing…" : "Install browser-use plugin") {
+                        Task { await installBrowserUsePlugin() }
+                    }
+                    .disabled(isManagingPlugin)
+                    .accessibilityLabel("Install browser-use plugin")
+                }
+
+                Button("Open plugin docs") {
+                    NSWorkspace.shared.open(URL(string: "https://browser-use.com")!)
+                }
+            }
+        }
+    }
+
+    private var pluginStatusTitle: String {
+        if pluginStatus.blocksGrokBuildMCP {
+            return "browser-use plugin ready"
+        }
+        if pluginStatus.isInstalled {
+            return "browser-use plugin installed but disabled"
+        }
+        return "Install the official browser-use plugin"
+    }
+
+    private var pluginStatusIcon: String {
+        pluginStatus.blocksGrokBuildMCP ? "checkmark.circle.fill" : "shippingbox"
+    }
+
     private var statusCard: some View {
-        settingsCard(title: status.isReady ? "2. agent-browser Ready" : "2. Install agent-browser CLI", systemImage: status.isReady ? "checkmark.circle" : "arrow.down.circle", tint: installCardTint) {
+        settingsCard(
+            title: status.isReady ? "3. agent-browser Ready" : "3. Install agent-browser CLI",
+            systemImage: status.isReady ? "checkmark.circle" : "arrow.down.circle",
+            tint: installCardTint
+        ) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     Label(browserStatusTitle, systemImage: browserStatusIcon)
@@ -602,7 +739,7 @@ private struct BrowserSettingsPane: View {
     }
 
     private var browserRuntimeCard: some View {
-        settingsCard(title: "3. Choose Browser Runtime", systemImage: "globe") {
+        settingsCard(title: "4. Choose Browser Runtime", systemImage: "globe") {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Choose where browser automation runs. Most users should use the managed browser runtime.")
                     .foregroundStyle(.secondary)
@@ -814,7 +951,7 @@ private struct BrowserSettingsPane: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Apply changes")
                     .font(.headline)
-                Text(hasPendingBrowserChanges ? "Restart the Grok connection so browser MCP tools are injected into the active session." : "Browser launch settings are already applied to the active configuration.")
+                Text(applyCardDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -838,6 +975,65 @@ private struct BrowserSettingsPane: View {
         defer { isChecking = false }
         status = await AgentBrowserService.status()
         externalStatus = await AgentBrowserService.externalBrowserStatus(settings: currentSettings)
+        pluginStatus = await BrowserUsePlugin.loadStatus()
+        uvAvailable = BrowserUsePlugin.uvToolIsAvailable()
+    }
+
+    @MainActor
+    private func applyBackendChange(to rawValue: String) async {
+        guard let kind = BrowserBackendKind(rawValue: rawValue) else { return }
+        if appliedSettings.backend == kind, !(kind == .grokbuild && pluginStatus.blocksGrokBuildMCP) {
+            return
+        }
+        var settings = currentSettings
+        settings.backend = kind
+        BrowserSettingsStore.save(settings)
+        BrowserSettingsStore.saveApplied(settings)
+        appliedSettings = BrowserSettingsStore.loadApplied()
+        if kind == .grokbuild, pluginStatus.blocksGrokBuildMCP {
+            await setBrowserUsePluginEnabled(false)
+            return
+        }
+        onConfigurationChanged()
+        await refreshStatus()
+    }
+
+    @MainActor
+    private func installBrowserUsePlugin() async {
+        isManagingPlugin = true
+        pluginOutput = "Running grok plugin install browser-use --trust…"
+        defer { isManagingPlugin = false }
+        do {
+            try await GrokCLIService().installPlugin(source: BrowserUsePlugin.marketplaceSource, trust: true)
+            pluginOutput = "Installed and trusted the browser-use plugin."
+            enabled = true
+            var settings = currentSettings
+            settings.enabled = true
+            settings.backend = .browserUsePlugin
+            BrowserSettingsStore.save(settings)
+            BrowserSettingsStore.saveApplied(settings)
+            appliedSettings = settings
+            onConfigurationChanged()
+            await refreshStatus()
+        } catch {
+            pluginOutput = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func setBrowserUsePluginEnabled(_ isEnabled: Bool) async {
+        isManagingPlugin = true
+        defer { isManagingPlugin = false }
+        do {
+            try await GrokCLIService().setPlugin(name: BrowserUsePlugin.name, enabled: isEnabled)
+            pluginOutput = isEnabled
+                ? "Enabled the browser-use plugin."
+                : "Disabled the browser-use plugin."
+            onConfigurationChanged()
+            await refreshStatus()
+        } catch {
+            pluginOutput = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -919,8 +1115,20 @@ private struct BrowserSettingsPane: View {
 
     private var statusBadge: some View {
         let isEnabled = appliedSettings.enabled
-        let color: Color = isEnabled ? browserStatusColor : .secondary
-        let text = isEnabled ? (status.isReady ? "Ready" : "Setup needed") : "Disabled"
+        let pluginReady = pluginStatus.blocksGrokBuildMCP
+        let usingPlugin = appliedSettings.backend == .browserUsePlugin || pluginReady
+        let text: String
+        let color: Color
+        if !isEnabled {
+            text = "Disabled"
+            color = .secondary
+        } else if usingPlugin {
+            text = pluginReady ? "Ready (plugin)" : "Install plugin"
+            color = pluginReady ? .green : .orange
+        } else {
+            text = status.isReady ? "Ready" : "Setup needed"
+            color = browserStatusColor
+        }
 
         return Text(text)
             .font(.caption.weight(.semibold))
@@ -928,6 +1136,11 @@ private struct BrowserSettingsPane: View {
             .padding(.vertical, 5)
             .background(Capsule().fill(color.opacity(0.14)))
             .foregroundStyle(color)
+            .accessibilityLabel("Browser tools \(text)")
+    }
+
+    private var selectedBackend: BrowserBackendKind {
+        BrowserBackendKind(rawValue: backend) ?? BrowserSettings.defaults.backend
     }
 
     private var selectedExternalBrowserApp: ExternalBrowserAppID {
@@ -982,8 +1195,23 @@ private struct BrowserSettingsPane: View {
             externalBrowserAppID: ExternalBrowserAppID(rawValue: externalBrowserAppID)
                 ?? BrowserSettings.defaults.externalBrowserAppID,
             externalBrowserAppPath: externalBrowserAppPath,
-            autoStartExternalBrowser: autoStartExternalBrowser
+            autoStartExternalBrowser: autoStartExternalBrowser,
+            backend: selectedBackend
         )
+    }
+
+    private var applyCardDetail: String {
+        if selectedBackend == .browserUsePlugin {
+            return hasPendingBrowserChanges
+                ? "Restart grok so the official plugin is the only browser stack. GrokBuild will not inject grokbuild-browser."
+                : "Plugin backend is applied. GrokBuild will not inject grokbuild-browser while this backend is selected or the plugin is loaded."
+        }
+        if pluginStatus.blocksGrokBuildMCP {
+            return "The browser-use plugin is still loaded, so GrokBuild is not injecting grokbuild-browser. Disable the plugin above to use the isolated profile."
+        }
+        return hasPendingBrowserChanges
+            ? "Restart the Grok connection so browser MCP tools are injected into the active session."
+            : "Browser launch settings are already applied to the active configuration."
     }
 
     private var hasPendingBrowserChanges: Bool {
