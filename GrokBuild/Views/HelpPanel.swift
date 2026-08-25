@@ -63,6 +63,12 @@ enum HelpMenuCopy {
         "Sessions History lists this project’s archived grok sessions so you can resume or delete them."
     static let browserEnableDefinition =
         "The Browser and Computer Use enable switches apply immediately and restart grok. Other runtime or permission edits still use Apply and Restart Grok."
+    static let browserBackendsDefinition =
+        "Settings → Browser offers two exclusive backends. GrokBuild isolated uses agent-browser and a separate automation profile. The official browser-use plugin drives your logged-in Chrome or Browser Use Cloud. GrokBuild never injects grokbuild-browser while that plugin is loaded."
+    static let browserPluginInstallDefinition =
+        "Install the plugin from Settings → Browser (grok plugin install browser-use --trust). It needs uv / uvx. Enable Chrome remote debugging at chrome://inspect/#remote-debugging for local Chrome. This plugin is not the composer session role named browser-use."
+    static let browserGrokComDefinition =
+        "grok.com and Imagine follow the active backend: isolated GrokBuild tools (browser_open_url / snapshot) or the plugin (browser_exec / screenshot on your Chrome or a cloud browser)."
 }
 
 @MainActor
@@ -170,7 +176,7 @@ private struct HelpPanelView: View {
                 bullets: [
                     "Memory — enable cross-session memory and browse or add memory notes.",
                     "Workflows — enable grok’s Rhai workflows.",
-                    "Browser — configure browser MCP tools, runtime, profile, and CDP connection. See Browser & Computer Use for setup.",
+                    "Browser — choose GrokBuild isolated (agent-browser) or the official browser-use plugin. See Browser & Computer Use.",
                     "Computer Use — configure native macOS automation, permissions, policy, and limits. See Browser & Computer Use for Accessibility.",
                 ]
             )
@@ -193,7 +199,7 @@ private struct HelpPanelView: View {
             helpSection(
                 "Application",
                 bullets: [
-                    "App — updates, steering behavior, completion sound, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, Node.js, Cursor bridge).",
+                    "App — updates, steering behavior, completion sound, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, Node.js, uv for browser-use, Cursor bridge).",
                 ]
             )
             helpSection(
@@ -295,15 +301,24 @@ private struct HelpPanelView: View {
 
         case .browserAndComputerUse:
             helpSection("When enablement applies", body: HelpMenuCopy.browserEnableDefinition)
+            helpSection("Two browser backends", body: HelpMenuCopy.browserBackendsDefinition)
             helpSection(
-                "Browser",
+                "GrokBuild isolated",
                 bullets: [
-                    "Settings → Browser. Turn on the switch after the agent-browser CLI is installed (Homebrew: brew install agent-browser, or npm).",
+                    "Settings → Browser → GrokBuild isolated. Turn on the switch after the agent-browser CLI is installed (Homebrew: brew install agent-browser, or npm).",
                     "Use the managed automation profile by default, or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP.",
-                    "A new managed profile starts on a blank tab until Grok opens a URL. Attaching to an existing browser lets Grok interact with that window.",
+                    "A new managed profile starts on a blank tab until Grok opens a URL. Attaching to an existing browser lets Grok interact with that window — still a separate GrokBuild profile unless you point CDP at a browser you started yourself.",
                     "Runtime, profile, and CDP edits still need Apply and Restart Grok.",
                 ]
             )
+            helpSection(
+                "Official browser-use plugin",
+                bullets: [
+                    HelpMenuCopy.browserPluginInstallDefinition,
+                    "Doctor warns when uv is missing and this backend is selected. The plugin can stay loaded in grok even if the GrokBuild switch is off — Disable plugin in Settings → Browser to unload it.",
+                ]
+            )
+            helpSection("grok.com and Imagine", body: HelpMenuCopy.browserGrokComDefinition)
             helpSection(
                 "Computer Use",
                 bullets: [
@@ -315,7 +330,7 @@ private struct HelpPanelView: View {
             )
             helpSection(
                 "Doctor",
-                body: "Settings → App → Open Doctor… checks the grok CLI, auth, config.toml, Browser/Computer Use, Node.js, and whether the Cursor bridge is reachable."
+                body: "Settings → App → Open Doctor… checks the grok CLI, auth, config.toml, Browser/Computer Use, which browser backend is active, uv / uvx, Node.js, and whether the Cursor bridge is reachable."
             )
         }
     }

@@ -99,7 +99,16 @@ Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error]
 
 ## Browser backend
 
-Browser tools are provided by the bundled `agent-browser` CLI (`BrowserSettings.swift`), exposed to grok as an stdio MCP server (`grokbuild-browser`) via `AgentBrowserService.browserMCPConfig`; managed or external Chromium over CDP. The Settings → Browser enable switch calls `applyEnabled` and restarts grok immediately — leaving the switch off means **no** `browser_*` tools, even when agent-browser is installed. MCP tools live in `scripts/grokbuild-browser-mcp` and include `browser_tabs` (`agent-browser tab list`) and `browser_snapshot` (title + URL; a fresh profile is often `about:blank`). grok sessions can also inherit Cursor MCP servers via `[compat.cursor]` (`context7`, `XcodeBuildMCP`, the Cursor copy of `grokbuild-computer-use`); those are not browser tools. (grok's native `browser_tab` was evaluated and removed — it wasn't exposed to sessions in practice.)
+Two exclusive stacks. `BrowserUsePlugin.shouldUseGrokBuildBrowserStack` decides at process start:
+
+| Backend | When | What grok gets |
+|---------|------|----------------|
+| **GrokBuild isolated** | Settings backend `.grokbuild`, Browser Tools on, and the `browser-use` plugin is **not** enabled | Bundled `agent-browser` CLI as stdio MCP `grokbuild-browser` (`AgentBrowserService.browserMCPConfig`); managed or external Chromium over CDP; bundled skills installed |
+| **Official plugin** | Marketplace plugin `browser-use` installed+enabled, **or** Settings backend `.browserUsePlugin` | grok loads `uvx browser-use@latest --cli-mcp` itself. GrokBuild does **not** inject `grokbuild-browser` or install `grokbuild-browser-control` |
+
+Settings → Browser enable still calls `applyEnabled` and restarts grok. Plugin backend does not require agent-browser. Install uses `GrokCLIService.installPlugin(source: "browser-use", trust: true)`. Doctor checks `uv`/`uvx` when the plugin backend is selected or the plugin is active. The composer `--agent browser-use` persona is unrelated.
+
+MCP tools for the isolated stack live in `scripts/grokbuild-browser-mcp` (`browser_tabs`, `browser_snapshot`, …). grok sessions can also inherit Cursor MCP servers via `[compat.cursor]`; those are not browser tools.
 
 ## Scheduled tasks (mirror of grok `scheduler_*`)
 
@@ -140,8 +149,8 @@ The app owns the **toggle**; grok owns storage/index/injection. `grokbuild.memor
 ## Bundled skills
 
 Skills ship under `GrokBuild/Resources/Skills/` and install to `~/.grok/skills/` when features are enabled:
-- `grokbuild-browser-control` — `BrowserSkillInstaller`
-- `grokbuild-grok-web` — `BrowserSkillInstaller` (installed alongside browser-control when browser tools enabled; drives grok.com web features like Imagine/skills/connectors via browser tools)
+- `grokbuild-browser-control` — `BrowserSkillInstaller` (isolated backend only)
+- `grokbuild-grok-web` — `BrowserSkillInstaller` (installed alongside browser-control when the isolated backend is enabled; grok.com / Imagine follow the active backend)
 - `grokbuild-computer-use` — `ComputerUseSkillInstaller`
 - `grokbuild-desktop` — bundled only (GrokBuild self-hints)
 

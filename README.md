@@ -112,7 +112,7 @@ Example workflow: use **Chief** to keep scope and coordinate, **Scout** to resea
 
 Enable Browser and Computer Use from **Settings → Browser** / **Settings → Computer Use**. The enable switches apply immediately and restart grok. Runtime or permission edits still use **Apply and Restart**.
 
-- **Browser control** — let Grok drive a real Chromium browser via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev) (open URL, snapshot, list tabs, click/type). Use a managed automation profile or attach to Chrome, Brave, Edge, Arc, or another Chromium browser over CDP. A new automation profile starts on a blank tab until Grok opens a URL.
+- **Browser control** — two exclusive backends in **Settings → Browser**. **GrokBuild isolated** lets Grok drive Chromium via `browser_*` MCP tools backed by [`agent-browser`](https://agent-browser.dev) (open URL, snapshot, list tabs, click/type) using a managed automation profile or Chrome/Brave/Edge/Arc over CDP. **Official plugin** installs `grok plugin install browser-use --trust` (needs [`uv`](https://docs.astral.sh/uv/)) and drives your logged-in Chrome or Browser Use Cloud; GrokBuild does not inject `grokbuild-browser` while that plugin is loaded. grok.com / Imagine follow the active backend.
 - **Computer Use** — let Grok drive native macOS UI via `computer_*` MCP tools backed by [`agent-desktop`](https://github.com/lahfir/agent-desktop), with action policy, step limits, timeouts, and optional Cursor MCP integration.
 - **Memory** — experimental and off by default. Enable from **Settings → Memory**, then browse `~/.grok/memory/` and add "Remember" notes there. Slash commands like `/flush` and `/dream` remain TUI-only.
 - **Background tasks** — scheduled `/loop` tasks plus background shells, monitors, and subagents mirrored in the Tasks pill and the session dashboard **Scheduled** group. **New Automation** on the dashboard creates a named session that repeats a prompt on a schedule (`/loop`) — for recurring checks, not a one-off chat. Schedules only fire while GrokBuild Desktop App is open and that session process is alive (sessions with live `/loop` tasks are kept out of LRU eviction; inactive tabs without schedules may still be stopped).
@@ -131,7 +131,7 @@ Enable Browser and Computer Use from **Settings → Browser** / **Settings → C
 
 - Optional **Privacy Mode** (Settings → App) redacts project paths and names in the UI for screen sharing; it does not change stored sessions or CLI data.
 - GrokBuild Desktop App talks to the local `grok` CLI; your prompts, tool calls, model routing, auth, and CLI-side storage follow the CLI's behavior.
-- Browser control uses a separate managed Chromium profile by default. If you attach to an existing browser over CDP, Grok can interact with that browser window.
+- Browser control defaults to a separate managed Chromium profile. The official browser-use plugin instead uses your real Chrome (logins included) or a cloud browser — pick one backend in Settings → Browser. If you attach GrokBuild isolated to an existing browser over CDP, Grok can interact with that window.
 - Computer Use requires macOS Accessibility permission. Screenshots require Screen Recording and are optional. After a local `make run` ad-hoc rebuild, macOS may drop that trust; GrokBuild prompts once per new app signature, or re-add `.build/GrokBuild.app` in System Settings → Privacy & Security → Accessibility.
 - You can control tool approval behavior in **Settings → Permissions** and **Settings → Computer Use** (Auto / Ask / Deny, plus limits).
 

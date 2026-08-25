@@ -46,6 +46,10 @@ struct DoctorInputs: Sendable, Equatable {
     var configPresent: Bool
     /// Whether browser tools are enabled in settings.
     var browserEnabled: Bool
+    /// Applied Settings → Browser backend is the marketplace plugin.
+    var browserBackendIsPlugin: Bool
+    /// grok currently has the trusted `browser-use` plugin installed and enabled.
+    var browserUsePluginActive: Bool
     /// Whether computer use is enabled in settings.
     var computerUseEnabled: Bool
     /// Number of reachable Cursor bridge endpoints (nil = not probed).
@@ -56,6 +60,8 @@ struct DoctorInputs: Sendable, Equatable {
     var nodeVersionDisplay: String
     /// Whether the located Node meets the Cursor bridge minimum (≥ 22.13).
     var nodeMeetsMinimum: Bool
+    /// Whether `uv` or `uvx` is on PATH (needed for the browser-use plugin MCP).
+    var uvFound: Bool
 
     init(
         cliFound: Bool = false,
@@ -63,22 +69,28 @@ struct DoctorInputs: Sendable, Equatable {
         authenticated: Bool = false,
         configPresent: Bool = false,
         browserEnabled: Bool = false,
+        browserBackendIsPlugin: Bool = false,
+        browserUsePluginActive: Bool = false,
         computerUseEnabled: Bool = false,
         reachableBridgeCount: Int? = nil,
         nodeFound: Bool = false,
         nodeVersionDisplay: String = "",
-        nodeMeetsMinimum: Bool = false
+        nodeMeetsMinimum: Bool = false,
+        uvFound: Bool = false
     ) {
         self.cliFound = cliFound
         self.versionDisplay = versionDisplay
         self.authenticated = authenticated
         self.configPresent = configPresent
         self.browserEnabled = browserEnabled
+        self.browserBackendIsPlugin = browserBackendIsPlugin
+        self.browserUsePluginActive = browserUsePluginActive
         self.computerUseEnabled = computerUseEnabled
         self.reachableBridgeCount = reachableBridgeCount
         self.nodeFound = nodeFound
         self.nodeVersionDisplay = nodeVersionDisplay
         self.nodeMeetsMinimum = nodeMeetsMinimum
+        self.uvFound = uvFound
     }
 }
 
@@ -118,7 +130,14 @@ enum DoctorReport {
         rows.append(DoctorCheck(
             key: "browser",
             title: "Browser tools",
-            detail: inputs.browserEnabled ? "Enabled." : "Disabled.",
+            detail: BrowserUsePlugin.browserDoctorDetail(
+                enabled: inputs.browserEnabled,
+                backend: inputs.browserBackendIsPlugin ? .browserUsePlugin : .grokbuild,
+                plugin: BrowserUsePlugin.Status(
+                    isInstalled: inputs.browserUsePluginActive,
+                    isEnabled: inputs.browserUsePluginActive
+                )
+            ),
             status: .info
         ))
 
@@ -127,6 +146,21 @@ enum DoctorReport {
             title: "Computer Use",
             detail: inputs.computerUseEnabled ? "Enabled." : "Disabled.",
             status: .info
+        ))
+
+        rows.append(DoctorCheck(
+            key: "uv",
+            title: "uv / uvx",
+            detail: BrowserUsePlugin.uvDoctorDetail(
+                found: inputs.uvFound,
+                pluginBackendSelected: inputs.browserBackendIsPlugin,
+                pluginActive: inputs.browserUsePluginActive
+            ),
+            status: BrowserUsePlugin.uvDoctorStatus(
+                found: inputs.uvFound,
+                pluginBackendSelected: inputs.browserBackendIsPlugin,
+                pluginActive: inputs.browserUsePluginActive
+            )
         ))
 
         rows.append(DoctorCheck(
