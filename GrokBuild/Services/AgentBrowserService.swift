@@ -53,7 +53,8 @@ enum AgentBrowserService {
             return URL(fileURLWithPath: candidate)
         }
 
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        let path = LoginShellPath.currentPATH()
+        if !path.isEmpty {
             for directory in path.split(separator: ":") {
                 let candidate = URL(fileURLWithPath: String(directory))
                     .appendingPathComponent("agent-browser")
@@ -420,7 +421,7 @@ enum AgentBrowserService {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = Array(command.dropFirst())
-            process.environment = ProcessInfo.processInfo.environment
+            process.environment = LoginShellPath.inheritedEnvironment()
 
             let stdout = Pipe()
             let stderr = Pipe()

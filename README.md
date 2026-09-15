@@ -11,6 +11,7 @@ You can also install GrokBuild just to manage custom OpenAI-compatible models in
 - macOS 26 (Tahoe) or later
 - The `grok` CLI installed, usually at `~/.grok/bin/grok`
 - A logged-in CLI session — run `grok login` in Terminal before starting your first session (not needed if you only manage custom models)
+- Tools the agent should find from the Dock (`gh`, Homebrew `uv`, …) on your **login-shell PATH**. GrokBuild merges that PATH at launch so Finder/menu-bar sessions see the same tools as Terminal. Set `GROKBUILD_SKIP_SHELL_PATH=1` to leave PATH unchanged.
 
 ## Quick Start
 
@@ -47,11 +48,11 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 ### Sessions
 
-- Streaming agent sessions for `grok agent stdio` with Markdown (headings, tables, fenced code, and grok CLI–style colors), thinking blocks, CLI-style working lines (`Read 1 skill, Listed 1 dir  [hooks: 5]` — search patterns and Computer Use calls stay as Searched / Computer Use, not raw grep), live tool cards, permission prompts, plan/question cards, and diff review. The agent shell runs in-app via ACP `terminal/*` (create / output / wait / kill / release). Protocol telemetry is not shown as assistant text.
+- Streaming agent sessions for `grok agent stdio` with Markdown (headings, tables, fenced code, and grok CLI–style colors), thinking blocks, CLI-style working lines (`Read 1 skill, Listed 1 dir  [hooks: 5]` — search patterns and Computer Use calls stay as Searched / Computer Use, not raw grep), live tool cards, permission prompts, plan/question cards, and diff review. The agent shell runs in-app via ACP `terminal/*` (create / output / wait / kill / release). Protocol telemetry is not shown as assistant text. Scroll up to read earlier turns without being yanked; **Jump to latest** returns to the live end.
 - Multi-tab sessions with lazy restore, resumable grok sessions, **Sessions History** (clock — resume/delete archived grok sessions), and transcript recovery from grok's on-disk `chat_history.jsonl` when possible.
 - **Visible session status** on the sidebar — Working with elapsed time, Needs input, Completed, or Error — cleared when you focus the session, so parallel tabs show which one needs you.
 - **Session context menu** — pin a session to the global Pinned section, settle finished work into a restorable shelf, mark unread/read, duplicate, clear the transcript, or close. Right-click a message to **Rewind to Here** (chat-only truncate; does not restore files).
-- **Steer mid-turn** — send a prompt while grok is working to inject it into the running turn instead of queueing (grok never cancels the turn). Turn it on for every send with **Settings → App → Steer by default**, or pick **Steer into current turn** from the queue menu.
+- **Steer mid-turn** — send a prompt while grok is working to inject it into the running turn instead of queueing (grok never cancels the turn). Turn it on for every send with **Settings → App → Steer by default**, or pick **Steer into current turn** from the queue menu. **Stop** (⌘.) puts queued follow-ups back in the composer so they are not sent after the cancelled turn.
 - **Sound on finish** — optionally chime when a turn ends and GrokBuild is not focused (**Settings → App**).
 - **Privacy Mode** — redact project paths, project names, and session titles in the UI for screenshots (**Settings → App**). Stored data is unchanged.
 - Composer controls for **session agent/role**, **mode** (Plan / Agent / **Auto accept** — approves tool cards, including ones already waiting; CLI id stays `yolo`), model, context usage (popover: window used/limit plus last-turn input / cached / output / reasoning when grok reports them), **Tasks** / **Workflows**, voice dictation, file attachments, slash-command autocomplete, **skill chips** (`/design`, `/review`, …), **research/workflow chips** (`/deep-research`, `/create-workflow`), **imagine chips**, `/goal` with optional budget, prompt queue while streaming, **Sessions Dashboard** (grid — this project’s live named sessions: needs you, failed, working, needs review, scheduled, idle), then **Sessions History** (clock — this project’s archived grok sessions). **New Session**, **Sessions Dashboard**, and **Sessions History** are all scoped to the current project.
@@ -80,7 +81,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 
 On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/IT-Certs/package-route.pem` or `GROKBUILD_NODE_EXTRA_CA_CERTS` is set, GrokBuild passes it as `NODE_EXTRA_CA_CERTS` so Add Provider works from the Dock the same as from Terminal. Other Macs are unchanged.
 
-**Doctor** (**Settings → App → Open Doctor…**) checks the grok CLI, auth, `config.toml`, Browser/Computer Use, Node.js, and (optionally) whether the Cursor bridge is reachable, with shortcuts to install the CLI, run `grok login`, or install Node.
+**Doctor** (**Settings → App → Open Doctor…**) checks the grok CLI, auth, `config.toml`, login-shell PATH, Browser/Computer Use, Node.js, and (optionally) whether the Cursor bridge is reachable, with shortcuts to install the CLI, run `grok login`, or install Node.
 
 ### Agent Capabilities
 

@@ -1907,9 +1907,26 @@ private struct ContentViewNotificationHandlers: ViewModifier {
                 activeStore: activeStore,
                 openSettings: openSettings
             ))
+            .modifier(ContentViewSessionEventHandlers(
+                liveSessions: liveSessions,
+                sessionListRevision: $sessionListRevision,
+                onPersistSessionLayout: onPersistSessionLayout,
+                onLiveSessionAgentChanged: onLiveSessionAgentChanged
+            ))
             .onChange(of: activeStore.grokSessionId) { _, _ in
                 onPersistSessionLayout(true)
             }
+    }
+}
+
+private struct ContentViewSessionEventHandlers: ViewModifier {
+    let liveSessions: [ContentView.LiveSession]
+    @Binding var sessionListRevision: Int
+    let onPersistSessionLayout: (Bool) -> Void
+    let onLiveSessionAgentChanged: (ChatStore) -> Void
+
+    func body(content: Content) -> some View {
+        content
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionMessagesChanged)) { note in
                 handleLiveSessionMessagesChanged(note)
             }
@@ -1920,10 +1937,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
                 onPersistSessionLayout(true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .liveSessionAgentChanged)) { note in
-                if let store = note.object as? ChatStore {
-                    onLiveSessionAgentChanged(store)
-                }
-                onPersistSessionLayout(true)
+                handleLiveSessionAgentChanged(note)
             }
             .onReceive(NotificationCenter.default.publisher(for: .grokBuildPrepareForShutdown)) { _ in
                 handlePrepareForShutdown()
@@ -1940,6 +1954,13 @@ private struct ContentViewNotificationHandlers: ViewModifier {
             SessionMessageStore.save(store.messages, for: session.id)
         }
         onPersistSessionLayout(false)
+    }
+
+    private func handleLiveSessionAgentChanged(_ note: Notification) {
+        if let store = note.object as? ChatStore {
+            onLiveSessionAgentChanged(store)
+        }
+        onPersistSessionLayout(true)
     }
 
     private func handleWorkspaceAgentSettingsChanged(_ note: Notification) {

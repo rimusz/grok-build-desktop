@@ -127,7 +127,8 @@ enum BrowserUsePlugin {
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return URL(fileURLWithPath: path)
         }
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        let path = LoginShellPath.currentPATH()
+        if !path.isEmpty {
             for directory in path.split(separator: ":") {
                 let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(name)
                 if FileManager.default.isExecutableFile(atPath: candidate.path) {

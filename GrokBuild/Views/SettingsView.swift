@@ -5938,7 +5938,7 @@ private struct AppUpdatesSettingsPane: View {
 
                 updatesCard(title: "Diagnostics", systemImage: "stethoscope") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Run Doctor to check the grok CLI path, version, authentication, config.toml, Node.js (for the Cursor bridge), and Cursor bridge reachability.")
+                        Text("Run Doctor to check the grok CLI path, version, authentication, config.toml, login-shell PATH, Node.js (for the Cursor bridge), and Cursor bridge reachability.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         Button {

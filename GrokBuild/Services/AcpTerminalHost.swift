@@ -65,7 +65,7 @@ final class AcpTerminalHost: @unchecked Sendable {
         process.executableURL = URL(fileURLWithPath: launch.exe)
         process.arguments = launch.args
         process.currentDirectoryURL = cwd
-        var environment = ProcessInfo.processInfo.environment
+        var environment = LoginShellPath.inheritedEnvironment()
         for (key, value) in request.env {
             environment[key] = value
         }
@@ -363,7 +363,7 @@ final class AcpTerminalHost: @unchecked Sendable {
     }
 
     private static func lookupInPath(_ command: String) -> String? {
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let path = LoginShellPath.currentPATH()
         for directory in path.split(separator: ":") {
             let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(command).path
             if FileManager.default.isExecutableFile(atPath: candidate) {

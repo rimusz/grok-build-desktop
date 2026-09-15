@@ -75,4 +75,37 @@ final class PromptQueueTests: XCTestCase {
         XCTAssertTrue(store.promptQueue[0].contains("follow up"))
         XCTAssertTrue(store.promptQueue[0].contains("Attached image: shot.png"))
     }
+
+    func testStopRestoresQueueAndDoesNotLeaveItForDrain() {
+        let store = ChatStore(process: GrokProcess())
+        store.enqueuePrompt("follow-up-a")
+        store.enqueuePrompt("follow-up-b")
+        store.setStreamingForTests(true)
+
+        store.stop()
+
+        XCTAssertTrue(store.promptQueue.isEmpty)
+        XCTAssertEqual(store.restoredQueueForComposer, ["follow-up-a", "follow-up-b"])
+        XCTAssertFalse(store.isStreaming)
+        XCTAssertEqual(
+            ChatStore.mergeComposerDraft("draft in progress", restoredQueue: store.consumeRestoredQueueForComposer()),
+            "draft in progress\n\nfollow-up-a\n\nfollow-up-b"
+        )
+        XCTAssertTrue(store.restoredQueueForComposer.isEmpty)
+    }
+
+    func testStopWithoutQueueLeavesComposerRestoreEmpty() {
+        let store = ChatStore(process: GrokProcess())
+        store.setStreamingForTests(true)
+        store.stop()
+        XCTAssertTrue(store.restoredQueueForComposer.isEmpty)
+        XCTAssertEqual(ChatStore.mergeComposerDraft("  keep me  ", restoredQueue: []), "keep me")
+    }
+
+    func testMergeComposerDraftJoinsEmptyDraftWithQueue() {
+        XCTAssertEqual(
+            ChatStore.mergeComposerDraft("   ", restoredQueue: [" first ", "", "second"]),
+            "first\n\nsecond"
+        )
+    }
 }

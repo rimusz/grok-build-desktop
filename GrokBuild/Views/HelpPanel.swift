@@ -69,6 +69,12 @@ enum HelpMenuCopy {
         "Install the plugin from Settings → Browser (grok plugin install browser-use --trust). It needs uv / uvx. Enable Chrome remote debugging at chrome://inspect/#remote-debugging for local Chrome. This plugin is not the composer session role named browser-use."
     static let browserGrokComDefinition =
         "grok.com and Imagine follow the active backend: isolated GrokBuild tools (browser_open_url / snapshot) or the plugin (browser_exec / screenshot on your Chrome or a cloud browser)."
+    static let loginShellPathDefinition =
+        "On launch, GrokBuild merges your login-shell PATH so Dock/Finder sessions can find Homebrew tools like gh. Only PATH is imported. Set GROKBUILD_SKIP_SHELL_PATH=1 to leave PATH unchanged."
+    static let jumpToLatestDefinition =
+        "If you scroll up while grok is working, the transcript stays put. Jump to latest returns you to the live end."
+    static let stopRestoresQueueDefinition =
+        "Stop (⌘.) restores any queued follow-ups into the composer so they are not sent after the turn is cancelled."
 }
 
 @MainActor
@@ -160,7 +166,8 @@ private struct HelpPanelView: View {
             numberedStep(3, "Configure the session", "Use the composer controls to choose the whole-session role, mode, model, and reasoning effort. Add custom providers from Help → Models if you need more than the built-in grok models.")
             numberedStep(4, "Describe the outcome", "Prompt normally. Grok can use its tools and delegate to subagents when appropriate.")
             numberedStep(5, "Track parallel work", "Use the sidebar and Sessions Dashboard for live tabs in this project. Sessions History is the archive of past grok sessions.")
-            numberedStep(6, "Add capabilities", "Open Settings to configure permissions, Browser, Computer Use, Memory, Workflows, MCP servers, skills, and custom roles. Settings → App → Open Doctor… checks the grok CLI, auth, Node.js, and the Cursor bridge.")
+            numberedStep(6, "Add capabilities", "Open Settings to configure permissions, Browser, Computer Use, Memory, Workflows, MCP servers, skills, and custom roles. Settings → App → Open Doctor… checks the grok CLI, auth, login-shell PATH, Node.js, and the Cursor bridge.")
+            helpSection("Login shell PATH", body: HelpMenuCopy.loginShellPathDefinition)
 
         case .settings:
             helpSection(
@@ -199,7 +206,7 @@ private struct HelpPanelView: View {
             helpSection(
                 "Application",
                 bullets: [
-                    "App — updates, steering behavior, completion sound, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, Node.js, uv for browser-use, Cursor bridge).",
+                    "App — updates, steering behavior, completion sound, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, login-shell PATH, Node.js, uv for browser-use, Cursor bridge).",
                 ]
             )
             helpSection(
@@ -276,6 +283,8 @@ private struct HelpPanelView: View {
         case .sessions:
             helpSection("Sessions Dashboard", body: HelpMenuCopy.sessionsDashboardDefinition)
             helpSection("Sessions History", body: HelpMenuCopy.sessionsHistoryDefinition)
+            helpSection("Transcript", body: HelpMenuCopy.jumpToLatestDefinition)
+            helpSection("Stop", body: HelpMenuCopy.stopRestoresQueueDefinition)
             helpSection(
                 "Live work in this project",
                 bullets: [

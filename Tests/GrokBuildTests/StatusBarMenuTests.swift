@@ -152,5 +152,9 @@ final class StatusBarMenuTests: XCTestCase {
         XCTAssertTrue(HelpMenuCopy.browserPluginInstallDefinition.contains("uv"))
         XCTAssertTrue(HelpMenuCopy.browserGrokComDefinition.contains("Imagine"))
         XCTAssertTrue(HelpMenuCopy.browserGrokComDefinition.contains("browser_exec"))
+        XCTAssertTrue(HelpMenuCopy.loginShellPathDefinition.contains("login-shell PATH"))
+        XCTAssertTrue(HelpMenuCopy.loginShellPathDefinition.contains("GROKBUILD_SKIP_SHELL_PATH"))
+        XCTAssertTrue(HelpMenuCopy.jumpToLatestDefinition.contains("Jump to latest"))
+        XCTAssertTrue(HelpMenuCopy.stopRestoresQueueDefinition.contains("queued follow-ups"))
     }
 }

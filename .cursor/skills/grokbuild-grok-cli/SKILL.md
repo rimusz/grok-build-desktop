@@ -29,6 +29,7 @@ UpdateChecker.checkGrokCLI()      // grok update --check --json
 - `initialize` advertises `clientCapabilities.terminal: true`. grok then runs its shell through `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, and `terminal/release` (`AcpTerminalHost`).
 - `terminal/create` **must** return `{ "terminalId": "…" }`. An empty `{}` ACK makes grok fail with `failed to deserialize response` and every shell command dies.
 - grok often sends `command` as a full line (`bash -lc 'echo …'`). `AcpTerminalHost.resolveLaunch` splits that into executable + args. Using the whole line as `Process.executableURL` produces `The file "bash -lc '…'" doesn't exist`.
+- Dock/Finder launches inherit launchd PATH. `LoginShellPath` merges the login-shell PATH at app launch so ACP terminals and grok children can find Homebrew `gh` / `uv`. Skip with `GROKBUILD_SKIP_SHELL_PATH=1`.
 - Unknown host methods return JSON-RPC `-32601`, not `result: {}`.
 
 ## CLI working lines (ACP)

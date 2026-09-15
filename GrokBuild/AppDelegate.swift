@@ -47,6 +47,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let pidStr = "\(getpid())\n"
         _ = pidStr.withCString { write(fd, $0, pidStr.utf8.count) }
 
+        // Dock/Finder launches do not inherit Homebrew PATH. Merge it before
+        // locating grok / spawning ACP terminals or MCP children.
+        LoginShellPath.applyToCurrentProcess()
+
         // Normal app (shows in Dock, supports windows + menu bar icon)
         NSApp.setActivationPolicy(.regular)
         setupMainMenu()

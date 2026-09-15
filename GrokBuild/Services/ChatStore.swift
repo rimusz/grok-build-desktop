@@ -147,6 +147,8 @@ final class ChatStore {
 
     // MARK: - Prompt queue (send while streaming)
     private(set) var promptQueue: [String] = []
+    /// Queued follow-ups captured by the last `stop()`, waiting for the composer to merge.
+    private(set) var restoredQueueForComposer: [String] = []
 
     // MARK: - /btw aside panel
     private(set) var btwAsideText: String?
@@ -319,6 +321,7 @@ final class ChatStore {
         clearWorkflowRunState()
         clearBackgroundTaskState()
         promptQueue.removeAll()
+        restoredQueueForComposer.removeAll()
         btwAsideText = nil
         pendingBtw = false
         pendingShareURLCapture = false
@@ -1141,7 +1144,29 @@ final class ChatStore {
         liveToolCalls = []
     }
 
+    /// Joins a composer draft with prompts restored from the queue after Stop.
+    static func mergeComposerDraft(_ draft: String, restoredQueue: [String]) -> String {
+        let queueParts = restoredQueue
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if queueParts.isEmpty { return trimmedDraft }
+        if trimmedDraft.isEmpty { return queueParts.joined(separator: "\n\n") }
+        return trimmedDraft + "\n\n" + queueParts.joined(separator: "\n\n")
+    }
+
+    func consumeRestoredQueueForComposer() -> [String] {
+        let items = restoredQueueForComposer
+        restoredQueueForComposer = []
+        return items
+    }
+
     func stop() {
+        // Clear the queue before interrupt so `finishPrompt` cannot drain it.
+        if !promptQueue.isEmpty {
+            restoredQueueForComposer = promptQueue
+            promptQueue.removeAll()
+        }
         isStreaming = false
         isGrokking = false
         turnStartedAt = nil

@@ -82,7 +82,7 @@ enum CursorBridgeRuntime {
     /// Pure helpers for tests / diagnostics (no process I/O).
     enum Locator {
         /// Resolves a Node binary suitable for the bridge (Node ≥ 22.13 preferred).
-        static func nodeURL(fileManager: FileManager = .default, pathEnv: String? = ProcessInfo.processInfo.environment["PATH"]) -> URL? {
+        static func nodeURL(fileManager: FileManager = .default, pathEnv: String? = LoginShellPath.currentPATH()) -> URL? {
             let candidates = [
                 "/opt/homebrew/bin/node",
                 "/usr/local/bin/node",
@@ -150,7 +150,7 @@ enum CursorBridgeRuntime {
     /// Copies the app environment and injects a corporate CA PEM for Node when present
     /// (Dock/`open` launches do not inherit `NODE_EXTRA_CA_CERTS` from zsh).
     static func nodeChildEnvironment(
-        base: [String: String] = ProcessInfo.processInfo.environment,
+        base: [String: String] = LoginShellPath.inheritedEnvironment(),
         home: String = NSHomeDirectory(),
         fileExists: (String) -> Bool = { FileManager.default.isReadableFile(atPath: $0) }
     ) -> [String: String] {

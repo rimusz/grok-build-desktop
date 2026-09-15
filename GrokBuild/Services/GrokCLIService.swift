@@ -459,7 +459,7 @@ final class GrokCLIService {
         process.executableURL = cli
         process.arguments = args
         process.currentDirectoryURL = cwd
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = LoginShellPath.inheritedEnvironment()
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -670,7 +670,8 @@ final class GrokCLIService {
                 return URL(fileURLWithPath: candidate)
             }
         }
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        let path = LoginShellPath.currentPATH()
+        if !path.isEmpty {
             for dir in path.split(separator: ":") {
                 let candidate = URL(fileURLWithPath: String(dir)).appendingPathComponent("grok").path
                 if FileManager.default.isExecutableFile(atPath: candidate) {

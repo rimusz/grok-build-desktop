@@ -90,7 +90,8 @@ enum ComputerUseService {
             return URL(fileURLWithPath: candidate)
         }
 
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        let path = LoginShellPath.currentPATH()
+        if !path.isEmpty {
             for directory in path.split(separator: ":") {
                 let candidate = URL(fileURLWithPath: String(directory))
                     .appendingPathComponent("agent-desktop")
@@ -291,7 +292,7 @@ enum ComputerUseService {
             return nil
         }
 
-        var environment = ProcessInfo.processInfo.environment
+        var environment = LoginShellPath.inheritedEnvironment()
         environment["AGENT_DESKTOP_PATH"] = agentDesktop.path
 
         do {
@@ -496,7 +497,7 @@ enum ComputerUseService {
         }
 
         if let helper = helperURL(), let agentDesktop = executableURL(settings: settings) {
-            var environment = ProcessInfo.processInfo.environment
+            var environment = LoginShellPath.inheritedEnvironment()
             environment["AGENT_DESKTOP_PATH"] = agentDesktop.path
             let helperOutput = try await run(
                 [helper.path, "--request-permissions"],

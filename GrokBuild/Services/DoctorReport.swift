@@ -62,6 +62,8 @@ struct DoctorInputs: Sendable, Equatable {
     var nodeMeetsMinimum: Bool
     /// Whether `uv` or `uvx` is on PATH (needed for the browser-use plugin MCP).
     var uvFound: Bool
+    /// Result of merging the login-shell PATH into this process (Dock/Finder launches).
+    var loginShellPath: LoginShellPath.ApplyStatus
 
     init(
         cliFound: Bool = false,
@@ -76,7 +78,8 @@ struct DoctorInputs: Sendable, Equatable {
         nodeFound: Bool = false,
         nodeVersionDisplay: String = "",
         nodeMeetsMinimum: Bool = false,
-        uvFound: Bool = false
+        uvFound: Bool = false,
+        loginShellPath: LoginShellPath.ApplyStatus = .skipped(reason: "not applied")
     ) {
         self.cliFound = cliFound
         self.versionDisplay = versionDisplay
@@ -91,6 +94,7 @@ struct DoctorInputs: Sendable, Equatable {
         self.nodeVersionDisplay = nodeVersionDisplay
         self.nodeMeetsMinimum = nodeMeetsMinimum
         self.uvFound = uvFound
+        self.loginShellPath = loginShellPath
     }
 }
 
@@ -125,6 +129,13 @@ enum DoctorReport {
             title: "config.toml",
             detail: inputs.configPresent ? "Present in your grok config directory." : "Not created yet — it appears after first use.",
             status: inputs.configPresent ? .ok : .info
+        ))
+
+        rows.append(DoctorCheck(
+            key: "loginShellPath",
+            title: "Login shell PATH",
+            detail: inputs.loginShellPath.doctorDetail,
+            status: inputs.loginShellPath.doctorStatus
         ))
 
         rows.append(DoctorCheck(

@@ -425,7 +425,7 @@ final class GrokProcess: @unchecked Sendable {
         let proc = Process()
         proc.executableURL = cli
         proc.currentDirectoryURL = workspace.path
-        proc.environment = ProcessInfo.processInfo.environment
+        proc.environment = LoginShellPath.inheritedEnvironment()
 
         // ACP: grok [top-level flags] agent [agent flags] stdio
         var args: [String] = []
@@ -1279,7 +1279,8 @@ final class GrokProcess: @unchecked Sendable {
                   "/usr/local/bin/grok"] {
             if FileManager.default.isExecutableFile(atPath: c) { return URL(fileURLWithPath: c) }
         }
-        if let path = ProcessInfo.processInfo.environment["PATH"] {
+        let path = LoginShellPath.currentPATH()
+        if !path.isEmpty {
             for d in path.split(separator: ":") {
                 let f = URL(fileURLWithPath: String(d)).appendingPathComponent("grok").path
                 if FileManager.default.isExecutableFile(atPath: f) { return URL(fileURLWithPath: f) }

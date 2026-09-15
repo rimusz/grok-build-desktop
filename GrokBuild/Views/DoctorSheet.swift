@@ -4,7 +4,7 @@ import AppKit
 /// In-app diagnostics + broken-auth recovery, inspired by Grok-UI's `doctor` panel.
 ///
 /// Collects environment facts (CLI path, version, auth, config.toml, Browser/Computer Use
-/// readiness, Node.js for the Cursor bridge, uv for the browser-use plugin, Cursor bridge reachability) via `DoctorInputs`,
+/// readiness, Node.js for the Cursor bridge, uv for the browser-use plugin, login-shell PATH, Cursor bridge reachability) via `DoctorInputs`,
 /// maps them to rows with the pure `DoctorReport`, and offers remediations: install the grok CLI,
 /// run `grok login`, install Node.js when missing/too old, and install uv when the plugin backend needs it.
 struct DoctorSheet: View {
@@ -177,7 +177,8 @@ struct DoctorSheet: View {
             nodeFound: node.isFound,
             nodeVersionDisplay: node.versionDisplay,
             nodeMeetsMinimum: node.meetsMinimum,
-            uvFound: BrowserUsePlugin.uvToolIsAvailable()
+            uvFound: BrowserUsePlugin.uvToolIsAvailable(),
+            loginShellPath: LoginShellPath.lastStatus
         )
     }
 

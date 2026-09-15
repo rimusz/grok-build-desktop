@@ -27,6 +27,10 @@ enum ProjectOpenTarget {
     case zed
 }
 
+private enum TranscriptAnchor {
+    static let bottom = "transcript-bottom"
+}
+
 struct ChatView: View {
     @Bindable var store: ChatStore
     var boundSpecialist: SpecialistAgent? = nil
@@ -69,6 +73,7 @@ struct ChatView: View {
     @State private var imaginePrompt = ""
     @State private var workflowsEnabled = WorkflowsConfigStore.loadEnabled()
     @State private var rewindTargetID: UUID?
+    @State private var isPinnedToBottom = true
 
     private var slashMatch: (query: String, range: Range<String.Index>)? {
         SlashAutocomplete.match(in: input)
@@ -149,6 +154,7 @@ struct ChatView: View {
 
             ScrollViewReader { proxy in
                 GeometryReader { geo in
+                    ZStack(alignment: .bottom) {
                     ScrollView {
                     // VStack, not LazyVStack: attributed assistant bubbles report
                     // the wrong height when lazily measured, which clips the tail.
@@ -229,27 +235,58 @@ struct ChatView: View {
                                 store.respondToPermission(perm, with: optionId)
                             }
                         }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(TranscriptAnchor.bottom)
+                            .accessibilityHidden(true)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
                     .frame(width: geo.size.width, alignment: .leading)
                     .environment(\.chatColumnWidth, max(geo.size.width - 32, 0))
                 }
+                .defaultScrollAnchor(.bottom)
                 .background(Color(nsColor: .textBackgroundColor))
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    TranscriptScrollPolicy.isPinnedToBottom(
+                        contentHeight: geometry.contentSize.height,
+                        visibleMaxY: geometry.visibleRect.maxY
+                    )
+                } action: { _, isPinned in
+                    isPinnedToBottom = isPinned
+                }
                 .onChange(of: store.messages.count) { _, _ in
-                    scrollToBottom(proxy: proxy)
+                    followLatestIfPinned(proxy: proxy)
                 }
                 .onChange(of: store.isGrokking) { _, _ in
-                    scrollToBottom(proxy: proxy)
+                    followLatestIfPinned(proxy: proxy)
                 }
                 .onChange(of: store.thinkingText) { _, _ in
                     thinkingScrollTask?.cancel()
                     thinkingScrollTask = Task {
                         try? await Task.sleep(for: .milliseconds(200))
                         guard !Task.isCancelled else { return }
-                        scrollToBottom(proxy: proxy)
+                        followLatestIfPinned(proxy: proxy)
                     }
                 }
+
+                    if TranscriptScrollPolicy.shouldShowJumpToLatest(
+                        isPinnedToBottom: isPinnedToBottom,
+                        hasTranscript: !store.messages.isEmpty
+                    ) {
+                        Button {
+                            isPinnedToBottom = true
+                            scrollToBottom(proxy: proxy)
+                        } label: {
+                            Label("Jump to latest", systemImage: "chevron.down")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .padding(.bottom, 10)
+                        .accessibilityLabel("Jump to latest")
+                    }
+                    }
                 }
             }
 
@@ -268,6 +305,12 @@ struct ChatView: View {
             composer
         }
         .onAppear { inputFocused = true }
+        .onChange(of: store.restoredQueueForComposer) { _, items in
+            guard !items.isEmpty else { return }
+            input = ChatStore.mergeComposerDraft(input, restoredQueue: items)
+            _ = store.consumeRestoredQueueForComposer()
+            inputFocused = true
+        }
         .onDisappear {
             thinkingScrollTask?.cancel()
             thinkingScrollTask = nil
@@ -611,11 +654,14 @@ struct ChatView: View {
         }
     }
 
+    private func followLatestIfPinned(proxy: ScrollViewProxy) {
+        guard TranscriptScrollPolicy.shouldFollowLatest(isPinnedToBottom: isPinnedToBottom) else { return }
+        scrollToBottom(proxy: proxy)
+    }
+
     private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let last = store.messages.last {
-            withAnimation(.easeOut(duration: 0.15)) {
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(TranscriptAnchor.bottom, anchor: .bottom)
         }
     }
 
@@ -1220,7 +1266,7 @@ struct ChatView: View {
                 .frame(width: 22, height: 22)
             }
             .buttonStyle(.plain)
-            .help("Stop session (⌘.)")
+            .help("Stop and restore queued prompts to the composer (⌘.)")
             .keyboardShortcut(".", modifiers: .command)
         } else {
             Button {
@@ -1470,6 +1516,7 @@ struct ChatView: View {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         input = ""
+        isPinnedToBottom = true
         _ = await store.send(text)
         inputFocused = true
     }

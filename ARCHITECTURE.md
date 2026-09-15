@@ -144,7 +144,7 @@ grok-deck2/
 
 Menu actions that need the main UI post notifications (e.g. `.newSessionRequested`, `.openSettingsRequested`, `.retryConnectionRequested`) that `ContentView` handles. Status-item actions that front the window are deferred to the next main-queue turn so the menu click is not delivered into the newly keyed window.
 
-**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, `Models`, `Agents, Roles & Subagents`, `Sessions`, and `Browser & Computer Use` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, walks through adding custom providers and models (`~/.grok/config.toml`, Fetch-then-Add, dummy keys, Cursor sidecar), distinguishes Sessions Dashboard from Sessions History, covers Browser backends (`agent-browser` isolated vs official `browser-use` plugin) and Computer Use/Accessibility, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
+**Help menu:** `GrokBuild Help`, `Getting Started`, `Settings Guide`, `Models`, `Agents, Roles & Subagents`, `Sessions`, and `Browser & Computer Use` open `HelpPanel` at the matching `HelpTopic`. The native resizable panel explains the basic project/session flow, groups all Settings tabs and their apply/restart behavior, walks through adding custom providers and models (`~/.grok/config.toml`, Fetch-then-Add, dummy keys, Cursor sidecar), distinguishes Sessions Dashboard from Sessions History, covers Browser backends (`agent-browser` isolated vs official `browser-use` plugin) and Computer Use/Accessibility, notes that launch merges login-shell PATH for Dock/Finder sessions, notes stick-scroll + Jump to latest and that Stop restores the prompt queue, and distinguishes a saved roster Agent from a whole-session `grok --agent` role and a child subagent. Keyboard-shortcut documentation is intentionally not included.
 
 **Status icon:** grok mark tints for light/dark menu bars; colored dot (green ready, blue busy/starting, red error) is not template-tinted. Accessibility value reflects status text (Ready / Working / Starting / Error / Idle).
 
@@ -205,15 +205,17 @@ flowchart TB
 1. `GROK_CLI_PATH` environment variable
 2. `~/.grok/bin/grok`
 3. Homebrew paths
-4. `PATH`
+4. `PATH` (after launch merges the login-shell PATH — see below)
 
 User must run `grok login` for authenticated sessions. Auth failures surface in `ChatStore.authRequiredMessage` and menu bar indicator. **Launch hint:** `GrokAuthProbe` checks the grok CLI's cached credentials (non-empty `~/.grok/auth.json`) for the status menu header before any session starts — env API keys are not treated as signed in; once a `GrokProcess` runs, `.grokStatusChanged` `authenticated` wins.
+
+**Login-shell PATH:** Dock/Finder/`open` launches inherit launchd's `/usr/bin:/bin:/usr/sbin:/sbin`, so Homebrew tools (`gh`, `uv`) would be missing from grok children and ACP terminals. `LoginShellPath.applyToCurrentProcess()` runs at the start of `AppDelegate.applicationDidFinishLaunching` (after the single-instance lock): it asks the account-database login shell (`getpwuid`, then `$SHELL`, then `/bin/zsh`) for `PATH` via `zsh -il`, merges shell entries first, and `setenv`s only `PATH`. `GrokProcess`, `GrokCLIService`, `AcpTerminalHost`, browser/CU locators, and the Cursor bridge inherit that PATH. Set `GROKBUILD_SKIP_SHELL_PATH=1` to skip. Failures never block launch; Doctor shows the result.
 
 ---
 
 ## GrokProcess & ACP
 
-**Files:** `Services/GrokProcess.swift`, `Services/AcpTerminalHost.swift`
+**Files:** `Services/GrokProcess.swift`, `Services/AcpTerminalHost.swift`, `Services/LoginShellPath.swift`
 
 `GrokProcess` is the long-running **ACP client**. One instance per `ChatStore`.
 
@@ -595,9 +597,13 @@ grok's **Rhai workflow engine** (`.grok/workflows/`, `/workflow`, `/workflows`) 
 
 ### Prompt queue + Steer (mid-turn)
 
-While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Steer into current turn` when streaming, `Send now`, `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped. Mid-turn steer/queue folds file/image chip notes into the text via `consumeComposerAttachments` and clears the chips so they cannot stick to a later prompt (vision pixels are text-noted only on that path — ACP image blocks apply to non-streaming sends).
+While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`; drained automatically on turn complete. Badge + menu in `ChatView` composer (`Steer into current turn` when streaming, `Send now`, `Remove`). `sendQueuedPromptNow` refuses while streaming and re-inserts the prompt if deliver fails so queued work is not dropped. Mid-turn steer/queue folds file/image chip notes into the text via `consumeComposerAttachments` and clears the chips so they cannot stick to a later prompt (vision pixels are text-noted only on that path — ACP image blocks apply to non-streaming sends). **Stop** (`ChatStore.stop`, composer stop control or `.stopGenerationRequested`) clears the queue first so `finishPrompt` cannot drain it, then restores those prompts into the composer (`restoredQueueForComposer` + `ChatStore.mergeComposerDraft`) instead of sending them after the cancelled turn.
 
 **Steer** injects a prompt into the *running* turn without cancelling it (grok never cancels on new input). `SteerDecision.resolve(isStreaming:steerByDefault:explicitSteer:)` (in `GrokCLIService.swift`) is the pure decision; `ChatStore.steerRunningTurn` / `steerQueuedPromptNow` append the user message and call `GrokProcess.steer(_:)` (fire-and-forget `session/prompt`, id untracked). The **Steer by default** app setting (`GrokSettingsKeys.steerByDefault`, Settings → App) makes a mid-turn composer send steer instead of queue.
+
+### Transcript stick-scroll
+
+`TranscriptScrollPolicy` (`Services/TranscriptScrollPolicy.swift`) decides whether new content may move the viewport. `ChatView` follows the latest turn only while the user is within `pinThreshold` of the bottom (`onScrollGeometryChange` + `defaultScrollAnchor(.bottom)`). Scrolling up leaves the transcript in place during streaming; **Jump to latest** pins and scrolls to a bottom sentinel (including thinking / tools below the last message). Sending a prompt re-pins. Pure policy is unit-tested; the overlay button uses accessibility label `Jump to latest`.
 
 ### Session status + unread badges
 
@@ -617,7 +623,7 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 
 ### Doctor + onboarding
 
-`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, Browser/CU enabled, browser backend / `browser-use` plugin, uv/uvx, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `BrowserUsePlugin.loadStatus`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), Node.js install (Homebrew or nodejs.org) when the Node check warns, and uv install when the browser-use plugin needs it. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**). Closes with `WindowTrafficLights` like Sessions History.
+`DoctorReport` (`Services/DoctorReport.swift`) maps `DoctorInputs` (CLI found, version, auth, config.toml, login-shell PATH, Browser/CU enabled, browser backend / `browser-use` plugin, uv/uvx, Node.js for the Cursor bridge, managed Cursor bridge reachable) to `DoctorCheck` rows (pure). `DoctorSheet` (`Views/DoctorSheet.swift`) collects the inputs live (`GrokCLIService.locateGrokCLI` / `versionDisplayLine`, `GrokAuthProbe`, `LoginShellPath.lastStatus`, `BrowserUsePlugin.loadStatus`, `CursorBridgeRuntime.probeNode`, `CursorBridge.probeManaged`) and offers remediations — install the grok CLI (docs link), `grok login` (opens Terminal), Node.js install (Homebrew or nodejs.org) when the Node check warns, and uv install when the browser-use plugin needs it. Opened via `.openDoctorRequested` (Settings → App → **Open Doctor…**). Closes with `WindowTrafficLights` like Sessions History.
 
 ### `/btw` aside
 
@@ -856,7 +862,7 @@ Opening Settings (sidebar gear, App menu ⌘,, or status-item **Settings…**) k
 | File | Role |
 |------|------|
 | `SidebarView.swift` | Searchable agent/project/session list; global **Agents** roster above Projects; matching section-header plus actions for **New Agent** / **Add Project** (no separate top Add Project button); global Pinned and Settled sections; visible attention/elapsed status; settings entry; git branch caption on the selected project; project path is a tooltip, not a subtitle |
-| `ChatView.swift` | Composer, messages, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
+| `ChatView.swift` | Composer, messages, stick-scroll + **Jump to latest**, model/effort popover, workflow chips, goal banner, session `…` (fork / share / goal / skill), empty/welcome state (quick-start chips + no-project CTA) |
 | `ComposerViews.swift` | File chips, workflow chips, goal banner, plan/question cards |
 | `GrokChatChrome.swift` | Shared session chrome; `WindowTrafficLights` close control for browser-style sheets (Sessions History / Dashboard, Memory, Saved Workflows, Doctor, Git checkout, New Parallel Session, New Automation). Create/add dialogs that are not those windows still use Cancel + primary action. |
 | `RichMessageView.swift` / `MessageBubble.swift` | Markdown, thinking, tools, permissions. Assistant text is line-oriented like grok CLI (`GrokMarkdownStyle`: blue headings, cyan inline code, lists) plus GFM tables and fenced code; smashed one-line tables (`| A | B ||---|---|| row |`) are expanded before parse. mermaid/LaTeX still use WKWebView (reload only when source changes, fixed height after load). Inline `$…$` spans require math signals (not currency/`$PATH`). Inline ``code`` is extracted before Foundation markdown so placeholders like `<BUZZ_DOMAIN>` do not open HTML and swallow the rest of the line. Chat messages use a `VStack` (not `LazyVStack`); the transcript `ScrollView` is width-bounded (`GeometryReader` + `chatColumnWidth`). Each markdown line is a wrapping `NSTextView` sized from `layoutManager.usedRect` so long paragraphs are not clipped. |
@@ -969,6 +975,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | Task | Start here |
 |------|------------|
 | **Composer, send, streaming** | `ChatView.swift`, `ChatStore.send`, `consumeOutput` |
+| **Transcript stick-scroll** | `TranscriptScrollPolicy.swift`, `ChatView` Jump to latest |
 | **Workflow slash chips** | `WorkflowSlashCommands` in `ComposerModels.swift`, `WorkflowChipBar` in `ComposerViews.swift`, `ChatView` composer |
 | **Session goal banner** | `GoalBanner` in `ComposerViews.swift`, `ChatStore.goalState` + `/goal` helpers, `GoalCommand` in `ComposerModels.swift` |
 | **Empty/welcome state, quick starts** | `ChatView.swift` (`welcomeState`, `noProjectState`, `QuickStartChip`), `QuickStartPrompt` in `ComposerModels.swift` |
@@ -998,7 +1005,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Scheduled tasks** | `ScheduledTaskStore.swift`, `ChatStore.scheduledTasks` + refresh/create/cancel, `ChatView.tasksStatusPill`, `AcpEvent.schedulerActivity` |
 | **Background tasks** | `BackgroundTaskStore.swift`, `ChatStore.backgroundActivities`, `AcpEvent.backgroundActivity` |
 | **Rhai workflows** | `WorkflowsConfigStore`, `WorkflowRunStore`, `SavedWorkflowStore`, `ChatView.workflowsStatusPill`, `.workflowsConfigChanged` |
-| **Fork / share / queue** | `GrokLaunchOptions.forkSession`, `ChatStore.startForked`, `shareSession`, `promptQueue`, `btwAsideText` |
+| **Fork / share / queue** | `GrokLaunchOptions.forkSession`, `ChatStore.startForked`, `shareSession`, `promptQueue`, `ChatStore.stop` → `mergeComposerDraft`, `btwAsideText` |
 | **Dashboard** | `SessionDashboardPanel.swift`, `DashboardGrouping.swift`, `DashboardScope`, `DashboardGitRefresh`, `ConnectionCapPolicy`, `ParallelSessionSheet.swift`, `ContentView.dashboardEntries` / `createNamedSession` |
 | **Compat** | `CompatConfigStore`, `CompatibilitySettingsPane`, `listExternalCompat` |
 | **Memory (cross-session)** | `MemoryStore.swift`, `MemoryBrowserPanel.swift`, settings `.memory`, `GrokMemoryFlag`, `ChatStore.remember`/`isMemoryEnabled` |
@@ -1013,13 +1020,13 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Assistant markdown (CLI-style)** | `GrokMarkdownStyle`, `MarkdownBlockParser` tables/fences, `MarkdownTableView` / `MarkdownCodeBlockView` (`RichMessageView.swift`) |
 | **Context usage popover** | `ContextUsageFormatter.swift`, `TurnTokenUsage.swift`, `ContextUsageIndicator` + `ChatStore.lastTurnUsage` / `compactContext` |
 | **Workflow run cards** | `WorkflowRunsCard` (`ComposerViews.swift`), `WorkflowRun.budgetFraction/isActive`, `ChatStore.pause/resume/stopWorkflowRun` |
-| **Doctor** | `DoctorReport.swift`, `DoctorSheet.swift`, `.openDoctorRequested` |
+| **Doctor** | `DoctorReport.swift`, `DoctorSheet.swift`, `LoginShellPath.swift`, `.openDoctorRequested` |
 | **Settings tab** | `SettingsView` — search pane struct by tab |
 | **MCP injection** | `ChatStore.restartProcess` → `browserMCPConfig` / `computerUseMCPConfig` |
 | **Skill install** | `BrowserSkillInstaller`, `ComputerUseSkillInstaller` |
 | **Diff review / apply** | `PreviewPane`, `ChatStore` diff detection on `Message.hasDiff` |
 | **Menu bar / auth** | `StatusBarController`, `GrokAuthProbe`, `ChatStore.authRequiredMessage` |
-| **Main window / single instance** | `AppDelegate` |
+| **Main window / single instance** | `AppDelegate` (`LoginShellPath.applyToCurrentProcess` before windows) |
 | **In-app updates** | `UpdateScheduler`, `UpdateChecker`, `AppUpdater`, `GrokCLIUpdater`, `UpdatePanel` |
 | **Simulate updates (dev)** | `UpdateDebugSimulator`, `#if DEBUG` menu in `StatusBarController` |
 | **About / version** | `AppVersion.swift`, `AboutPanel` |
@@ -1040,6 +1047,8 @@ make test    # Tests/GrokBuildTests/
 | `SessionPersistenceTests.swift` | Layout/workspace persistence, per-tab model + per-tab session agent + specialist binding (record round-trip, default-follow vs explicit override, legacy decode without `specialistAgentID`), `SessionTitle.auto` skip of prompt dumps; `SessionMessageStore` keeps a longer assistant turn when a later save is shorter |
 | `GrokSessionTranscriptImporterTests.swift` | grok jsonl path encoding, user_query / thinking-tag import, empty-tab recovery, last-assistant tail splice (prefix + preamble/truncated), user-only tab appends imported assistants, ignore extra `user_info` when the answer is already complete, strip `ToolCallUpdate` protocol JSON from imported assistants |
 | `AcpTerminalHostTests.swift` | ACP `terminal/create` request parse, PATH/zsh launch, `bash -lc` command-line split, UTF-8 output truncation, exit/wait JSON, live `/bin/echo` and `bash -lc` |
+| `LoginShellPathTests.swift` | Login-shell PATH merge/extract/skip, Doctor copy, fake apply |
+| `PromptQueueTests.swift` | Queue enqueue/remove, send-now guards, Stop restores queued prompts into the composer |
 | `GrokActivitySummaryTests.swift` | CLI tool-line grouping (including Computer Use / subagent / grep-as-Searched), hook counts, `stop` lines, `updates.jsonl` rebuild, attach-on-restore (index-aligned turns), late-chunk routing, failed-prompt keep, `Message.parts` decode, protocol-JSON sanitizer |
 | `BrowserIntegrationTests.swift` | Browser MCP config, plugin mutual exclusion, skill install (isolated only), MCP script tool names (`browser_tabs` / snapshot), settings round-trip including backend, enable-toggle apply, managed-runtime status copy, external browser launch args, presets |
 | `AgentsAndCapabilitiesTests.swift` | `GrokAgentProfiles` launch-arg mapping + built-in options/display names, `GrokAgentInfo` parsing, `SubagentRole` validation/suggested-name + `SubagentRoleStore` TOML parse/rewrite (instruction round-trip, relative prompt files, preserve unrelated content/unmanaged role fields, inherit-model omission); `SubagentDeleteCopy` confirmation title/message; `SessionRoleMenu` copy + roster-linked role identity; `SpecialistAgent` validation/normalize/Codable + `SpecialistAgentStore` Application Support CRUD (unique names, reserved role names, malformed JSON, failed-write rollback); sample-agent install + `SpecialistAgentRoleSync` upsert (preserve unmanaged TOML keys, idempotent install, role-write rollback); roster live-session binding (most-recent explicit, last session, pill mapping, delete clears identity), duplicate names, filter, pin + active-only / show-all display |
@@ -1053,7 +1062,7 @@ make test    # Tests/GrokBuildTests/
 | `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; wrapping tab-flow layout; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables (including smashed one-line tables), fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
-| `CompetitiveUXTests.swift` | Session status resolution, sidebar section action copy, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping, unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
+| `CompetitiveUXTests.swift` | Session status resolution, sidebar section action copy, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, Node TLS CA for Zscaler), Doctor report mapping (including login-shell PATH), unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, transcript stick-scroll policy, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.

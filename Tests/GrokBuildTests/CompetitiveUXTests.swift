@@ -503,6 +503,21 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(found?.status, .ok)
     }
 
+    func testDoctorLoginShellPathRow() {
+        let applied = DoctorReport.checks(from: DoctorInputs(
+            loginShellPath: .applied(shell: "/bin/zsh", pathEntries: 12)
+        )).first { $0.key == "loginShellPath" }
+        XCTAssertEqual(applied?.status, .ok)
+        XCTAssertTrue(applied?.detail.contains("12 entries") ?? false)
+        XCTAssertFalse(applied?.detail.contains("/bin/zsh") ?? true)
+
+        let failed = DoctorReport.checks(from: DoctorInputs(
+            loginShellPath: .failed(shell: "/bin/zsh")
+        )).first { $0.key == "loginShellPath" }
+        XCTAssertEqual(failed?.status, .warning)
+        XCTAssertTrue(failed?.detail.contains("launchd PATH") ?? false)
+    }
+
     func testCursorAPIKeyLooksLikeAndValidationResult() {
         XCTAssertFalse(CursorBridge.looksLikeAPIKey(""))
         XCTAssertFalse(CursorBridge.looksLikeAPIKey("short"))
@@ -940,6 +955,24 @@ final class CompetitiveUXTests: XCTestCase {
         // Linked worktree: .git is a file
         try "gitdir: /tmp/fake/.git/worktrees/wt".write(to: wt.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
         XCTAssertTrue(GitService.isWorktree(at: wt, fileManager: fm))
+    }
+
+    // MARK: - Transcript stick-scroll
+
+    func testTranscriptPinnedNearBottomAndJumpWhenScrolledUp() {
+        XCTAssertTrue(TranscriptScrollPolicy.isPinnedToBottom(contentHeight: 800, visibleMaxY: 790))
+        XCTAssertFalse(TranscriptScrollPolicy.isPinnedToBottom(contentHeight: 800, visibleMaxY: 400))
+        XCTAssertTrue(TranscriptScrollPolicy.shouldFollowLatest(isPinnedToBottom: true))
+        XCTAssertFalse(TranscriptScrollPolicy.shouldFollowLatest(isPinnedToBottom: false))
+        XCTAssertTrue(
+            TranscriptScrollPolicy.shouldShowJumpToLatest(isPinnedToBottom: false, hasTranscript: true)
+        )
+        XCTAssertFalse(
+            TranscriptScrollPolicy.shouldShowJumpToLatest(isPinnedToBottom: true, hasTranscript: true)
+        )
+        XCTAssertFalse(
+            TranscriptScrollPolicy.shouldShowJumpToLatest(isPinnedToBottom: false, hasTranscript: false)
+        )
     }
 
     // MARK: - Chat rewind / clear
