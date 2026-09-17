@@ -152,12 +152,75 @@ struct CustomModel: Identifiable, Hashable, Sendable {
         return result.trimmingCharacters(in: CharacterSet(charactersIn: "-.")).lowercased()
     }
 
+    /// Catalog ids grok treats as native models. A `[model.<id>]` table using one of these keys
+    /// overrides the built-in — including `api_backend = responses` and xAI routing — so a
+    /// custom OpenAI-compatible endpoint saved as `grok-4.6` hijacks native grok.
+    static let grokNativeCatalogIDs: Set<String> = [
+        "grok-4.6",
+        "grok-4.5",
+        "grok-4",
+        "grok-build",
+        "grok-composer-2.5",
+        "grok-composer-2.5-fast",
+    ]
+
+    /// True when `id` is a grok native catalog key (case-insensitive).
+    static func isGrokNativeCatalogID(_ id: String) -> Bool {
+        grokNativeCatalogIDs.contains(id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    /// True when the URL still points at xAI / grok.com (a legitimate per-field override).
+    static func isNativeGrokEndpoint(_ baseURL: String) -> Bool {
+        let lower = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.isEmpty { return true }
+        return lower.contains("api.x.ai") || lower.contains("grok.com")
+    }
+
+    /// Table key that will not shadow a grok native model. Cursor already prefixes `cursor-`.
+    static func uniquifiedTableID(base: String, providerID: String?, taken: (String) -> Bool) -> String {
+        let trimmed = suggestedID(from: base)
+        guard !trimmed.isEmpty else { return "" }
+        var candidate = trimmed
+        if isGrokNativeCatalogID(candidate) {
+            let prefix = suggestedID(from: providerID ?? "custom")
+            candidate = "\(prefix.isEmpty ? "custom" : prefix)-\(candidate)"
+        }
+        if !taken(candidate) { return candidate }
+        var suffix = 2
+        var current = "\(candidate)-\(suffix)"
+        while taken(current) {
+            suffix += 1
+            current = "\(candidate)-\(suffix)"
+        }
+        return current
+    }
+
+    /// Prefix used when relocating a table that shadowed a native grok id.
+    static func shadowRelocationPrefix(for model: CustomModel, providers: [Provider]) -> String {
+        if let providerID = model.providerID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !providerID.isEmpty {
+            let slug = suggestedID(from: providerID)
+            if !slug.isEmpty { return slug }
+        }
+        let url = model.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let match = providers.first(where: {
+            $0.baseURL.trimmingCharacters(in: .whitespacesAndNewlines) == url
+        }) {
+            let slug = suggestedID(from: match.id)
+            if !slug.isEmpty { return slug }
+        }
+        return "custom"
+    }
+
     /// A validation error message, or nil when the entry is well-formed.
     var validationError: String? {
         let trimmedID = id.trimmingCharacters(in: .whitespaces)
         if trimmedID.isEmpty { return "Model id is required." }
         if trimmedID.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) == nil {
             return "Model id may only contain letters, numbers, dots, dashes, and underscores."
+        }
+        if Self.isGrokNativeCatalogID(trimmedID), !Self.isNativeGrokEndpoint(baseURL) {
+            return "This id is reserved by a built-in grok model. Use a unique table id (for example acme-grok-4.6) so the custom endpoint does not override native grok."
         }
         if model.trimmingCharacters(in: .whitespaces).isEmpty { return "Model name is required." }
         let trimmedURL = baseURL.trimmingCharacters(in: .whitespaces)
@@ -871,6 +934,73 @@ enum CustomModelStore {
         try updated.write(to: configURL, atomically: true, encoding: .utf8)
     }
 
+    /// Result of renaming `[model.grok-4.6]`-style tables that pointed at a non-xAI endpoint.
+    struct ShadowRelocation: Equatable, Sendable {
+        var models: [CustomModel]
+        var defaultModelID: String?
+        var changed: Bool
+    }
+
+    /// Renames custom model tables that shadow grok native catalog ids onto a unique key.
+    /// Leaves xAI/grok.com overrides (api_key-only tweaks) in place.
+    static func relocateNativeCatalogShadows(
+        models: [CustomModel],
+        defaultModelID: String?,
+        providers: [Provider]
+    ) -> ShadowRelocation {
+        var taken = Set(models.map(\.id))
+        var relocated = models
+        var changed = false
+        var mappedDefault = defaultModelID
+
+        for index in relocated.indices {
+            let model = relocated[index]
+            guard CustomModel.isGrokNativeCatalogID(model.id),
+                  !CustomModel.isNativeGrokEndpoint(model.baseURL) else { continue }
+            taken.remove(model.id)
+            let prefix = CustomModel.shadowRelocationPrefix(for: model, providers: providers)
+            let newID = CustomModel.uniquifiedTableID(
+                base: "\(prefix)-\(model.id)",
+                providerID: nil,
+                taken: { taken.contains($0) }
+            )
+            taken.insert(newID)
+            var copy = model
+            copy.id = newID
+            relocated[index] = copy
+            if mappedDefault == model.id {
+                mappedDefault = newID
+            }
+            changed = true
+        }
+
+        return ShadowRelocation(models: relocated, defaultModelID: mappedDefault, changed: changed)
+    }
+
+    /// One-shot rewrite of `~/.grok/config.toml` when a custom endpoint hijacked a native grok id.
+    /// Returns true when the file was written.
+    @discardableResult
+    static func repairNativeCatalogShadowsIfNeeded(
+        providers: [Provider],
+        fileURL: URL = configURL
+    ) -> Bool {
+        guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else { return false }
+        let snapshot = parse(contents)
+        let relocation = relocateNativeCatalogShadows(
+            models: snapshot.models,
+            defaultModelID: snapshot.defaultModelID,
+            providers: providers
+        )
+        guard relocation.changed else { return false }
+        let updated = rewrite(contents, models: relocation.models, defaultModelID: relocation.defaultModelID)
+        do {
+            try updated.write(to: fileURL, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Produces a new config string: drops all existing `[model.*]` tables and the `[models].default`
     /// key, then appends fresh versions while keeping every other section intact.
     static func rewrite(_ contents: String, models: [CustomModel], defaultModelID: String?) -> String {
@@ -924,8 +1054,9 @@ enum CustomModelStore {
             if !model.envKey.trimmingCharacters(in: .whitespaces).isEmpty {
                 result += "env_key = \(quote(model.envKey))\n"
             }
-            // Only write api_backend when it deviates from grok's default, to keep files tidy.
-            if model.apiBackend != .default {
+            // grok infers Responses for native catalog ids like grok-4.6 even under a custom
+            // table (`cursor-grok-4.6`). Pin chat_completions unless the user picked another backend.
+            if shouldPersistAPIBackend(model) {
                 result += "api_backend = \(quote(model.apiBackend.rawValue))\n"
             }
             if let contextTokens = model.contextTokens {
@@ -951,6 +1082,13 @@ enum CustomModelStore {
 
         if !result.hasSuffix("\n") { result += "\n" }
         return result
+    }
+
+    /// Persist `api_backend` when it is not grok's implied default, or when the provider model
+    /// id is a native grok catalog key (otherwise grok 1.0.x inherits Responses).
+    static func shouldPersistAPIBackend(_ model: CustomModel) -> Bool {
+        if model.apiBackend != .default { return true }
+        return CustomModel.isGrokNativeCatalogID(model.model) || CustomModel.isGrokNativeCatalogID(model.id)
     }
 
     // MARK: - TOML helpers

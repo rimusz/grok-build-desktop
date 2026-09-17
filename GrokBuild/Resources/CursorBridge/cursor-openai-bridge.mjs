@@ -13,6 +13,17 @@ import os from "node:os";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { resolveCursorApiKey } from "./cursor-bridge-auth.mjs";
+import {
+  buildChatPrompt,
+  buildPromptFromResponsesBody,
+  completedResponseObject,
+  createResponsesStream,
+  formatSseEvent,
+  healthPayload,
+  isChatCompletionsPath,
+  isResponsesPath,
+  normalizeApiPath
+} from "./cursor-bridge-protocol.mjs";
 
 const host = process.env.CURSOR_BRIDGE_HOST || "127.0.0.1";
 const port = parseInt(process.env.CURSOR_BRIDGE_PORT || "18787", 10);
@@ -56,7 +67,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && (apiPath === "/health" || apiPath === "/")) {
-    writeJson(response, { ok: true, service: "grokbuild-cursor-bridge", cwd: workspaceCwd });
+    writeJson(response, healthPayload(workspaceCwd));
     return;
   }
 
@@ -65,18 +76,17 @@ async function handleRequest(request, response) {
     return;
   }
 
-  if (request.method === "POST" && apiPath === "/chat/completions") {
+  if (request.method === "POST" && isChatCompletionsPath(apiPath)) {
     await handleChatCompletions(request, response);
     return;
   }
 
-  writeJson(response, openAiError(new HttpError("Not found", 404, "not_found")), 404);
-}
+  if (request.method === "POST" && isResponsesPath(apiPath)) {
+    await handleResponses(request, response);
+    return;
+  }
 
-function normalizeApiPath(pathname) {
-  if (pathname.startsWith("/v1/")) return pathname.slice("/v1".length);
-  if (pathname === "/v1") return "/";
-  return pathname;
+  writeJson(response, openAiError(new HttpError("Not found", 404, "not_found")), 404);
 }
 
 async function handleChatCompletions(request, response) {
@@ -88,7 +98,7 @@ async function handleChatCompletions(request, response) {
   }
 
   const model = normalizeModel(body.model);
-  const prompt = buildChatPrompt(body.messages);
+  const prompt = buildChatPrompt(body.messages, workspaceCwd);
   const stream = body.stream === true;
   const created = nowSeconds();
   const completionId = `chatcmpl_${randomId()}`;
@@ -170,6 +180,60 @@ async function handleChatCompletions(request, response) {
   });
 }
 
+async function handleResponses(request, response) {
+  const body = await readJsonBody(request);
+  const apiKey = getApiKey(request);
+  if (!apiKey) {
+    writeJson(response, openAiError(new HttpError("Missing CURSOR_API_KEY", 401, "unauthorized")), 401);
+    return;
+  }
+
+  const model = normalizeModel(body.model);
+  const prompt = buildPromptFromResponsesBody(body, workspaceCwd);
+  const stream = body.stream !== false;
+  const created = nowSeconds();
+  const responseId = `resp_${randomId()}`;
+  const itemId = `msg_${randomId()}`;
+
+  if (stream) {
+    writeSseHeaders(response);
+    const events = createResponsesStream({ id: responseId, model, created, itemId });
+    try {
+      for (const event of events.prelude()) response.write(formatSseEvent(event));
+      const { text, usage } = await runAgent({
+        apiKey,
+        model,
+        prompt,
+        onDelta: (delta) => {
+          response.write(formatSseEvent(events.delta(delta)));
+        }
+      });
+      for (const event of events.finale(text, usage)) response.write(formatSseEvent(event));
+    } catch (error) {
+      response.write(formatSseEvent({
+        event: "error",
+        data: {
+          type: "error",
+          message: friendlyBridgeError(error)
+        }
+      }));
+    } finally {
+      response.end();
+    }
+    return;
+  }
+
+  const { text, usage } = await runAgent({ apiKey, model, prompt });
+  writeJson(response, completedResponseObject({
+    id: responseId,
+    model,
+    text,
+    usage,
+    created,
+    itemId
+  }));
+}
+
 async function runAgent({ apiKey, model, prompt, onDelta }) {
   const agent = await Agent.create({
     apiKey,
@@ -212,25 +276,6 @@ async function runAgent({ apiKey, model, prompt, onDelta }) {
       // Ignore dispose failures on short-lived agents.
     }
   }
-}
-
-function buildChatPrompt(messages) {
-  const lines = [
-    "You are answering through a local OpenAI-compatible bridge used by GrokBuild / grok.",
-    "Treat this as chat inference: reply with the answer text only.",
-    "Do not edit files, run shell commands, or call IDE tools unless the user explicitly asks you to change the workspace.",
-    `Scratch workspace (ignore unless asked): ${workspaceCwd}`,
-    "",
-    "Conversation:"
-  ];
-  const list = Array.isArray(messages) ? messages : [];
-  for (const message of list) {
-    if (!message || typeof message !== "object") continue;
-    const role = typeof message.role === "string" ? message.role.toUpperCase() : "USER";
-    lines.push(`${role}: ${stringifyContent(message.content)}`);
-  }
-  lines.push("", "ASSISTANT:");
-  return lines.join("\n");
 }
 
 async function modelList(apiKey) {
@@ -379,28 +424,6 @@ class HttpError extends Error {
     super(message);
     this.status = status;
     this.code = code;
-  }
-}
-
-function stringifyContent(value) {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((part) => {
-        if (typeof part === "string") return part;
-        if (part && typeof part === "object") {
-          if (typeof part.text === "string") return part.text;
-          if (part.type === "text" && typeof part.text === "string") return part.text;
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
   }
 }
 

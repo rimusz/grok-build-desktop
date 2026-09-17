@@ -276,9 +276,13 @@ enum CursorBridgeRuntime {
         }
 
         // Reattach only after the stored key validates (orphan may still hold an older env key).
+        // Stale sidecars from before Responses support still answer /v1/models — restart those.
         if await endpointIsOnline() {
-            setStatus(.running)
-            return status
+            if await endpointSupportsResponses() {
+                setStatus(.running)
+                return status
+            }
+            stop()
         }
 
         let nodeProbe = probeNode()
@@ -476,6 +480,23 @@ enum CursorBridgeRuntime {
     private static func endpointIsOnline() async -> Bool {
         let probe = await CursorBridge.probe(managedEndpoint, timeout: 1.5)
         return probe.isOnline
+    }
+
+    /// Stale pre-Responses sidecars still serve `/v1/models` but 404 `/v1/responses`.
+    private static func endpointSupportsResponses() async -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(managedPort)/health") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1.5
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return false
+            }
+            return CursorBridge.healthSupportsResponses(data)
+        } catch {
+            return false
+        }
     }
 
     /// Best-effort kill of whatever is still listening on the managed port after we release our Process.

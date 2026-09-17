@@ -92,11 +92,14 @@ OpenAI-compatible providers/models live in `~/.grok/config.toml` via `CustomMode
 |-------|------|
 | `ProviderPreset.cursor` | Install provider; config.toml `api_key = "local"`, `base_url = http://127.0.0.1:18787/v1` |
 | `CursorBridgeAPIKey` | Real Cursor user key → Application Support `Secrets/cursor-api-key` (0600) |
-| `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start; `NodeTLS` injects `NODE_EXTRA_CA_CERTS` for Zscaler/IT PEMs when the .app has no shell env |
+| `CursorBridgeRuntime` | Spawns bundled `Resources/CursorBridge/cursor-openai-bridge.mjs` (`@cursor/sdk`); validates key via `cursor-validate-key.mjs` before save/start; `NodeTLS` injects `NODE_EXTRA_CA_CERTS` for Zscaler/IT PEMs when the .app has no shell env. Restarts a stale orphan that does not advertise Responses on `/health`. |
+| `cursor-bridge-protocol.mjs` | Shared `/v1/chat/completions` + `/v1/responses` mapping. grok 1.0.x calls Responses for `model = grok-4.6`. |
 | `cursor-bridge-auth.mjs` | `resolveCursorApiKey` — SDK auth uses process env `CURSOR_API_KEY`; ignore grok's xAI session JWT / `local` Bearer unless token is `crsr_…` |
 | Node ≥ 22.13 | Required on the machine (`CursorBridge.NodeRequirement` / Doctor / Settings install banner) |
 
 Do **not** put the Cursor user key in config.toml. If chat shows `[bridge error] Invalid User API Key`, check that the bridge is using env key resolution (not forwarding the session JWT) and that Settings → Models → Cursor has a valid saved key. If Settings shows `Network request failed` on a Zscaler Mac, confirm `~/IT-Certs/package-route.pem` exists (or set `GROKBUILD_NODE_EXTRA_CA_CERTS`). Pref `GrokBuild.cursorBridge.managedEnabled` is set on Cursor provider install (not a Settings toggle). Full map: `ARCHITECTURE.md` → Custom models → Cursor bridge.
+
+Do **not** save a custom provider as `[model.grok-4.6]` (or other native catalog ids). grok treats that as an override of built-in grok (Responses API + session title generation). GrokBuild prefixes colliding table ids (`acme-grok-4.6`) and relocates existing shadows on launch (`CustomModelStore.repairNativeCatalogShadowsIfNeeded`).
 
 ## Browser backend
 
@@ -161,7 +164,7 @@ Browser **quick presets** (`BrowserPreset` in `BrowserSettings.swift`) apply run
 
 Same session, before finishing:
 
-1. **`make test`** — extend `AgentsAndCapabilitiesTests` for roster / `SessionRoleMenu` / subagent-role behavior, `SettingsTabTests` for Settings chrome, or `UpdateCheckerTests`, `CustomModelTests`, `CompetitiveUXTests`, and other service tests as appropriate. Bridge auth helper: `node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs` (also run by `make test` when Node is present).
+1. **`make test`** — extend `AgentsAndCapabilitiesTests` for roster / `SessionRoleMenu` / subagent-role behavior, `SettingsTabTests` for Settings chrome, or `UpdateCheckerTests`, `CustomModelTests`, `CompetitiveUXTests`, and other service tests as appropriate. Bridge JS tests: `node --test GrokBuild/Resources/CursorBridge/*.test.mjs` (also run by `make test` when Node is present).
 2. **`ARCHITECTURE.md`** — GrokProcess/ACP flow, custom models / Cursor bridge, persistence keys, notifications.
 3. **`README.md`** — if user-visible CLI/settings behavior changed.
 4. **This skill** + `grok-cli-integration.mdc` — if APIs, custom-model, or Cursor bridge contracts changed.

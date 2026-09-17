@@ -223,6 +223,71 @@ final class CustomModelTests: XCTestCase {
         XCTAssertEqual(CustomModelStore.parse(rewritten).models.first?.apiBackend, .chatCompletions)
     }
 
+    func testRewritePinsChatCompletionsWhenProviderModelIsGrokNative() {
+        let model = CustomModel(
+            id: "cursor-grok-4.6",
+            model: "grok-4.6",
+            baseURL: "http://127.0.0.1:18787/v1"
+        )
+        XCTAssertTrue(CustomModelStore.shouldPersistAPIBackend(model))
+        let rewritten = CustomModelStore.rewrite("", models: [model], defaultModelID: nil)
+        XCTAssertTrue(rewritten.contains(#"api_backend = "chat_completions""#))
+    }
+
+    func testNativeCatalogShadowRelocationRenamesCustomGrok46() {
+        let model = CustomModel(
+            id: "grok-4.6",
+            model: "grok-4.6",
+            baseURL: "https://llm-gateway.example/stream/v1",
+            name: "Acme Grok 4.6"
+        )
+        let providers = [
+            Provider(id: "acme", name: "Acme LLM", baseURL: "https://llm-gateway.example/stream/v1")
+        ]
+        let result = CustomModelStore.relocateNativeCatalogShadows(
+            models: [model],
+            defaultModelID: "grok-4.6",
+            providers: providers
+        )
+        XCTAssertTrue(result.changed)
+        XCTAssertEqual(result.models.first?.id, "acme-grok-4.6")
+        XCTAssertEqual(result.defaultModelID, "acme-grok-4.6")
+        XCTAssertNil(result.models.first?.validationError)
+    }
+
+    func testNativeCatalogShadowRelocationSkipsXAIOverride() {
+        let model = CustomModel(
+            id: "grok-4.6",
+            model: "grok-4.6",
+            baseURL: "https://api.x.ai/v1"
+        )
+        let result = CustomModelStore.relocateNativeCatalogShadows(
+            models: [model],
+            defaultModelID: nil,
+            providers: []
+        )
+        XCTAssertFalse(result.changed)
+        XCTAssertEqual(result.models.first?.id, "grok-4.6")
+    }
+
+    func testUniquifiedTableIDPrefixesGrokNativeIds() {
+        XCTAssertEqual(
+            CustomModel.uniquifiedTableID(base: "grok-4.6", providerID: "acme", taken: { _ in false }),
+            "acme-grok-4.6"
+        )
+        XCTAssertEqual(
+            CustomModel.uniquifiedTableID(base: "cursor-grok-4.6", providerID: "cursor", taken: { _ in false }),
+            "cursor-grok-4.6"
+        )
+        XCTAssertNotNil(
+            CustomModel(
+                id: "grok-4.6",
+                model: "grok-4.6",
+                baseURL: "https://llm-gateway.example/v1"
+            ).validationError
+        )
+    }
+
     func testApiBackendParseFallsBackToDefault() {
         XCTAssertEqual(ModelAPIBackend.parse(nil), .chatCompletions)
         XCTAssertEqual(ModelAPIBackend.parse(""), .chatCompletions)

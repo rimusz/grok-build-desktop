@@ -106,7 +106,7 @@ These are copied into the app bundle during packaging; they are not usually run 
 | Script | Purpose |
 |--------|---------|
 | [`bundle-agent-desktop.sh`](bundle-agent-desktop.sh) | Locate `agent-desktop` on the system (or `AGENT_DESKTOP_PATH`) and copy it into `Contents/MacOS/` for Computer Use. Called by both build scripts. |
-| [`bundle-cursor-bridge.sh`](bundle-cursor-bridge.sh) | `npm install` in `GrokBuild/Resources/CursorBridge` (pinned to `registry.npmjs.org`) and copy the sidecar (`cursor-openai-bridge.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs`, `node_modules`) into `Contents/Resources/CursorBridge`. Requires Node ≥ 22.13 (major **and** minor checked); soft-skips if Node/npm is missing or too old; **fails the build** if npm install/copy fails when Node is present. Excludes `*.test.mjs` from the app bundle. |
+| [`bundle-cursor-bridge.sh`](bundle-cursor-bridge.sh) | `npm install` in `GrokBuild/Resources/CursorBridge` (pinned to `registry.npmjs.org`) and copy the sidecar (`cursor-openai-bridge.mjs`, `cursor-bridge-protocol.mjs`, `cursor-bridge-auth.mjs`, `cursor-validate-key.mjs`, `node_modules`) into `Contents/Resources/CursorBridge`. Requires Node ≥ 22.13 (major **and** minor checked); soft-skips if Node/npm is missing or too old; **fails the build** if npm install/copy fails when Node is present. Excludes `*.test.mjs` from the app bundle. |
 | [`grokbuild-browser-mcp`](grokbuild-browser-mcp) | Python MCP stdio server exposing `browser_open_url`, `browser_snapshot` (title/URL), `browser_tabs`, click/type/screenshot/eval/wait via `agent-browser`. Copied to `Contents/Resources/grokbuild-browser-mcp`. |
 
 **`bundle-agent-desktop.sh`**
@@ -122,7 +122,7 @@ AGENT_DESKTOP_PATH=/custom/path/agent-desktop ./scripts/bundle-agent-desktop.sh 
 ./scripts/bundle-cursor-bridge.sh /path/to/GrokBuild.app/Contents/Resources
 ```
 
-Auth for the running sidecar uses process env `CURSOR_API_KEY` (see `cursor-bridge-auth.mjs`); config.toml keeps `api_key = "local"` for Cursor models. Unit tests: `node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs` (also via `make test`).
+Auth for the running sidecar uses process env `CURSOR_API_KEY` (see `cursor-bridge-auth.mjs`); config.toml keeps `api_key = "local"` for Cursor models. The sidecar serves `/v1/chat/completions` and `/v1/responses` (`cursor-bridge-protocol.mjs`). Unit tests: `node --test GrokBuild/Resources/CursorBridge/*.test.mjs` (also via `make test`).
 
 ---
 

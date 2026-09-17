@@ -413,6 +413,14 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(CursorBridge.parseModelIDs(json), ["composer-2.5", "grok-4.5-fast"])
     }
 
+    func testBridgeHealthAdvertisesResponses() {
+        let json = Data(#"{ "ok": true, "service": "grokbuild-cursor-bridge", "protocols": ["chat.completions", "responses"] }"#.utf8)
+        XCTAssertTrue(CursorBridge.healthSupportsResponses(json))
+        let stale = Data(#"{ "ok": true, "service": "grokbuild-cursor-bridge", "cwd": "/tmp" }"#.utf8)
+        XCTAssertFalse(CursorBridge.healthSupportsResponses(stale))
+        XCTAssertFalse(CursorBridge.healthSupportsResponses(Data("not-json".utf8)))
+    }
+
     // MARK: - Doctor
 
     func testDoctorHealthyWhenCliAndAuth() {

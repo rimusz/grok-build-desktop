@@ -69,7 +69,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 **Custom models** live in **Settings → Models** (`~/.grok/config.toml`). You can manage them with no project or session; they then work in the grok CLI/TUI and in GrokBuild.
 
 - Listed **A–Z by provider + model**.
-- Optional **API backend** (Chat Completions / Responses / Anthropic Messages) and **env key** so the secret stays out of the file.
+- Optional **API backend** (Chat Completions / Responses / Anthropic Messages) and **env key** so the secret stays out of the file. Do not reuse a built-in id such as `grok-4.6` for a custom provider — that overrides native grok. GrokBuild prefixes colliding ids (for example `acme-grok-4.6`) and relocates existing shadows on launch.
 - **Create custom provider…** includes an NVIDIA DGX Spark example (`http://spark:8001/v1`). Fetch models skips the key only for loopback URLs (`localhost`, `127.0.0.1`, `0.0.0.0`, `host.docker.internal`); LAN/Tailscale hosts need a dummy key such as `not-needed`.
 
 **Cursor models** use a local OpenAI `/v1` sidecar (not Compatibility → Cursor, and not the Computer Use Cursor MCP).
@@ -77,7 +77,7 @@ Release assets are versioned, e.g. `GrokBuild-v0.1.10.app.zip` and `GrokBuild-v0
 1. **Settings → Models → Add Provider → Cursor**, paste a [Cursor API key](https://cursor.com/dashboard?tab=integrations), save.
 2. The key is stored under Application Support (not Keychain, not config.toml). Models keep `api_key = "local"`.
 3. GrokBuild checks the key, then starts Node/`@cursor/sdk` on `127.0.0.1:18787`. Cursor IDE need not be open. Needs system Node ≥ 22.13 (Doctor can install via Homebrew or nodejs.org).
-4. **Fetch models**, then **Add model** (names like **Cursor Composer 2.5**). Grok keeps its own tools; Cursor subscription/ToS is yours.
+4. **Fetch models**, then **Add model** (names like **Cursor Composer 2.5**). The local sidecar speaks OpenAI Chat Completions **and** Responses (`POST /v1/responses`) because grok 1.0.x uses Responses for Cursor Grok 4.6. Grok keeps its own tools; Cursor subscription/ToS is yours.
 
 On a corporate TLS proxy (Zscaler), Node does not use the macOS keychain. If `~/IT-Certs/package-route.pem` or `GROKBUILD_NODE_EXTRA_CA_CERTS` is set, GrokBuild passes it as `NODE_EXTRA_CA_CERTS` so Add Provider works from the Dock the same as from Terminal. Other Macs are unchanged.
 

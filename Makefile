@@ -96,7 +96,7 @@ test: ## Run unit tests
 	@swift test
 	@if command -v node >/dev/null 2>&1; then \
 		echo "$(GREEN)==> Cursor bridge auth unit tests...$(NC)"; \
-		node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs; \
+		node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs GrokBuild/Resources/CursorBridge/cursor-bridge-protocol.test.mjs; \
 	fi
 
 run: build ## Build release + launch the menu bar app

@@ -326,6 +326,24 @@ enum CursorBridge {
         }
     }
 
+    /// Parses GET `/health` JSON. Older sidecars omit `protocols`.
+    static func parseHealth(_ data: Data) -> (ok: Bool, protocols: [String]) {
+        struct Payload: Decodable {
+            var ok: Bool?
+            var protocols: [String]?
+        }
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else {
+            return (false, [])
+        }
+        return (payload.ok ?? false, payload.protocols ?? [])
+    }
+
+    /// True when a health payload advertises the OpenAI Responses protocol.
+    static func healthSupportsResponses(_ data: Data) -> Bool {
+        let health = parseHealth(data)
+        return health.ok && health.protocols.contains("responses")
+    }
+
     /// Probes the managed GrokBuild sidecar on port `18787`.
     static func probeManaged(timeout: TimeInterval = 3) async -> ProbeResult {
         await probe(managedEndpoint, timeout: timeout)
