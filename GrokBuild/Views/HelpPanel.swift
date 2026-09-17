@@ -228,7 +228,7 @@ private struct HelpPanelView: View {
             )
             numberedStep(1, "Add a provider", "Open Settings → Models → 1. Add Provider. Expand Provider Templates and Install a preset (OpenAI, MiniMax, Ollama, Cursor, and others), or choose Create custom provider… for any OpenAI-compatible endpoint.")
             numberedStep(2, "Save the endpoint and key", "Enter the base URL and API key, then save so it appears under Your Providers. The key is shared by every model on that provider.")
-            numberedStep(3, "Fetch, then add models", "On the provider row, Fetch models, then Add model. Pick from the fetched list. GrokBuild supports up to 28 custom models, listed A–Z by provider and model.")
+            numberedStep(3, "Fetch, then add models", "On the provider row, Fetch models, then Add model. Pick from the fetched list. GrokBuild supports up to 28 custom models, listed A–Z by provider and model. Do not reuse a built-in id such as grok-4.6 for a custom provider — GrokBuild prefixes those (acme-grok-4.6) so native grok keeps working.")
             numberedStep(4, "Use the model", "Choose it in the composer picker, set Default Model for new tabs, or type /model <id> in chat. Existing tabs keep their own per-tab model.")
             helpSection("Keys for local and LAN servers", body: HelpMenuCopy.modelsFetchBeforeAdd)
             helpSection(
@@ -241,7 +241,7 @@ private struct HelpPanelView: View {
                     "Install the Cursor template, paste a Cursor API key from cursor.com/dashboard?tab=integrations, then save. GrokBuild checks the key and starts a local OpenAI sidecar on 127.0.0.1:18787.",
                     "The real key is stored under Application Support, not Keychain and not config.toml (models keep api_key = \"local\").",
                     "Needs system Node ≥ 22.13. Doctor can install Node via Homebrew or nodejs.org. Cursor IDE does not need to be open.",
-                    "Then Fetch models and Add model (names like Cursor Composer 2.5). Grok keeps its own tools; Cursor subscription and terms are yours.",
+                    "Then Fetch models and Add model (names like Cursor Composer 2.5). The sidecar speaks Chat Completions and Responses because grok 1.0+ uses Responses for Cursor Grok 4.6. Grok keeps its own tools; Cursor subscription and terms are yours.",
                     "This is not Settings → Compatibility → Cursor, and not the Computer Use Cursor MCP.",
                 ]
             )

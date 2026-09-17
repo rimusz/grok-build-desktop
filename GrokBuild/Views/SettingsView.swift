@@ -3422,7 +3422,7 @@ private struct CustomModelsSettingsPane: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Custom Models")
                     .font(.title3.weight(.semibold))
-                Text("Install a provider (endpoint + API key) once, then add one or more OpenAI-compatible models per provider to ~/.grok/config.toml. Use them with /model <id> in chat.")
+                Text("Install a provider (endpoint + API key) once, then add one or more OpenAI-compatible models per provider to ~/.grok/config.toml. Use them with /model <id> in chat. Table ids must not reuse built-in grok names (grok-4.6); GrokBuild prefixes those (for example acme-grok-4.6) so native grok keeps working.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -4312,7 +4312,7 @@ private struct CustomModelsSettingsPane: View {
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 280)
                     }
-                    Text("api_backend selects the wire format (Chat Completions, Responses, or Anthropic Messages). env_key lets grok read the key from an environment variable instead of storing it inline.")
+                    Text("api_backend selects the wire format (Chat Completions, Responses, or Anthropic Messages). grok 1.0+ uses Responses for native grok-4.6 even on a custom table — GrokBuild pins Chat Completions for OpenAI-compatible endpoints. Do not reuse a built-in id like grok-4.6 as the table id. env_key lets grok read the key from an environment variable instead of storing it inline.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if let provider = providers.first(where: { $0.id == draft.providerID }) {
@@ -4471,17 +4471,13 @@ private struct CustomModelsSettingsPane: View {
         draft.id = uniquifiedModelID(base)
     }
 
-    /// Returns a model id that does not collide with an existing entry (unless editing that entry).
+    /// Returns a model id that does not collide with an existing entry or a grok native catalog id.
     private func uniquifiedModelID(_ base: String) -> String {
-        let trimmed = base.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return "" }
-        var candidate = trimmed
-        var suffix = 2
-        while models.contains(where: { $0.id == candidate && $0.id != editingID }) {
-            candidate = "\(trimmed)-\(suffix)"
-            suffix += 1
-        }
-        return candidate
+        CustomModel.uniquifiedTableID(
+            base: base,
+            providerID: draft.providerID,
+            taken: { candidate in models.contains(where: { $0.id == candidate && $0.id != editingID }) }
+        )
     }
 
     /// Validation for the save button, including duplicate-id checks when adding a new model.

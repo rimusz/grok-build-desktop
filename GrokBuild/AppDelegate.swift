@@ -51,6 +51,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // locating grok / spawning ACP terminals or MCP children.
         LoginShellPath.applyToCurrentProcess()
 
+        // Custom `[model.grok-4.6]` tables on non-xAI URLs hijack native grok (Responses API +
+        // session title generation). Relocate them once before the Cursor sidecar starts.
+        _ = CustomModelStore.repairNativeCatalogShadowsIfNeeded(providers: ProviderStore.load())
+
         // Normal app (shows in Dock, supports windows + menu bar icon)
         NSApp.setActivationPolicy(.regular)
         setupMainMenu()

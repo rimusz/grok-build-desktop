@@ -14,11 +14,11 @@ alwaysApply: false
 - `SpecialistAgentStore` / `SpecialistAgentRoster` — GrokBuild sidebar Agent identities in Application Support `agents.v1.json`; optional per-tab binding is `SavedSessionRecord.specialistAgentID`. Linked roles sync through `SubagentRoleStore`; per-tab `--agent` remains owned by `ChatStore`.
 - `UpdateChecker` — notarized GitHub releases for app; `grok update --check --json` for CLI.
 - `CustomModelStore` / `ProviderStore` — OpenAI-compatible models/providers in `~/.grok/config.toml` (Settings → Models). Display names: `ProviderModelNaming` (Provider + model). Settings lists: `CustomModelListOrdering` (A–Z by Provider + model). Custom-provider editor: `CustomProviderExample` (Spark dummy-key LAN example).
-- `CursorBridgeRuntime` + `CursorBridge` + `CursorBridgeAPIKey` — managed Cursor OpenAI sidecar on `127.0.0.1:18787` (bundled Node/`@cursor/sdk`). Real key is **not** in config.toml (`api_key = "local"`); file under Application Support `Secrets/cursor-api-key`. SDK auth via env `CURSOR_API_KEY` and `cursor-bridge-auth.mjs` (`resolveCursorApiKey` — ignore grok session JWT Bearer). Requires Node ≥ 22.13.
+- `CursorBridgeRuntime` + `CursorBridge` + `CursorBridgeAPIKey` — managed Cursor OpenAI sidecar on `127.0.0.1:18787` (bundled Node/`@cursor/sdk`). Serves `/v1/chat/completions` and `/v1/responses` (`cursor-bridge-protocol.mjs`; grok 1.0.x uses Responses for `grok-4.6`). Real key is **not** in config.toml (`api_key = "local"`); file under Application Support `Secrets/cursor-api-key`. SDK auth via env `CURSOR_API_KEY` and `cursor-bridge-auth.mjs` (`resolveCursorApiKey` — ignore grok session JWT Bearer). Requires Node ≥ 22.13. Custom `[model.grok-4.6]` tables on non-xAI URLs are relocated on launch so they do not override native grok.
 
 ## After changing these services
 
-Run `make test` and update `ARCHITECTURE.md`, `README.md` (if user-visible), and this rule or `grokbuild-grok-cli` skill when integration contracts change. Cursor bridge JS auth tests: `node --test GrokBuild/Resources/CursorBridge/cursor-bridge-auth.test.mjs`.
+Run `make test` and update `ARCHITECTURE.md`, `README.md` (if user-visible), and this rule or `grokbuild-grok-cli` skill when integration contracts change. Cursor bridge JS tests: `node --test GrokBuild/Resources/CursorBridge/*.test.mjs`.
 
 ## CLI location
 

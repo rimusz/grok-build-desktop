@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Local OpenAI /v1 chat-completions sidecar for GrokBuild (Cursor SDK)",
+  "description": "Local OpenAI /v1 chat-completions + responses sidecar for GrokBuild (Cursor SDK)",
   "engines": {
     "node": ">=22.13.0"
   },
