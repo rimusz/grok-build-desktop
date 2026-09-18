@@ -23,13 +23,22 @@ enum AssistantTranscriptSanitizer {
     }
 
     static func usableChunk(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return text.isEmpty ? nil : text }
-        let stripped = strip(text)
+        if text.isEmpty { return nil }
+        // Newline-only ACP chunks are the breaks between headings and lists.
+        // Stripping them (or collapsing blanks per chunk) glues `# Title` onto the
+        // previous sentence so RichMessageView sees one unreadable line.
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return text
+        }
+        let stripped = strip(text, collapsingBlankLines: false)
         return stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : stripped
     }
 
     static func strip(_ text: String) -> String {
+        strip(text, collapsingBlankLines: true)
+    }
+
+    static func strip(_ text: String, collapsingBlankLines: Bool) -> String {
         var remaining = text
         while let range = firstProtocolJSONRange(in: remaining) {
             remaining.removeSubrange(range)
@@ -49,7 +58,7 @@ enum AssistantTranscriptSanitizer {
         if isProtocolNoise(kept) || looksLikeJSONFragment(trimmedKept) {
             return ""
         }
-        return collapseBlankLines(kept)
+        return collapsingBlankLines ? collapseBlankLines(kept) : kept
     }
 
     static func sanitized(_ message: Message) -> Message {

@@ -26,7 +26,7 @@ enum MarkdownBlock: Identifiable, Hashable {
 enum MarkdownBlockParser {
     static func parse(_ text: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
-        var remaining = expandSmashedTables(text)
+        var remaining = expandSmashedMarkdown(text)
 
         while !remaining.isEmpty {
             if let match = firstSpecialBlock(in: remaining) {
@@ -35,7 +35,15 @@ enum MarkdownBlockParser {
                     blocks.append(.text(before))
                 }
                 blocks.append(match.block)
-                remaining = String(remaining[match.range.upperBound...])
+                var rest = String(remaining[match.range.upperBound...])
+                if !match.reinsert.isEmpty {
+                    if rest.isEmpty || rest.hasPrefix("\n") {
+                        rest = match.reinsert + rest
+                    } else {
+                        rest = match.reinsert + "\n" + rest
+                    }
+                }
+                remaining = rest
                 if remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     break
                 }
@@ -61,6 +69,7 @@ enum MarkdownBlockParser {
     private struct Match {
         let range: Range<String.Index>
         let block: MarkdownBlock
+        var reinsert: String = ""
     }
 
     private static func firstSpecialBlock(in text: String) -> Match? {
@@ -123,17 +132,24 @@ enum MarkdownBlockParser {
             var rows: [[String]] = []
             var last = index + 1
             var rowIndex = index + 2
+            var reinsert = ""
             while rowIndex < lines.count, isTableRow(lines[rowIndex].text) {
                 var cells = tableCells(in: lines[rowIndex].text)
                 if cells.count < headers.count {
                     cells.append(contentsOf: Array(repeating: "", count: headers.count - cells.count))
+                }
+                if let prose = peelTrailingTableProse(from: &cells, headerCount: headers.count) {
+                    rows.append(Array(cells.prefix(headers.count)))
+                    last = rowIndex
+                    reinsert = prose
+                    break
                 }
                 rows.append(Array(cells.prefix(headers.count)))
                 last = rowIndex
                 rowIndex += 1
             }
             let range = lines[index].range.lowerBound..<lines[last].range.upperBound
-            return Match(range: range, block: .table(headers: headers, rows: rows))
+            return Match(range: range, block: .table(headers: headers, rows: rows), reinsert: reinsert)
         }
         return nil
     }
@@ -174,14 +190,59 @@ enum MarkdownBlockParser {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
+    /// Extra GFM cells or a sentence glued onto `Huge VMs` after the last `|`.
+    static func looksLikeTrailingProse(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 40 else { return false }
+        let words = trimmed.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 8 else { return false }
+        if let last = trimmed.last, ".!?".contains(last) { return true }
+        return words.count >= 12
+    }
+
+    static func peelTrailingTableProse(from cells: inout [String], headerCount: Int) -> String? {
+        if cells.count > headerCount {
+            let extra = cells[headerCount...].joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            cells = Array(cells.prefix(headerCount))
+            return looksLikeTrailingProse(extra) ? extra : nil
+        }
+        guard !cells.isEmpty, let split = splitGluedProse(in: cells[cells.count - 1]) else { return nil }
+        cells[cells.count - 1] = split.cell
+        return split.prose
+    }
+
+    static func splitGluedProse(in cell: String) -> (cell: String, prose: String)? {
+        let trimmed = cell.trimmingCharacters(in: .whitespaces)
+        let starters = ["A ", "An ", "The ", "This ", "That ", "These ", "If ", "When ", "Use ", "For "]
+        for starter in starters {
+            guard let range = trimmed.range(of: " " + starter) else { continue }
+            let prefix = String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let prose = String(trimmed[trimmed.index(after: range.lowerBound)...])
+            guard prefix.count >= 2, prefix.count <= 48, looksLikeTrailingProse(prose) else { continue }
+            return (prefix, prose)
+        }
+        return nil
+    }
+
+    /// grok / Cursor often stream markdown as one line (`best first.# 1. Title- item`).
+    /// Restore headings, lists, and GFM tables so `RichMessageView` matches the TUI.
+    static func expandSmashedMarkdown(_ text: String) -> String {
+        mapOutsideFences(text) { chunk in
+            restoreSmashedBlocks(expandSmashedTablesOutsideFence(chunk))
+        }
+    }
+
     /// grok often streams GFM tables as one line (`| A | B ||---|---|| row |`).
     /// Split those into real rows so `matchTable` can render a grid.
     static func expandSmashedTables(_ text: String) -> String {
-        guard text.contains("|") else { return text }
+        mapOutsideFences(text, expandSmashedTablesOutsideFence)
+    }
+
+    private static func mapOutsideFences(_ text: String, _ transform: (String) -> String) -> String {
         var result = ""
         var rest = text[...]
         while let fence = rest.range(of: "```") {
-            result.append(expandSmashedTablesOutsideFence(String(rest[..<fence.lowerBound])))
+            result.append(transform(String(rest[..<fence.lowerBound])))
             result.append("```")
             rest = rest[fence.upperBound...]
             if let close = rest.range(of: "```") {
@@ -192,8 +253,229 @@ enum MarkdownBlockParser {
                 rest = rest[rest.endIndex...]
             }
         }
-        result.append(expandSmashedTablesOutsideFence(String(rest)))
+        result.append(transform(String(rest)))
         return result
+    }
+
+    private static func restoreSmashedBlocks(_ text: String) -> String {
+        var result = insertBreaksBeforeATXHeadings(text)
+        result = insertBreaksBeforeHorizontalRules(result)
+        result = splitSmashedHeadingLines(result)
+        result = insertBreaksBeforeListItems(result)
+        result = splitGluedSentences(result)
+        result = splitProseGluedToTableRows(result)
+        result = promoteSectionLabelsBeforeLists(result)
+        return result
+    }
+
+    private static func insertBreaksBeforeATXHeadings(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?<![\n#])(#{1,6}[ \t]+)"#) else {
+            return text
+        }
+        let ns = text as NSString
+        return regex.stringByReplacingMatches(
+            in: text,
+            range: NSRange(location: 0, length: ns.length),
+            withTemplate: "\n$1"
+        )
+    }
+
+    private static func insertBreaksBeforeHorizontalRules(_ text: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: #"(?<![-\n|])(---+)(?![-\n|])"#) else {
+            return text
+        }
+        return text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { raw -> String in
+                let line = String(raw)
+                if isTableRow(line) || isTableSeparator(line) { return line }
+                let ns = line as NSString
+                return regex.stringByReplacingMatches(
+                    in: line,
+                    range: NSRange(location: 0, length: ns.length),
+                    withTemplate: "\n$1\n"
+                )
+            }
+            .joined(separator: "\n")
+    }
+
+    private static func splitSmashedHeadingLines(_ text: String) -> String {
+        text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .flatMap { explodeHeadingLine(String($0)) }
+            .joined(separator: "\n")
+    }
+
+    private static func explodeHeadingLine(_ line: String) -> [String] {
+        guard let heading = headingParts(from: line) else { return [line] }
+        let body = heading.body
+        var searchStart = body.startIndex
+        if let numbered = body.range(of: #"^\d+\.\s+"#, options: .regularExpression) {
+            searchStart = numbered.upperBound
+        }
+        if let split = firstParenCapitalSplit(in: body, from: searchStart)
+            ?? firstCamelCaseSplit(in: body, from: searchStart) {
+            let title = String(body[..<split]).trimmingCharacters(in: .whitespaces)
+            let rest = String(body[split...]).trimmingCharacters(in: .whitespaces)
+            guard !title.isEmpty, !rest.isEmpty else { return [line] }
+            return ["\(heading.marker)\(title)", rest]
+        }
+        return [line]
+    }
+
+    private static func headingParts(from line: String) -> (marker: String, body: String)? {
+        guard let regex = try? NSRegularExpression(pattern: #"^(#{1,6})[ \t]+(.*)$"#) else { return nil }
+        let ns = line as NSString
+        guard let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges > 2,
+              let hashes = Range(match.range(at: 1), in: line),
+              let body = Range(match.range(at: 2), in: line) else { return nil }
+        return (String(line[hashes]) + " ", String(line[body]))
+    }
+
+    private static func firstParenCapitalSplit(in body: String, from start: String.Index) -> String.Index? {
+        var index = start
+        while index < body.endIndex {
+            if body[index] == ")" {
+                let next = body.index(after: index)
+                if next < body.endIndex, body[next].isUppercase {
+                    return next
+                }
+            }
+            body.formIndex(after: &index)
+        }
+        return nil
+    }
+
+    private static func firstCamelCaseSplit(in body: String, from start: String.Index) -> String.Index? {
+        var index = start
+        while index < body.endIndex {
+            let prefixLen = body.distance(from: start, to: index)
+            if prefixLen >= 20, index > start {
+                let previous = body.index(before: index)
+                if body[previous].isLowercase, body[index].isUppercase {
+                    var wordEnd = body.index(after: index)
+                    while wordEnd < body.endIndex, body[wordEnd].isLowercase {
+                        body.formIndex(after: &wordEnd)
+                    }
+                    // `diskIf USB` / `replacementThis is` — not product names like FileVault.
+                    if wordEnd < body.endIndex, body[wordEnd].isWhitespace {
+                        return index
+                    }
+                }
+            }
+            body.formIndex(after: &index)
+        }
+        return nil
+    }
+
+    private static func insertBreaksBeforeListItems(_ text: String) -> String {
+        var result = text
+        if let unordered = try? NSRegularExpression(pattern: #"(?<![ \n])([-+])[ \t]+(?=\S)"#) {
+            let ns = result as NSString
+            result = unordered.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: "\n$1 "
+            )
+        }
+        // Smashed lists also show up as "overnight  - Ethernet" (space-dash, next item capitalized).
+        if let spaced = try? NSRegularExpression(pattern: #"(?<=\S)[ \t]+-[ \t]+(?=[A-Z])"#) {
+            let ns = result as NSString
+            result = spaced.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: "\n- "
+            )
+        }
+        if let ordered = try? NSRegularExpression(pattern: #"(?<=[A-Za-z).:])[ \t]+(\d+\.)[ \t]+(?=[A-Z])"#) {
+            let ns = result as NSString
+            result = ordered.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: "\n$1 "
+            )
+        }
+        if let gluedNumber = try? NSRegularExpression(pattern: #"(?<=[a-z])(\d+\.[ \t]+)(?=[A-Z])"#) {
+            let ns = result as NSString
+            result = gluedNumber.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: "\n$1"
+            )
+        }
+        if let sentence = try? NSRegularExpression(pattern: #"(?<=[a-z][.!?])(?=[A-Z][a-z])"#) {
+            let ns = result as NSString
+            result = sentence.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: "\n"
+            )
+        }
+        return result
+    }
+
+    private static func splitGluedSentences(_ text: String) -> String {
+        text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .flatMap { explodeGluedSentenceLine(String($0)) }
+            .joined(separator: "\n")
+    }
+
+    private static func explodeGluedSentenceLine(_ line: String) -> [String] {
+        var parts: [String] = []
+        var remaining = line
+        while let split = firstCamelCaseSplit(in: remaining, from: remaining.startIndex) {
+            let left = String(remaining[..<split]).trimmingCharacters(in: .whitespaces)
+            remaining = String(remaining[split...]).trimmingCharacters(in: .whitespaces)
+            guard !left.isEmpty, !remaining.isEmpty else { break }
+            parts.append(left)
+        }
+        if !remaining.isEmpty {
+            parts.append(remaining)
+        }
+        return parts.isEmpty ? [line] : parts
+    }
+
+    private static func promoteSectionLabelsBeforeLists(_ text: String) -> String {
+        var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        var index = 0
+        while index < lines.count {
+            let next = index + 1
+            if next < lines.count,
+               GrokMarkdownStyle.listItem(from: lines[next]) != nil,
+               GrokMarkdownStyle.heading(from: lines[index]) == nil,
+               let split = sectionLabelSplit(lines[index]) {
+                lines[index] = split.head
+                lines.insert(split.label, at: next)
+                index += 2
+                continue
+            }
+            index += 1
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func sectionLabelSplit(_ line: String) -> (head: String, label: String)? {
+        let ns = line as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        if let bold = try? NSRegularExpression(pattern: #"^(.*)(\*\*[^*]{1,40}\*\*)\s*$"#),
+           let match = bold.firstMatch(in: line, range: full),
+           match.numberOfRanges > 2,
+           let headRange = Range(match.range(at: 1), in: line),
+           let labelRange = Range(match.range(at: 2), in: line) {
+            let head = String(line[headRange]).trimmingCharacters(in: .whitespaces)
+            let label = String(line[labelRange])
+            if !head.isEmpty { return (head, label) }
+        }
+        guard let regex = try? NSRegularExpression(pattern: #"^(.*)([.!?\)])([A-Z][^\n]{0,50})$"#),
+              let match = regex.firstMatch(in: line, range: full),
+              match.numberOfRanges > 3,
+              let prefixRange = Range(match.range(at: 1), in: line),
+              let punctRange = Range(match.range(at: 2), in: line),
+              let labelRange = Range(match.range(at: 3), in: line) else { return nil }
+        let head = String(line[prefixRange]) + String(line[punctRange])
+        let label = String(line[labelRange])
+        guard !head.trimmingCharacters(in: .whitespaces).isEmpty,
+              label.split(whereSeparator: \.isWhitespace).count <= 8 else { return nil }
+        return (head, label)
     }
 
     private static func expandSmashedTablesOutsideFence(_ text: String) -> String {
@@ -236,6 +518,26 @@ enum MarkdownBlockParser {
         return nil
     }
 
+    private static func splitProseGluedToTableRows(_ text: String) -> String {
+        text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            .map { splitProseGluedToTableRow(String($0)) }
+            .joined(separator: "\n")
+    }
+
+    private static func splitProseGluedToTableRow(_ line: String) -> String {
+        guard isTableRow(line), !isTableSeparator(line) else { return line }
+        var cells = tableCells(in: line)
+        if cells.count >= 3, let last = cells.last, looksLikeTrailingProse(last) {
+            cells.removeLast()
+            return "| " + cells.joined(separator: " | ") + " |\n" + last
+        }
+        if let last = cells.last, let split = splitGluedProse(in: last) {
+            cells[cells.count - 1] = split.cell
+            return "| " + cells.joined(separator: " | ") + " |\n" + split.prose
+        }
+        return line
+    }
+
     private static func matchDisplayMath(in text: String) -> Match? {
         guard let regex = try? NSRegularExpression(pattern: #"\$\$([\s\S]*?)\$\$"#) else { return nil }
         let ns = text as NSString
@@ -266,6 +568,11 @@ enum MarkdownBlockParser {
 enum GrokMarkdownStyle {
     static let headingColor = Color(red: 88 / 255, green: 166 / 255, blue: 255 / 255)
     static let codeColor = Color(red: 125 / 255, green: 207 / 255, blue: 255 / 255)
+    /// AppKit copies of the CLI colors. SwiftUI `Color`/`Font` on `AttributedString`
+    /// do not survive `NSMutableAttributedString(attributed)` for the wrapping
+    /// `NSTextView`, so headings otherwise render as body-colored body text.
+    static let headingNSColor = NSColor(calibratedRed: 88 / 255, green: 166 / 255, blue: 255 / 255, alpha: 1)
+    static let codeNSColor = NSColor(calibratedRed: 125 / 255, green: 207 / 255, blue: 255 / 255, alpha: 1)
 
     static func attributed(_ chunk: String) -> AttributedString {
         var result = AttributedString()
@@ -286,14 +593,7 @@ enum GrokMarkdownStyle {
     static func attributedLine(_ line: String) -> AttributedString {
         if let heading = heading(from: line) {
             var styled = inline(heading.text)
-            styled.foregroundColor = headingColor
-            styled.font = headingFont(level: heading.level)
-            for run in styled.runs {
-                if run.inlinePresentationIntent?.contains(.code) == true {
-                    styled[run.range].foregroundColor = codeColor
-                    styled[run.range].font = headingFont(level: heading.level).monospaced()
-                }
-            }
+            paintHeading(&styled, level: heading.level)
             return styled
         }
         if let item = listItem(from: line) {
@@ -305,6 +605,13 @@ enum GrokMarkdownStyle {
     }
 
     static func heading(from line: String) -> (level: Int, text: String)? {
+        if let atx = atxHeading(from: line) { return atx }
+        if let numbered = numberedSectionHeading(from: line) { return numbered }
+        if let label = sectionLabelHeading(from: line) { return label }
+        return nil
+    }
+
+    static func atxHeading(from line: String) -> (level: Int, text: String)? {
         guard let regex = try? NSRegularExpression(pattern: #"^(#{1,6})\s+(.+)$"#) else { return nil }
         let ns = line as NSString
         guard let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
@@ -312,6 +619,72 @@ enum GrokMarkdownStyle {
               let hashes = Range(match.range(at: 1), in: line),
               let body = Range(match.range(at: 2), in: line) else { return nil }
         return (String(line[hashes]).count, String(line[body]))
+    }
+
+    /// grok TUI paints `# 1. Title` in blue. After hashes are stripped (or when the
+    /// model omits them) the line is still a section title, not a numbered list.
+    static func numberedSectionHeading(from line: String) -> (level: Int, text: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard let regex = try? NSRegularExpression(pattern: #"^(\d+)\.\s+(.+)$"#) else { return nil }
+        let ns = trimmed as NSString
+        guard let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: ns.length)),
+              match.numberOfRanges > 2,
+              let body = Range(match.range(at: 2), in: trimmed) else { return nil }
+        let title = String(trimmed[body]).trimmingCharacters(in: .whitespaces)
+        guard title.count >= 8 else { return nil }
+        if let last = title.last, ".?!".contains(last) { return nil }
+        return (2, trimmed)
+    }
+
+    /// Short labels the TUI treats like headings (`How`, `Speed (rough)`).
+    static func sectionLabelHeading(from line: String) -> (level: Int, text: String)? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 2, trimmed.count <= 48 else { return nil }
+        guard let first = trimmed.first, first.isUppercase || first.isNumber else { return nil }
+        if let last = trimmed.last, ".?!".contains(last) { return nil }
+        if trimmed.contains(":") || trimmed.contains(". ") { return nil }
+        if trimmed.hasPrefix("#") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*") { return nil }
+        if listItem(from: trimmed) != nil { return nil }
+        return (3, trimmed)
+    }
+
+    private static func paintHeading(_ styled: inout AttributedString, level: Int) {
+        let nsFont = headingNSFont(level: level)
+        let codeFont = NSFont.monospacedSystemFont(ofSize: nsFont.pointSize, weight: .semibold)
+        for run in styled.runs {
+            let isCode = run.inlinePresentationIntent?.contains(.code) == true
+            styled[run.range].foregroundColor = isCode ? codeColor : headingColor
+            styled[run.range].font = isCode ? headingFont(level: level).monospaced() : headingFont(level: level)
+            applyAppKit(
+                to: &styled,
+                range: run.range,
+                color: isCode ? codeNSColor : headingNSColor,
+                font: isCode ? codeFont : nsFont
+            )
+        }
+    }
+
+    private static func applyAppKit(
+        to styled: inout AttributedString,
+        range: Range<AttributedString.Index>,
+        color: NSColor,
+        font: NSFont
+    ) {
+        var container = AttributeContainer()
+        container.appKit.foregroundColor = color
+        container.appKit.font = font
+        styled[range].mergeAttributes(container)
+    }
+
+    static func headingNSFont(level: Int) -> NSFont {
+        let style: NSFont.TextStyle
+        switch level {
+        case 1: style = .title2
+        case 2: style = .title3
+        default: style = .headline
+        }
+        let base = NSFont.preferredFont(forTextStyle: style)
+        return NSFontManager.shared.convert(base, toHaveTrait: .boldFontMask)
     }
 
     static func listItem(from line: String) -> (prefix: String, text: String)? {
@@ -366,6 +739,13 @@ enum GrokMarkdownStyle {
         attr.inlinePresentationIntent = .code
         attr.foregroundColor = codeColor
         attr.font = .body.monospaced()
+        let body = NSFont.preferredFont(forTextStyle: .body)
+        applyAppKit(
+            to: &attr,
+            range: attr.startIndex..<attr.endIndex,
+            color: codeNSColor,
+            font: NSFont.monospacedSystemFont(ofSize: body.pointSize, weight: .regular)
+        )
         return attr
     }
 
@@ -402,7 +782,11 @@ struct RichMessageView: View {
                             if line.isEmpty {
                                 Color.clear.frame(height: 8)
                             } else {
+                                let isHeading = GrokMarkdownStyle.heading(from: line) != nil
                                 WrappingAttributedText(attributed: GrokMarkdownStyle.attributedLine(line))
+                                    .padding(.top, isHeading ? 10 : 0)
+                                    .padding(.bottom, isHeading ? 4 : 0)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
@@ -506,18 +890,24 @@ private struct WrappingAttributedTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSTextView, context: Context) {
+        guard let container = view.textContainer else { return }
+        container.widthTracksTextView = false
+        container.lineFragmentPadding = 0
+        container.containerSize = CGSize(width: max(width, 1), height: .greatestFiniteMagnitude)
+        view.textContainerInset = NSSize(width: 0, height: 1)
         view.textStorage?.setAttributedString(AttributedTextSizing.nsAttributed(attributed))
-        view.textContainer?.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        view.layoutManager?.ensureLayout(for: container)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
         updateNSView(nsView, context: context)
+        let measured = AttributedTextSizing.height(attributed, width: width)
         guard let layoutManager = nsView.layoutManager, let container = nsView.textContainer else {
-            return CGSize(width: width, height: 18)
+            return CGSize(width: width, height: measured)
         }
         layoutManager.ensureLayout(for: container)
-        let used = layoutManager.usedRect(for: container)
-        return CGSize(width: width, height: max(ceil(used.height) + 4, 18))
+        let used = ceil(layoutManager.usedRect(for: container).height) + 8
+        return CGSize(width: width, height: max(measured, used, 22))
     }
 }
 
@@ -561,6 +951,7 @@ private struct MarkdownTableView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
             .overlay(alignment: .leading) {
                 if column == 0 {
                     Rectangle().fill(Color.primary.opacity(0.22)).frame(width: 1)
