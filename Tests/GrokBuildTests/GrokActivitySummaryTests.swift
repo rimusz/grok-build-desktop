@@ -457,6 +457,26 @@ final class GrokActivitySummaryTests: XCTestCase {
         XCTAssertEqual(cleaned.map(\.content), ["overview", "I'll start."])
     }
 
+    func testBuilderPreservesNewlinesBetweenStreamedChunks() {
+        var builder = GrokActivityBuilder()
+        builder.addMessage("best first.\n\n")
+        builder.addMessage("# 1. Title\n\n")
+        builder.addMessage("Apple's built-in tool")
+        builder.finish()
+        XCTAssertEqual(builder.textContent, "best first.\n\n# 1. Title\n\nApple's built-in tool")
+    }
+
+    func testBuilderPreservesWhitespaceOnlyChunks() {
+        var builder = GrokActivityBuilder()
+        builder.addMessage("best first.")
+        builder.addMessage("\n\n")
+        builder.addMessage("# 1. Title")
+        builder.finish()
+        XCTAssertEqual(builder.textContent, "best first.\n\n# 1. Title")
+        XCTAssertEqual(AssistantTranscriptSanitizer.usableChunk("\n\n"), "\n\n")
+        XCTAssertEqual(AssistantTranscriptSanitizer.usableChunk("best first.\n\n"), "best first.\n\n")
+    }
+
     func testBuilderIgnoresProtocolChunks() {
         var builder = GrokActivityBuilder()
         builder.addMessage("I'll start.")

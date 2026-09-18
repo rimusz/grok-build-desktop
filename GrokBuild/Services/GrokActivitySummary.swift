@@ -377,7 +377,7 @@ struct GrokActivityBuilder {
               !usable.isEmpty else { return }
         flushOpenActivity()
         appendText(usable)
-        sanitizeLastTextPart()
+        sanitizeLastTextPart(collapsingBlankLines: false)
     }
 
     mutating func addTool(id: String, title: String) {
@@ -418,6 +418,7 @@ struct GrokActivityBuilder {
 
     mutating func finish() {
         flushOpenActivity()
+        sanitizeLastTextPart(collapsingBlankLines: true)
     }
 
     private mutating func appendText(_ text: String) {
@@ -428,9 +429,12 @@ struct GrokActivityBuilder {
         }
     }
 
-    private mutating func sanitizeLastTextPart() {
+    private mutating func sanitizeLastTextPart(collapsingBlankLines: Bool = true) {
         guard case .text(let existing) = parts.last else { return }
-        let stripped = AssistantTranscriptSanitizer.strip(existing)
+        let stripped = AssistantTranscriptSanitizer.strip(
+            existing,
+            collapsingBlankLines: collapsingBlankLines
+        )
         if stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parts.removeLast()
         } else if stripped != existing {
