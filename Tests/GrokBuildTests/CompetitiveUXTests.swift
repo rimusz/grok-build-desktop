@@ -621,6 +621,19 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertFalse(TurnBackgroundNotice.shouldNotify(enabled: false, appActive: false))
     }
 
+    func testBackgroundNoticeDefaultsOnUntilExplicitlyDisabled() {
+        let name = "grokbuild-notice-defaults-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        XCTAssertFalse(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+        TurnBackgroundNotice.registerDefaults(in: defaults)
+        XCTAssertTrue(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+        defaults.set(false, forKey: GrokSettingsKeys.notifyOnUnfocusedFinish)
+        XCTAssertFalse(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+    }
+
     func testBackgroundNoticeCopyUsesSessionProjectAndReplyPreview() {
         let reply = TurnBackgroundNotice.copy(
             kind: .replyReady,

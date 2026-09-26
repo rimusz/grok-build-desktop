@@ -51,6 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Dock/Finder launches do not inherit Homebrew PATH. Merge it before
         // locating grok / spawning ACP terminals or MCP children.
         LoginShellPath.applyToCurrentProcess()
+        TurnBackgroundNotice.registerDefaults()
 
         // Custom `[model.grok-4.6]` tables on non-xAI URLs hijack native grok (Responses API +
         // session title generation). Relocate them once before the Cursor sidecar starts.
@@ -385,15 +386,19 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let raw = response.notification.request.content.userInfo[TurnBackgroundNotice.sessionIDUserInfoKey] as? String
-        NSApp.activate(ignoringOtherApps: true)
-        openMainWindow()
-        if let raw {
-            NotificationCenter.default.post(
-                name: .focusLiveSessionRequested,
-                object: nil,
-                userInfo: ["sessionID": raw]
-            )
+        // This callback is not documented as main-thread. AppKit and the session-focus
+        // notification must run on the main queue; @MainActor would trap if AppKit calls in off-main.
+        DispatchQueue.main.async { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.openMainWindow()
+            if let raw {
+                NotificationCenter.default.post(
+                    name: .focusLiveSessionRequested,
+                    object: nil,
+                    userInfo: ["sessionID": raw]
+                )
+            }
+            completionHandler()
         }
-        completionHandler()
     }
 }

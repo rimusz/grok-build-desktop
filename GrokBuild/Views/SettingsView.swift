@@ -5878,7 +5878,7 @@ private struct AppUpdatesSettingsPane: View {
 
     @AppStorage(GrokSettingsKeys.steerByDefault) private var steerByDefault = false
     @AppStorage(GrokSettingsKeys.soundOnUnfocusedFinish) private var soundOnUnfocusedFinish = false
-    @AppStorage(GrokSettingsKeys.notifyOnUnfocusedFinish) private var notifyOnUnfocusedFinish = false
+    @AppStorage(GrokSettingsKeys.notifyOnUnfocusedFinish) private var notifyOnUnfocusedFinish = true
     @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     private var steerByDefaultBinding: Binding<Bool> { $steerByDefault }

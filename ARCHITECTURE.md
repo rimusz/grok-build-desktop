@@ -467,7 +467,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.privacyMode` | `GrokSettingsKeys` | Display-only Privacy Mode (Settings → App). Redacts project paths/names and session titles in the UI; never mutates persisted data |
 | `grokbuild.showAllAgents` | `GrokSettingsKeys` | Sidebar Agents section lists every agent when true (default false = **active only**: pinned or a live session in the current project) |
 | `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
-| `grokbuild.notifyOnUnfocusedFinish` | `GrokSettingsKeys` | Notification Center banner when a turn finishes or needs input and the app is unfocused (Settings → App). Default off |
+| `grokbuild.notifyOnUnfocusedFinish` | `GrokSettingsKeys` | Notification Center banner when a turn finishes or needs input and the app is unfocused (Settings → App). Default on (`TurnBackgroundNotice.registerDefaults`); an explicit off is kept |
 | `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (backend, agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start. The Browser Tools toggle and backend picker write both draft and applied immediately (`AgentBrowserService.applyEnabled` / Settings backend change) |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
@@ -616,7 +616,7 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 
 ### Background finish notification
 
-`TurnBackgroundNotice` (`Services/TurnBackgroundNotice.swift`) — optional Notification Center banner for the same unfocused moment, and when a background session starts waiting on a permission, plan, or question (`needsInput`). Toggle: `GrokSettingsKeys.notifyOnUnfocusedFinish` (Settings → App, next to the chime; default off). Title is session · project (`PrivacyMode.redactLabel` when Privacy Mode is on). Body is a one-line reply preview, **Reply ready** when the reply is empty, or **Needs input**. Click posts `.focusLiveSessionRequested` → `ContentView.selectSession` (and leaves Settings). Authorization is requested once when the toggle is turned on; a denial stays quiet. Delivery identifier is per session and kind so a newer banner replaces the previous one for that session.
+`TurnBackgroundNotice` (`Services/TurnBackgroundNotice.swift`) — Notification Center banner for the same unfocused moment, and when a background session starts waiting on a permission, plan, or question (`needsInput`). Toggle: `GrokSettingsKeys.notifyOnUnfocusedFinish` (Settings → App, next to the chime). **Default on** via `registerDefaults()` so a missing key is on and a saved off stays off. Title is session · project (`PrivacyMode.redactLabel` when Privacy Mode is on). Body is a one-line reply preview, **Reply ready** when the reply is empty, or **Needs input**. Click hops to the main queue, then posts `.focusLiveSessionRequested` → `ContentView.selectSession` (and leaves Settings). Authorization is requested once at launch while the toggle is on; a denial stays quiet. Delivery identifier is per session and kind so a newer banner replaces the previous one for that session.
 
 ### Privacy Mode
 

@@ -3,7 +3,8 @@ import Foundation
 @preconcurrency import UserNotifications
 
 /// Local Notification Center banner when a turn finishes, or when grok starts waiting
-/// on the user, and GrokBuild is not the frontmost app. Off by default (Settings → App).
+/// on the user, and GrokBuild is not the frontmost app. On by default (Settings → App);
+/// turning it off is remembered.
 ///
 /// Copy rules are pure. Delivery checks authorization and stays quiet if the user denied it.
 enum TurnBackgroundNotice {
@@ -21,6 +22,12 @@ enum TurnBackgroundNotice {
 
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish)
+    }
+
+    /// On until the user turns it off. `bool(forKey:)` is false when the key is missing,
+    /// so the default has to be registered rather than stored.
+    static func registerDefaults(in defaults: UserDefaults = .standard) {
+        defaults.register(defaults: [GrokSettingsKeys.notifyOnUnfocusedFinish: true])
     }
 
     /// Same gate as the completion chime: enabled, and the app is not frontmost.
