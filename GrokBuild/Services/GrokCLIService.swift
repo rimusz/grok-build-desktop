@@ -378,6 +378,8 @@ enum GrokSettingsKeys {
     static let steerByDefault = "grokbuild.steerByDefault"
     /// When true, play a chime when a turn finishes and the window is not focused.
     static let soundOnUnfocusedFinish = "grokbuild.soundOnUnfocusedFinish"
+    /// When true, post a Notification Center banner when a turn finishes or needs input and the app is not focused.
+    static let notifyOnUnfocusedFinish = "grokbuild.notifyOnUnfocusedFinish"
     /// When true, redact project paths/names and session titles in the UI (screenshots).
     static let privacyMode = "grokbuild.privacyMode"
     /// When true, the sidebar Agents section lists every agent (default: active only).

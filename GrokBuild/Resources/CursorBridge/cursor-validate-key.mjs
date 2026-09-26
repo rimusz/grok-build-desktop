@@ -19,9 +19,22 @@ try {
   }
   process.exit(0);
 } catch (error) {
-  const message =
-    (error && typeof error === "object" && "message" in error && String(error.message)) ||
-    String(error);
-  console.error(message || "Cursor API key was rejected.");
+  console.error(describeError(error) || "Cursor API key was rejected.");
   process.exit(1);
+}
+
+function describeError(error) {
+  const parts = [];
+  let current = error;
+  for (let depth = 0; current && depth < 4; depth += 1) {
+    const message =
+      current && typeof current === "object" && "message" in current
+        ? String(current.message).trim()
+        : String(current).trim();
+    if (message && !parts.includes(message)) parts.push(message);
+    const code = current && typeof current === "object" ? current.code : undefined;
+    if (typeof code === "string" && code && !parts.includes(code)) parts.push(code);
+    current = current && typeof current === "object" ? current.cause : undefined;
+  }
+  return parts.join(": ");
 }

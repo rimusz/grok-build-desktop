@@ -417,7 +417,11 @@ struct ContentView: View {
             onNewSession: startNewSessionForCurrentProject,
             onPersistSessionLayout: { persistSessionLayout(saveMessages: $0) },
             onLiveSessionAgentChanged: applySpecialistBinding(from:),
-            openSettings: openSettings
+            openSettings: openSettings,
+            onFocusSession: { id in
+                showSettings = false
+                selectSession(id)
+            }
         ))
     }
 
@@ -1843,6 +1847,7 @@ extension Notification.Name {
     static let sessionsRequested = Notification.Name("sessionsRequested")
     static let stopGenerationRequested = Notification.Name("stopGenerationRequested")
     static let focusInputRequested = Notification.Name("focusInputRequested")
+    static let focusLiveSessionRequested = Notification.Name("focusLiveSessionRequested")
     static let showMainWindowRequested = Notification.Name("showMainWindowRequested")
     static let newSessionRequested = Notification.Name("newSessionRequested")
     static let grokStatusChanged = Notification.Name("grokStatusChanged")
@@ -1878,6 +1883,7 @@ private struct ContentViewNotificationHandlers: ViewModifier {
     let onPersistSessionLayout: (Bool) -> Void
     let onLiveSessionAgentChanged: (ChatStore) -> Void
     let openSettings: (SettingsTab) -> Void
+    let onFocusSession: (UUID) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -1892,6 +1898,10 @@ private struct ContentViewNotificationHandlers: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .focusInputRequested)) { _ in
                 // handled inside ChatView via focus
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .focusLiveSessionRequested)) { note in
+                guard let raw = note.userInfo?["sessionID"] as? String, let id = UUID(uuidString: raw) else { return }
+                onFocusSession(id)
             }
             .onChange(of: selectedWorkspaceID) { oldID, newID in
                 guard oldID != newID else { return }

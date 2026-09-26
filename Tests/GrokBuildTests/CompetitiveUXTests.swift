@@ -298,17 +298,78 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(injected[CursorBridge.NodeTLS.extraCACertsKey], "/Users/demo/IT-Certs/package-route.pem")
     }
 
-    func testNodeTLSRewritesZscalerNetworkFailure() {
-        let original = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
-        let message = CursorBridge.NodeTLS.userFacingRejection(original)
-        XCTAssertTrue(message.hasPrefix(original))
+    func testNodeTLSRewritesCertificateFailureNotGenericNetwork() {
+        let timeout = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
+        XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection(timeout), timeout)
+        XCTAssertFalse(CursorBridge.NodeTLS.looksLikeTLSInspectionFailure(timeout))
+
+        let cert = "fetch failed: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)"
+        let message = CursorBridge.NodeTLS.userFacingRejection(cert)
+        XCTAssertTrue(message.hasPrefix(cert))
         XCTAssertTrue(message.contains("Zscaler"))
         XCTAssertTrue(message.contains("IT-Certs/package-route.pem"))
         XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection("Invalid User API Key"), "Invalid User API Key")
-        let result = CursorBridge.validationResult(exitCode: 1, stderr: original)
+        let result = CursorBridge.validationResult(exitCode: 1, stderr: cert)
         XCTAssertFalse(result.isValid)
-        XCTAssertTrue(result.message.contains("UND_ERR_CONNECT_TIMEOUT"))
+        XCTAssertTrue(result.message.contains("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"))
         XCTAssertTrue(result.message.contains("Zscaler"))
+    }
+
+    func testBridgeReconcileRestartsWhenEnabledKeySavedAndPortDown() {
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .failed("Cursor API key was rejected: Network request failed")
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .stopped
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .running
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: true,
+            status: .running
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: false,
+            status: .running
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: true,
+            status: .failed("stale")
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: false,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .failed("stale")
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: false,
+            endpointOnline: false,
+            status: .stopped
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .starting
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: true,
+            status: .starting
+        ))
     }
 
     func testCursorBridgeSecretFileURLIsUnderApplicationSupport() {
@@ -557,6 +618,72 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertTrue(TurnCompletionSound.shouldPlay(enabled: true, appActive: false))
         XCTAssertFalse(TurnCompletionSound.shouldPlay(enabled: true, appActive: true))
         XCTAssertFalse(TurnCompletionSound.shouldPlay(enabled: false, appActive: false))
+    }
+
+    func testBackgroundNoticeOnlyWhenEnabledAndUnfocused() {
+        XCTAssertTrue(TurnBackgroundNotice.shouldNotify(enabled: true, appActive: false))
+        XCTAssertFalse(TurnBackgroundNotice.shouldNotify(enabled: true, appActive: true))
+        XCTAssertFalse(TurnBackgroundNotice.shouldNotify(enabled: false, appActive: false))
+    }
+
+    func testBackgroundNoticeDefaultsOnUntilExplicitlyDisabled() {
+        let name = "grokbuild-notice-defaults-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        XCTAssertFalse(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+        TurnBackgroundNotice.registerDefaults(in: defaults)
+        XCTAssertTrue(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+        defaults.set(false, forKey: GrokSettingsKeys.notifyOnUnfocusedFinish)
+        XCTAssertFalse(defaults.bool(forKey: GrokSettingsKeys.notifyOnUnfocusedFinish))
+    }
+
+    func testBackgroundNoticeCopyUsesSessionProjectAndReplyPreview() {
+        let reply = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "The sidecar is listening again.\nMore detail",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(reply.title, "Fix the bridge · grok-build-desktop")
+        XCTAssertEqual(reply.body, "The sidecar is listening again. More detail")
+
+        let empty = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "   ",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(empty.body, "Reply ready")
+
+        let waiting = TurnBackgroundNotice.copy(
+            kind: .needsInput,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "ignored",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(waiting.body, "Needs input")
+    }
+
+    func testBackgroundNoticeRedactsTitlesWhenPrivacyModeIsOn() {
+        let copy = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Secret session",
+            projectName: "Secret project",
+            replyPreview: "done",
+            privacyEnabled: true
+        )
+        XCTAssertEqual(copy.title, "Session · Project")
+        XCTAssertFalse(copy.title.contains("Secret"))
+        XCTAssertEqual(copy.body, "done")
+
+        let long = String(repeating: "a", count: 200)
+        XCTAssertEqual(TurnBackgroundNotice.replyBody(long).count, 140)
+        XCTAssertTrue(TurnBackgroundNotice.replyBody(long).hasSuffix("…"))
     }
 
     // MARK: - @ file mentions

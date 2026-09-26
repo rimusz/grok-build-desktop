@@ -5878,10 +5878,12 @@ private struct AppUpdatesSettingsPane: View {
 
     @AppStorage(GrokSettingsKeys.steerByDefault) private var steerByDefault = false
     @AppStorage(GrokSettingsKeys.soundOnUnfocusedFinish) private var soundOnUnfocusedFinish = false
+    @AppStorage(GrokSettingsKeys.notifyOnUnfocusedFinish) private var notifyOnUnfocusedFinish = true
     @AppStorage(GrokSettingsKeys.privacyMode) private var privacyMode = false
 
     private var steerByDefaultBinding: Binding<Bool> { $steerByDefault }
     private var soundBinding: Binding<Bool> { $soundOnUnfocusedFinish }
+    private var notifyBinding: Binding<Bool> { $notifyOnUnfocusedFinish }
     private var privacyBinding: Binding<Bool> { $privacyMode }
 
     var body: some View {
@@ -5917,6 +5919,20 @@ private struct AppUpdatesSettingsPane: View {
                             }
                         }
                         .toggleStyle(.switch)
+                        Divider()
+                        Toggle(isOn: notifyBinding) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Notify when a turn finishes and GrokBuild is not focused")
+                                    .font(.callout.weight(.medium))
+                                Text("Post a Notification Center banner with the session name and a one-line reply preview. The same banner appears when a background session needs input. Clicking it opens that session.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .onChange(of: notifyOnUnfocusedFinish) { _, enabled in
+                            if enabled { TurnBackgroundNotice.requestAuthorizationIfNeeded() }
+                        }
                         Divider()
                         Toggle(isOn: privacyBinding) {
                             VStack(alignment: .leading, spacing: 4) {

@@ -206,7 +206,7 @@ private struct HelpPanelView: View {
             helpSection(
                 "Application",
                 bullets: [
-                    "App — updates, steering behavior, completion sound, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, login-shell PATH, Node.js, uv for browser-use, Cursor bridge).",
+                    "App — updates, steering behavior, completion sound, background Notification Center banners, Privacy Mode, and Doctor diagnostics (CLI, auth, config.toml, login-shell PATH, Node.js, uv for browser-use, Cursor bridge).",
                 ]
             )
             helpSection(
