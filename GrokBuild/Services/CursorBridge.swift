@@ -79,7 +79,7 @@ enum CursorBridge {
     }
 
     /// Node's TLS store (not the macOS keychain). Dock/`open` launches omit shell vars such as
-    /// `NODE_EXTRA_CA_CERTS`, so Zscaler SSL inspection fails with "Network request failed"
+    /// `NODE_EXTRA_CA_CERTS`, so Zscaler SSL inspection fails certificate verification
     /// while URLSession providers (MiniMax, Cline) still work.
     enum NodeTLS {
         static let extraCACertsKey = "NODE_EXTRA_CA_CERTS"
@@ -123,12 +123,25 @@ enum CursorBridge {
             environment[extraCACertsKey] = path
         }
 
-        /// Appends a TLS-proxy hint when Node reports a generic fetch failure.
+        /// True when Node's fetch failure looks like SSL inspection, not a timeout or reset.
+        static func looksLikeTLSInspectionFailure(_ text: String) -> Bool {
+            let markers = [
+                "CERT_",
+                "UNABLE_TO_VERIFY",
+                "UNABLE_TO_GET_ISSUER",
+                "self-signed",
+                "self signed",
+                "unable to get local issuer",
+                "certificate verify failed",
+            ]
+            return markers.contains { text.localizedCaseInsensitiveContains($0) }
+        }
+
+        /// Appends a TLS-proxy hint only for certificate failures. Timeouts and generic
+        /// "Network request failed" stay as-is so a blip is not blamed on Zscaler.
         static func userFacingRejection(_ stderr: String) -> String {
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.localizedCaseInsensitiveContains("Network request failed") else {
-                return trimmed
-            }
+            guard looksLikeTLSInspectionFailure(trimmed) else { return trimmed }
             let hint = "Corporate TLS proxy such as Zscaler: Node does not use the macOS keychain — GrokBuild looks for ~/IT-Certs/package-route.pem or NODE_EXTRA_CA_CERTS / GROKBUILD_NODE_EXTRA_CA_CERTS."
             return "\(trimmed)\n\(hint)"
         }

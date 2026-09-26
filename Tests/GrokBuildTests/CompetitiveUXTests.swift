@@ -298,17 +298,73 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertEqual(injected[CursorBridge.NodeTLS.extraCACertsKey], "/Users/demo/IT-Certs/package-route.pem")
     }
 
-    func testNodeTLSRewritesZscalerNetworkFailure() {
-        let original = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
-        let message = CursorBridge.NodeTLS.userFacingRejection(original)
-        XCTAssertTrue(message.hasPrefix(original))
+    func testNodeTLSRewritesCertificateFailureNotGenericNetwork() {
+        let timeout = "fetch failed: Network request failed (UND_ERR_CONNECT_TIMEOUT)"
+        XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection(timeout), timeout)
+        XCTAssertFalse(CursorBridge.NodeTLS.looksLikeTLSInspectionFailure(timeout))
+
+        let cert = "fetch failed: unable to get local issuer certificate (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)"
+        let message = CursorBridge.NodeTLS.userFacingRejection(cert)
+        XCTAssertTrue(message.hasPrefix(cert))
         XCTAssertTrue(message.contains("Zscaler"))
         XCTAssertTrue(message.contains("IT-Certs/package-route.pem"))
         XCTAssertEqual(CursorBridge.NodeTLS.userFacingRejection("Invalid User API Key"), "Invalid User API Key")
-        let result = CursorBridge.validationResult(exitCode: 1, stderr: original)
+        let result = CursorBridge.validationResult(exitCode: 1, stderr: cert)
         XCTAssertFalse(result.isValid)
-        XCTAssertTrue(result.message.contains("UND_ERR_CONNECT_TIMEOUT"))
+        XCTAssertTrue(result.message.contains("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"))
         XCTAssertTrue(result.message.contains("Zscaler"))
+    }
+
+    func testBridgeReconcileRestartsWhenEnabledKeySavedAndPortDown() {
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: false,
+            status: .failed("Cursor API key was rejected: Network request failed")
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: false,
+            status: .stopped
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: true,
+            ownedProcessRunning: false,
+            status: .failed("stale")
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: false,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: false,
+            status: .failed("stale")
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: false,
+            endpointOnline: false,
+            ownedProcessRunning: false,
+            status: .stopped
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: true,
+            status: .starting
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: false,
+            status: .starting
+        ))
     }
 
     func testCursorBridgeSecretFileURLIsUnderApplicationSupport() {

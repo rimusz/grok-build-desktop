@@ -77,6 +77,21 @@ enum CursorBridgeRuntime {
         hasAPIKey && endpointOnline
     }
 
+    /// Settings should start the sidecar again when it is enabled, a key is saved, and nothing
+    /// is listening. A previous `.failed` (for example a launch-time network blip) must not stick
+    /// until the user re-saves the provider.
+    static func shouldAttemptRestart(
+        enabled: Bool,
+        hasAPIKey: Bool,
+        endpointOnline: Bool,
+        ownedProcessRunning: Bool,
+        status: Status
+    ) -> Bool {
+        guard enabled, hasAPIKey, !endpointOnline, !ownedProcessRunning else { return false }
+        if case .starting = status { return false }
+        return true
+    }
+
     private static let missingAPIKeyMessage = "Add a Cursor API key to start the managed bridge."
 
     /// Pure helpers for tests / diagnostics (no process I/O).
@@ -389,6 +404,15 @@ enum CursorBridgeRuntime {
             return status
         }
         let ownedRunning = queue.sync { process?.isRunning == true }
+        if shouldAttemptRestart(
+            enabled: isEnabled,
+            hasAPIKey: true,
+            endpointOnline: false,
+            ownedProcessRunning: ownedRunning,
+            status: status
+        ) {
+            return await startIfNeeded()
+        }
         if case .running = status, !ownedRunning {
             setStatus(.stopped)
         }
