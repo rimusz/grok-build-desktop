@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 import Darwin   // POSIX: open, O_EXCL, close, write, kill, getpid
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -57,6 +58,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Normal app (shows in Dock, supports windows + menu bar icon)
         NSApp.setActivationPolicy(.regular)
+        UNUserNotificationCenter.current().delegate = self
+        if TurnBackgroundNotice.isEnabled {
+            TurnBackgroundNotice.requestAuthorizationIfNeeded()
+        }
         setupMainMenu()
         if let appIcon = AppIconProvider.image() {
             NSApp.applicationIconImage = appIcon
@@ -370,5 +375,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Hide instead of miniaturize so frame autosave does not persist a dock-icon-sized frame.
         sender.orderOut(nil)
         return false
+    }
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let raw = response.notification.request.content.userInfo[TurnBackgroundNotice.sessionIDUserInfoKey] as? String
+        NSApp.activate(ignoringOtherApps: true)
+        openMainWindow()
+        if let raw {
+            NotificationCenter.default.post(
+                name: .focusLiveSessionRequested,
+                object: nil,
+                userInfo: ["sessionID": raw]
+            )
+        }
+        completionHandler()
     }
 }

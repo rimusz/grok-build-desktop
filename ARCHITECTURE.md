@@ -467,6 +467,7 @@ Do **not** commit exported plist files from repo root (`.gitignore`).
 | `grokbuild.privacyMode` | `GrokSettingsKeys` | Display-only Privacy Mode (Settings → App). Redacts project paths/names and session titles in the UI; never mutates persisted data |
 | `grokbuild.showAllAgents` | `GrokSettingsKeys` | Sidebar Agents section lists every agent when true (default false = **active only**: pinned or a live session in the current project) |
 | `grokbuild.soundOnUnfocusedFinish` | `GrokSettingsKeys` | Chime when a turn finishes and the app is unfocused (Settings → App). Default off |
+| `grokbuild.notifyOnUnfocusedFinish` | `GrokSettingsKeys` | Notification Center banner when a turn finishes or needs input and the app is unfocused (Settings → App). Default off |
 | `grokbuild.browser.*` | `BrowserSettingsStore` | Draft browser settings (backend, agent-browser CLI: runtime mode, CDP URL, profile, external app) |
 | `grokbuild.browser.applied.*` | | **Applied** settings used at process start. The Browser Tools toggle and backend picker write both draft and applied immediately (`AgentBrowserService.applyEnabled` / Settings backend change) |
 | `grokbuild.computerUse.*` | `ComputerUseSettingsStore` | Draft computer use settings |
@@ -612,6 +613,10 @@ While `ChatStore.isStreaming`, composer sends enqueue to `ChatStore.promptQueue`
 ### Turn-completion sound
 
 `TurnCompletionSound` (`Services/TurnCompletionSound.swift`) — optional chime when a turn finishes and GrokBuild is not the active app. Pure rule `shouldPlay(enabled:appActive:)`; `playIfNeeded()` reads live `NSApp.isActive`. Toggle: `GrokSettingsKeys.soundOnUnfocusedFinish` (Settings → App). Called from `ChatStore.finishPrompt` on success.
+
+### Background finish notification
+
+`TurnBackgroundNotice` (`Services/TurnBackgroundNotice.swift`) — optional Notification Center banner for the same unfocused moment, and when a background session starts waiting on a permission, plan, or question (`needsInput`). Toggle: `GrokSettingsKeys.notifyOnUnfocusedFinish` (Settings → App, next to the chime; default off). Title is session · project (`PrivacyMode.redactLabel` when Privacy Mode is on). Body is a one-line reply preview, **Reply ready** when the reply is empty, or **Needs input**. Click posts `.focusLiveSessionRequested` → `ContentView.selectSession` (and leaves Settings). Authorization is requested once when the toggle is turned on; a denial stays quiet. Delivery identifier is per session and kind so a newer banner replaces the previous one for that session.
 
 ### Privacy Mode
 
@@ -898,6 +903,7 @@ Defined in `ContentView.swift` (`extension Notification.Name`).
 | `.sessionsRequested` | Sessions History (clock / menu) | `SessionsBrowserPanel` sheet |
 | `.stopGenerationRequested` | Stop shortcut | `ChatStore.stop` |
 | `.focusInputRequested` | Focus composer | `ChatView` |
+| `.focusLiveSessionRequested` | Notification Center click | `ContentView.selectSession` (closes Settings) |
 | `.retryConnectionRequested` | Menu bar retry when signed out | `ContentView` → `activeStore.retryConnection()` |
 | `.openSettingsRequested` | Settings from App or status menu (⌘,) | `ContentView.openSettings` (`.app` tab when update pending, else `.agents`). Dismisses Sessions History / Dashboard; same-project sidebar `onChange` does not leave Settings (`SettingsPaneNavigation`). |
 | `.workspaceAgentSettingsChanged` | Reasoning effort saved | Sync effort to sibling sessions in project |
@@ -1013,7 +1019,7 @@ See `BUILDING.md` for signing, notarization, CI workflow.
 | **Voice control / mic entitlements** | `VoiceInputService`, `scripts/GrokBuild.entitlements`, `scripts/codesign-app-bundle.sh` (`device.audio-input` for Hardened Runtime) |
 | **Custom models** | `CustomModelStore`, `CustomModelListOrdering`, `CustomProviderExample`, `~/.grok/config.toml` |
 | **Cursor bridge / api_backend** | `ProviderPreset.cursor`, `CursorBridge.swift`, `CursorBridgeRuntime.swift`, `CursorBridgeAPIKey.swift`, `Resources/CursorBridge/`, `ModelAPIBackend` + `CustomModel.apiBackend/envKey`, Add Provider flow in `CustomModelsSettingsPane` |
-| **Session status / steer / sound** | `SessionStatus.swift`, `SteerDecision` (`GrokCLIService.swift`), `ChatStore.steerRunningTurn`, `TurnCompletionSound.swift`, `SidebarSession.status` |
+| **Session status / steer / sound** | `SessionStatus.swift`, `SteerDecision` (`GrokCLIService.swift`), `ChatStore.steerRunningTurn`, `TurnCompletionSound.swift`, `TurnBackgroundNotice.swift`, `SidebarSession.status` |
 | **@ file mentions** | `Services/FileMention.swift`, `FileMentionListView`, `ChatView` (`mentionMatch`, `loadFileMentionIndex`) |
 | **Image vision attachments** | `Services/ImageAttachment.swift`, `ChatStore.addImageAttachment`, `GrokProcess.send(_:images:)`, `ImageChipBar` |
 | **Inline media preview** | `Services/InlineMedia.swift`, `MarkdownBlock.media`, `InlineMediaView` (`RichMessageView.swift`) |
@@ -1062,7 +1068,7 @@ make test    # Tests/GrokBuildTests/
 | `SettingsTabTests.swift` | Settings tab titles/order/keep-alive; wrapping tab-flow layout; `SettingsPaneNavigation` (same-project keeps Settings, opening Settings closes history/dashboard sheets) |
 | `GrokAuthProbeTests.swift` | Launch-time auth probe: `~/.grok/auth.json` size check (present / empty / missing) |
 | `MarkdownBlockParserTests.swift` | Inline-math heuristic, GFM tables (including smashed one-line tables), smashed ATX headings/lists restored to TUI-style lines, numbered section titles (`1. Migration Assistant…`) painted CLI-blue in `NSTextView` without clipping wrapped tails, fenced code, grok-CLI heading/list styling in `RichMessageView`; angle-bracket placeholders stay in their code spans (follow-on text is not painted as code); attributed tail after headings; wrapped `AttributedTextSizing` height |
-| `CompetitiveUXTests.swift` | Session status resolution, sidebar section action copy, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, `/health` Responses protocol, Node TLS CA for Zscaler), Doctor report mapping (including login-shell PATH), unfocused-finish sound rule, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, transcript stick-scroll policy, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
+| `CompetitiveUXTests.swift` | Session status resolution, sidebar section action copy, steer-vs-queue decision, Cursor bridge (ports/URL/import/parse, `/health` Responses protocol, Node TLS CA for Zscaler), Doctor report mapping (including login-shell PATH), unfocused-finish sound and Notification Center rules, Privacy Mode redaction, worktree detection, `GitService.currentBranch`, transcript stick-scroll policy, chat rewind/clear, pinned-session layout decode, dashboard grouping, per-project dashboard scope, LRU pin for scheduled sessions, named parallel-session slug helpers, Parallel Session / Automation copy, dashboard title sanitization, Auto accept labels + `PermissionAutoApprove`, context/last-turn usage formatting + `TurnTokenUsageParser` |
 | `CustomModelTests.swift` | (extended) `api_backend` + `env_key` TOML round-trip and `ModelAPIBackend.parse` defaults; pin `chat_completions` when the provider model is a grok native catalog id; relocate `[model.grok-4.6]` shadows on non-xAI URLs; Settings model list A–Z by Provider + model (`CustomModelListOrdering`) |
 
 Prefer extending existing test files. Test pure logic without launching real `grok` when possible.

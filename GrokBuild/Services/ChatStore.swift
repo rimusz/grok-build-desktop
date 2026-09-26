@@ -711,6 +711,30 @@ final class ChatStore {
         !pendingPermissions.isEmpty || pendingExitPlan != nil || !pendingQuestions.isEmpty
     }
 
+    private func backgroundNoticeSessionTitle() -> String {
+        if let id = tabSessionID,
+           let name = SessionNameStore.name(for: id.uuidString),
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        if let grokID = grokSessionId ?? savedGrokSessionID,
+           let name = SessionNameStore.name(for: grokID),
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        return SessionTitle.auto(from: messages) ?? SessionTitle.defaultTitle
+    }
+
+    private func postBackgroundNotice(kind: TurnBackgroundNotice.Kind, replyPreview: String) {
+        TurnBackgroundNotice.postIfNeeded(
+            kind: kind,
+            sessionID: tabSessionID,
+            sessionTitle: backgroundNoticeSessionTitle(),
+            projectName: currentWorkspace?.displayName ?? "",
+            replyPreview: replyPreview
+        )
+    }
+
     /// True when the session is in a failed connection / process state.
     var hasErrorState: Bool {
         if case .failed = connectionState { return true }
@@ -1043,6 +1067,9 @@ final class ChatStore {
             notifyMessagesChanged()
             _ = reconcileTranscriptFromGrokIfNeeded(assistantID: assistantID)
             TurnCompletionSound.playIfNeeded()
+            if !isAwaitingUser {
+                postBackgroundNotice(kind: .replyReady, replyPreview: messages.first { $0.id == assistantID }?.content ?? "")
+            }
             drainPromptQueueIfNeeded()
             Task { [weak self] in
                 await self?.reconcileTranscriptAfterTurn(assistantID: assistantID)
@@ -1598,6 +1625,7 @@ final class ChatStore {
                     isResolved: false,
                     answerSummary: nil
                 ))
+                postBackgroundNotice(kind: .needsInput, replyPreview: "")
             }
         case .toolCallUpdate(let tc):
             recordActivityTool(tc)
@@ -1616,6 +1644,7 @@ final class ChatStore {
                     isResolved: false,
                     answerSummary: nil
                 ))
+                postBackgroundNotice(kind: .needsInput, replyPreview: "")
             }
         case .plan:
             break
@@ -1625,10 +1654,15 @@ final class ChatStore {
                 pendingExitPlan = plan
             }
         case .exitPlanRequest(let req):
+            let isNewPlan = pendingExitPlan?.id != req.id
             pendingExitPlan = req
+            if isNewPlan {
+                postBackgroundNotice(kind: .needsInput, replyPreview: "")
+            }
         case .questionRequest(let req):
             if !pendingQuestions.contains(where: { $0.id == req.id }) {
                 pendingQuestions.append(req)
+                postBackgroundNotice(kind: .needsInput, replyPreview: "")
             }
         case .availableCommands(let commands):
             availableSlashCommands = commands
@@ -1654,6 +1688,7 @@ final class ChatStore {
             // Avoid duplicates
             if !pendingPermissions.contains(where: { $0.id == req.id }) {
                 pendingPermissions.append(req)
+                postBackgroundNotice(kind: .needsInput, replyPreview: "")
             }
         case .modeChanged(let mode):
             currentMode = mode

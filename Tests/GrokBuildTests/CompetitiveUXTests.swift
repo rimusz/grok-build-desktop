@@ -615,6 +615,59 @@ final class CompetitiveUXTests: XCTestCase {
         XCTAssertFalse(TurnCompletionSound.shouldPlay(enabled: false, appActive: false))
     }
 
+    func testBackgroundNoticeOnlyWhenEnabledAndUnfocused() {
+        XCTAssertTrue(TurnBackgroundNotice.shouldNotify(enabled: true, appActive: false))
+        XCTAssertFalse(TurnBackgroundNotice.shouldNotify(enabled: true, appActive: true))
+        XCTAssertFalse(TurnBackgroundNotice.shouldNotify(enabled: false, appActive: false))
+    }
+
+    func testBackgroundNoticeCopyUsesSessionProjectAndReplyPreview() {
+        let reply = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "The sidecar is listening again.\nMore detail",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(reply.title, "Fix the bridge · grok-build-desktop")
+        XCTAssertEqual(reply.body, "The sidecar is listening again. More detail")
+
+        let empty = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "   ",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(empty.body, "Reply ready")
+
+        let waiting = TurnBackgroundNotice.copy(
+            kind: .needsInput,
+            sessionTitle: "Fix the bridge",
+            projectName: "grok-build-desktop",
+            replyPreview: "ignored",
+            privacyEnabled: false
+        )
+        XCTAssertEqual(waiting.body, "Needs input")
+    }
+
+    func testBackgroundNoticeRedactsTitlesWhenPrivacyModeIsOn() {
+        let copy = TurnBackgroundNotice.copy(
+            kind: .replyReady,
+            sessionTitle: "Secret session",
+            projectName: "Secret project",
+            replyPreview: "done",
+            privacyEnabled: true
+        )
+        XCTAssertEqual(copy.title, "Session · Project")
+        XCTAssertFalse(copy.title.contains("Secret"))
+        XCTAssertEqual(copy.body, "done")
+
+        let long = String(repeating: "a", count: 200)
+        XCTAssertEqual(TurnBackgroundNotice.replyBody(long).count, 140)
+        XCTAssertTrue(TurnBackgroundNotice.replyBody(long).hasSuffix("…"))
+    }
+
     // MARK: - @ file mentions
 
     func testFileMentionMatchAtEndOfInput() {
