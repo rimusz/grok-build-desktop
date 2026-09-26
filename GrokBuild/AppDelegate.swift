@@ -398,7 +398,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
                     userInfo: ["sessionID": raw]
                 )
             }
-            completionHandler()
         }
+        completionHandler()
     }
 }

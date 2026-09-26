@@ -320,49 +320,54 @@ final class CompetitiveUXTests: XCTestCase {
             enabled: true,
             hasAPIKey: true,
             endpointOnline: false,
-            ownedProcessRunning: false,
             status: .failed("Cursor API key was rejected: Network request failed")
         ))
         XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
             enabled: true,
             hasAPIKey: true,
             endpointOnline: false,
-            ownedProcessRunning: false,
             status: .stopped
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.shouldAttemptRestart(
+            enabled: true,
+            hasAPIKey: true,
+            endpointOnline: false,
+            status: .running
+        ))
+        XCTAssertTrue(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: true,
+            status: .running
+        ))
+        XCTAssertFalse(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: false,
+            status: .running
         ))
         XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
             enabled: true,
             hasAPIKey: true,
             endpointOnline: true,
-            ownedProcessRunning: false,
             status: .failed("stale")
         ))
         XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
             enabled: false,
             hasAPIKey: true,
             endpointOnline: false,
-            ownedProcessRunning: false,
             status: .failed("stale")
         ))
         XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
             enabled: true,
             hasAPIKey: false,
             endpointOnline: false,
-            ownedProcessRunning: false,
             status: .stopped
         ))
         XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
             enabled: true,
             hasAPIKey: true,
             endpointOnline: false,
-            ownedProcessRunning: true,
             status: .starting
         ))
-        XCTAssertFalse(CursorBridgeRuntime.shouldAttemptRestart(
-            enabled: true,
-            hasAPIKey: true,
-            endpointOnline: false,
-            ownedProcessRunning: false,
+        XCTAssertFalse(CursorBridgeRuntime.mustStopOwnedProcessBeforeRestart(
+            ownedProcessRunning: true,
             status: .starting
         ))
     }
